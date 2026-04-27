@@ -238,6 +238,7 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
         onSlashCommand={handleSlashCommand}
         disabled={inputDisabled}
         placeholder={inputDisabled && session.status !== "running" ? "Session ended." : undefined}
+        hint={session.status === "running" ? "(injected mid-turn)" : undefined}
       />
     </div>
   );

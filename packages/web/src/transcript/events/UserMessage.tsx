@@ -27,6 +27,9 @@ export function UserMessage({ event }: Props) {
         <span className={cx("pill text-[10px]", SOURCE_COLORS[source])}>
           {SOURCE_LABELS[source]}
         </span>
+        {event.injected && (
+          <span className="pill text-[10px] bg-bg-elev text-fg-muted">injected</span>
+        )}
       </div>
       <div className="max-w-[80%] bg-blue-900/40 border border-blue-700/40 rounded-xl px-3 py-2 text-sm text-fg whitespace-pre-wrap">
         {event.text}
