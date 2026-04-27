@@ -582,11 +582,29 @@ export class SessionRegistry {
     }
   }
 
-  async reply(slug: string, text: string): Promise<void> {
-    const { db, ctx } = this.deps;
+  async reply(slug: string, text: string, attachments?: import("@minions/shared").AttachmentInput[]): Promise<void> {
+    const { db, ctx, workspaceDir } = this.deps;
     const row = this.getSessionRow(slug);
     if (!row) {
       throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+
+    const copied: { name: string; mimeType: string; url: string }[] = [];
+    if (attachments && attachments.length > 0) {
+      const sessionUploads = this.paths.uploads(slug);
+      await ensureDir(sessionUploads);
+      const globalUploads = path.join(workspaceDir, "uploads");
+      for (const att of attachments) {
+        if (!att.url || !att.url.startsWith("/api/uploads/")) {
+          throw new EngineError("bad_request", "attachment url must start with /api/uploads/");
+        }
+        const filename = att.url.slice("/api/uploads/".length);
+        if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
+          throw new EngineError("bad_request", "attachment url has invalid filename");
+        }
+        await fs.copyFile(path.join(globalUploads, filename), path.join(sessionUploads, att.name));
+        copied.push({ name: att.name, mimeType: att.mimeType, url: att.url });
+      }
     }
 
     const status = row.status as SessionStatus;
@@ -600,6 +618,7 @@ export class SessionRegistry {
 
     const body: Record<string, unknown> = { text, source: "operator" };
     if (injected) body["injected"] = true;
+    if (copied.length > 0) body["attachments"] = copied;
     const bodyJson = JSON.stringify(body);
 
     const eventId = newEventId();
@@ -625,9 +644,13 @@ export class SessionRegistry {
     });
     this.deps.bus.emit({ kind: "transcript_event", sessionSlug: slug, event: transcriptEv });
 
+    const payload = copied.length > 0
+      ? `${text}\n\n[Attached: ${copied.map((a) => a.name).join(", ")}]\n`
+      : text;
+
     if (handle && injected) {
       try {
-        handle.write(text);
+        handle.write(payload);
         ctx.audit.record("operator", "session.reply.injected", { kind: "session", id: slug });
       } catch (err) {
         ctx.audit.record("operator", "session.reply.failed", { kind: "session", id: slug }, { error: String(err) });
@@ -656,7 +679,7 @@ export class SessionRegistry {
         throw err;
       }
     } else {
-      this.replyQueue.enqueue(slug, text);
+      this.replyQueue.enqueue(slug, payload);
       ctx.audit.record("operator", "session.reply.queued", { kind: "session", id: slug });
     }
   }

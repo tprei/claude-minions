@@ -1,8 +1,10 @@
+import type { AttachmentInput } from "./session.js";
+
 export interface ReplyCommand {
   kind: "reply";
   sessionSlug: string;
   text: string;
-  attachments?: { name: string; mimeType: string; dataBase64: string }[];
+  attachments?: AttachmentInput[];
 }
 
 export interface StopCommand {
