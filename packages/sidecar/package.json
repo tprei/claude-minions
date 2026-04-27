@@ -1,0 +1,25 @@
+{
+  "name": "@minions/sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/cli.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/cli.ts",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo 'no tests'",
+    "lint": "echo skip"
+  },
+  "dependencies": {
+    "@minions/shared": "workspace:*",
+    "eventsource": "^2.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/eventsource": "^1.1.15",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

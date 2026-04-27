@@ -1,5 +1,4 @@
-import { useState, useCallback, useRef } from "react";
-import { cx } from "../util/classnames.js";
+import { useState, useCallback } from "react";
 
 export interface Attachment {
   name: string;
@@ -32,17 +31,6 @@ interface Props {
 }
 
 export function AttachmentBar({ attachments, onChange }: Props) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const addFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const fileArr = Array.from(files).filter((f) => f.type.startsWith("image/"));
-      const converted = await Promise.all(fileArr.map(fileToAttachment));
-      onChange([...attachments, ...converted]);
-    },
-    [attachments, onChange],
-  );
-
   const remove = (i: number) => {
     onChange(attachments.filter((_, idx) => idx !== i));
   };
@@ -50,30 +38,30 @@ export function AttachmentBar({ attachments, onChange }: Props) {
   if (attachments.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-2 px-3 pt-2">
+    <div className="flex gap-2 px-3 pt-2 overflow-x-auto">
       {attachments.map((a, i) => (
         <div
           key={i}
-          className="relative group w-14 h-14 rounded-lg overflow-hidden border border-border"
+          className="flex items-center gap-2 shrink-0 rounded-lg border border-border bg-bg-elev pl-1 pr-1 py-1"
         >
-          <img src={a.previewUrl} alt={a.name} className="w-full h-full object-cover" />
+          <img
+            src={a.previewUrl}
+            alt={a.name}
+            className="w-8 h-8 rounded object-cover shrink-0"
+          />
+          <span className="text-xs text-fg-muted max-w-[140px] truncate">
+            {a.name}
+          </span>
           <button
             type="button"
             onClick={() => remove(i)}
-            className="absolute top-0 right-0 w-5 h-5 bg-black/70 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-bl"
+            aria-label={`Remove ${a.name}`}
+            className="w-5 h-5 flex items-center justify-center rounded text-fg-subtle hover:text-fg hover:bg-bg-soft text-sm leading-none"
           >
             ×
           </button>
         </div>
       ))}
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={(e) => e.target.files && addFiles(e.target.files)}
-      />
     </div>
   );
 }

@@ -14,6 +14,9 @@ interface Props {
   placeholder?: string;
 }
 
+const MIN_TEXTAREA_HEIGHT = 36;
+const MAX_TEXTAREA_HEIGHT = 144;
+
 function matchSlash(value: string) {
   if (!value.startsWith("/")) return null;
   const parts = value.slice(1).split(" ");
@@ -51,6 +54,22 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder }: P
   useEffect(() => {
     setAutocompleteIdx(0);
   }, [value]);
+
+  const adjustHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const next = Math.min(
+      Math.max(el.scrollHeight, MIN_TEXTAREA_HEIGHT),
+      MAX_TEXTAREA_HEIGHT,
+    );
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
+  }, []);
+
+  useEffect(() => {
+    adjustHeight();
+  }, [value, adjustHeight]);
 
   const submit = useCallback(() => {
     const trimmed = value.trim();
@@ -120,6 +139,8 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder }: P
     }
   };
 
+  const sendDisabled = !!disabled || (!value.trim() && attachments.length === 0);
+
   return (
     <div
       className="relative border-t border-border bg-bg-soft"
@@ -143,20 +164,15 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder }: P
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
+          onInput={adjustHeight}
           onPaste={onPaste}
           placeholder={placeholder ?? "Message… (/ for commands, Shift+Enter for newline)"}
           disabled={disabled}
           rows={1}
           className={cx(
-            "flex-1 resize-none bg-transparent text-sm text-fg placeholder:text-fg-subtle focus:outline-none min-h-[2rem] max-h-40 leading-6",
+            "flex-1 resize-none bg-transparent text-sm text-fg placeholder:text-fg-subtle focus:outline-none leading-6",
             disabled && "opacity-50 cursor-not-allowed",
           )}
-          style={{ height: "auto", overflowY: value.includes("\n") ? "auto" : "hidden" }}
-          onInput={(e) => {
-            const el = e.currentTarget;
-            el.style.height = "auto";
-            el.style.height = `${el.scrollHeight}px`;
-          }}
         />
         {voiceEnabled && isVoiceSupported() && (
           <button
@@ -176,13 +192,29 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder }: P
         <button
           type="button"
           onClick={submit}
-          disabled={disabled || (!value.trim() && attachments.length === 0)}
+          disabled={sendDisabled}
+          aria-label="Send message"
+          title="Send"
           className={cx(
-            "btn-primary shrink-0 text-xs",
-            (disabled || (!value.trim() && attachments.length === 0)) && "opacity-50 cursor-not-allowed",
+            "btn-primary shrink-0 px-2 py-1.5",
+            sendDisabled && "opacity-50 cursor-not-allowed",
           )}
         >
-          Send
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M22 2L11 13" />
+            <path d="M22 2L15 22L11 13L2 9L22 2Z" />
+          </svg>
         </button>
       </div>
     </div>

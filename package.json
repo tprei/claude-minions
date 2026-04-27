@@ -11,19 +11,16 @@
     "build": "pnpm -r --workspace-concurrency=4 run build",
     "dev:engine": "pnpm --filter @minions/engine run dev",
     "dev:web": "pnpm --filter @minions/web run dev",
-    "dev": "concurrently -n engine,web -c blue,green \"pnpm dev:engine\" \"pnpm dev:web\"",
+    "dev:sidecar": "pnpm --filter @minions/sidecar run dev",
+    "dev": "concurrently -n engine,web,sidecar -c blue,green,magenta \"pnpm dev:engine\" \"pnpm dev:web\" \"pnpm dev:sidecar\"",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
-    "lint": "eslint packages",
+    "lint": "pnpm -r run lint",
     "clean": "rm -rf packages/*/dist packages/*/.tsbuildinfo packages/web/dist"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@tailwindcss/typography": "^0.5.19",
     "concurrently": "^9.1.0",
-    "eslint": "^10.2.1",
-    "globals": "^17.5.0",
-    "typescript": "^5.6.3",
-    "typescript-eslint": "^8.59.0"
+    "typescript": "^5.6.3"
   }
 }
