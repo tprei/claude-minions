@@ -123,3 +123,8 @@ export interface CreateVariantsRequest {
   modelHint?: string;
   judgeRubric?: string;
 }
+
+export interface CreateVariantsResponse {
+  parentSlug: string;
+  childSlugs: string[];
+}
