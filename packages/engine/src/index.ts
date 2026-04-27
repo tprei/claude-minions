@@ -32,6 +32,7 @@ import { createLoopsSubsystem } from "./loops/index.js";
 import { createVariantsSubsystem } from "./variants/index.js";
 import { createCiSubsystem } from "./ci/index.js";
 import { createStatsSubsystem } from "./stats/index.js";
+import { wireCompletionHandlers } from "./completion/handlers/index.js";
 
 const ALL_FEATURES: FeatureFlag[] = [
   "sessions",
@@ -67,14 +68,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   const mutex = new KeyedMutex();
 
   const repoRepo = new RepoRepo(db);
-  const repoFile = RepoRepo.repoFilePath(env.workspace);
-  const fileLoaded = repoRepo.loadFromFile(repoFile);
-  if (fileLoaded) {
-    engineLog.info("loaded repos from file", { repoFile });
-  } else if (process.env["MINIONS_REPOS"]) {
-    engineLog.warn("MINIONS_REPOS env is deprecated; move JSON to repos.json under MINIONS_WORKSPACE", { repoFile });
-    repoRepo.loadFromEnv(process.env["MINIONS_REPOS"]);
-  }
+  repoRepo.loadFromEnv(process.env["MINIONS_REPOS"]);
 
   const ctx = {} as EngineContext;
   ctx.env = env;
@@ -111,13 +105,6 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
     db,
     log: engineLog,
     githubToken: process.env["GITHUB_TOKEN"] ?? null,
-    appConfig: env.githubApp
-      ? {
-          appId: env.githubApp.id,
-          privateKey: env.githubApp.privateKey,
-          installationId: env.githubApp.installationId,
-        }
-      : null,
   };
   ctx.github = createGithubSubsystem(githubDeps);
   ctx.quality = wire(createQualitySubsystem(deps));
@@ -131,6 +118,9 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.variants = wire(createVariantsSubsystem(deps));
   ctx.ci = wire(createCiSubsystem(deps));
   ctx.stats = wire(createStatsSubsystem(deps));
+
+  const unsubscribeCompletion = wireCompletionHandlers(ctx, engineLog);
+  shutdownHooks.push(unsubscribeCompletion);
 
   ctx.features = () => [...ALL_FEATURES];
   ctx.repos = () => repoRepo.list();

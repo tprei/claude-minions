@@ -4,7 +4,18 @@ import { CompletionDispatcher, buildCompletionHandlers } from "../dispatcher.js"
 import { autoCommitHandler } from "./autoCommit.js";
 
 export function wireCompletionHandlers(ctx: EngineContext, log: Logger): () => void {
-  const dispatcher = new CompletionDispatcher(ctx.bus, log.child({ subsystem: "completion" }));
+  const dispatcher = new CompletionDispatcher(
+    ctx.bus,
+    log.child({ subsystem: "completion" }),
+    (handler, session, err) => {
+      ctx.audit.record(
+        "completion",
+        "session.handler-error",
+        { kind: "session", id: session.slug },
+        { handler: handler.name, error: err.message },
+      );
+    },
+  );
 
   dispatcher.register(autoCommitHandler(ctx));
 
