@@ -1,4 +1,5 @@
 import type { Connection } from "../connections/store.js";
+import { sseStatusStore, type SseStatus } from "./sseStatus.js";
 import type {
   ServerEventKind,
   SessionCreatedEvent,
@@ -49,14 +50,30 @@ function fullJitter(attempt: number): number {
   return Math.random() * ceiling;
 }
 
+// NOTE: regression coverage for status transitions / forceReconnect lives in T31 —
+// the @minions/web package has no test runner yet (`"test": "echo skip"`).
+
 export function connectSse(conn: Connection, handlers: SseHandlers): SseConnection {
   let es: EventSource | null = null;
   let attempt = 0;
   let closed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  const cleanups: Array<() => void> = [];
+
+  function setStatus(status: SseStatus): void {
+    sseStatusStore.set(conn.id, status);
+  }
+
+  function clearRetryTimer(): void {
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  }
 
   function open(): void {
     if (closed) return;
+    setStatus(attempt === 0 ? "connecting" : "reconnecting");
     const url = `${conn.baseUrl.replace(/\/$/, "")}/api/events?token=${encodeURIComponent(conn.token)}`;
     es = new EventSource(url);
 
@@ -86,6 +103,10 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
         } catch {
           return;
         }
+        if (kind === "hello") {
+          attempt = 0;
+          setStatus("open");
+        }
         dispatch(kind, data);
       });
     }
@@ -99,9 +120,19 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
       es?.close();
       es = null;
       if (closed) return;
+      setStatus("reconnecting");
       const delay = fullJitter(attempt++);
       retryTimer = setTimeout(open, delay);
     });
+  }
+
+  function forceReconnect(): void {
+    if (closed) return;
+    clearRetryTimer();
+    es?.close();
+    es = null;
+    attempt = 0;
+    open();
   }
 
   function dispatch(kind: ServerEventKind, data: unknown): void {
@@ -124,17 +155,41 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
     }
   }
 
+  if (typeof window !== "undefined") {
+    const onVisibility = (): void => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        forceReconnect();
+      }
+    };
+    const onOnline = (): void => {
+      forceReconnect();
+    };
+    const onPageShow = (): void => {
+      forceReconnect();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+      cleanups.push(() => document.removeEventListener("visibilitychange", onVisibility));
+    }
+    window.addEventListener("online", onOnline);
+    window.addEventListener("pageshow", onPageShow);
+    cleanups.push(() => window.removeEventListener("online", onOnline));
+    cleanups.push(() => window.removeEventListener("pageshow", onPageShow));
+  }
+
   open();
 
   return {
     close() {
       closed = true;
-      if (retryTimer !== null) {
-        clearTimeout(retryTimer);
-        retryTimer = null;
-      }
+      clearRetryTimer();
       es?.close();
       es = null;
+      for (const fn of cleanups) fn();
+      cleanups.length = 0;
+      // Drop the per-connection entry so a stale "reconnecting" pill never lingers
+      // after the operator removes the connection.
+      sseStatusStore.clear(conn.id);
     },
   };
 }
