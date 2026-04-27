@@ -26,6 +26,7 @@ import { createIntakeSubsystem } from "./intake/index.js";
 import { createSessionsSubsystem } from "./sessions/index.js";
 import { createDagSubsystem } from "./dag/index.js";
 import { DagRepo } from "./dag/model.js";
+import { wireCompletionHandlers } from "./completion/handlers/index.js";
 import { createShipSubsystem } from "./ship/index.js";
 import { createLandingSubsystem } from "./landing/index.js";
 import { createLoopsSubsystem } from "./loops/index.js";
@@ -120,6 +121,9 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
 
   ctx.features = () => [...ALL_FEATURES];
   ctx.repos = () => repoRepo.list();
+
+  const unwireCompletion = wireCompletionHandlers(ctx, engineLog);
+  shutdownHooks.push(unwireCompletion);
 
   ctx.shutdown = async () => {
     for (const hook of shutdownHooks.slice().reverse()) {
