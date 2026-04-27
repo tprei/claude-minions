@@ -233,10 +233,15 @@ export function createLoopsSubsystem(
   }
 
   function startScheduler(): void {
+    if (tickHandle !== null) {
+      log.warn("loops scheduler already started; skipping");
+      return;
+    }
     const intervalMs = (env.loopTickSec ?? 5) * 1000;
     tickHandle = setInterval(() => {
       tick().catch((err) => log.error("loop tick error", { err: (err as Error).message }));
     }, intervalMs);
+    log.info("loops scheduler started", { intervalMs });
   }
 
   startScheduler();
