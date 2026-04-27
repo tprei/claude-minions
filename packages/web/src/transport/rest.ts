@@ -16,7 +16,7 @@ import type {
   CommandResult,
   Memory,
   CreateMemoryRequest,
-  ReviewMemoryRequest,
+  MemoryReviewCommand,
   RuntimeConfigResponse,
   RuntimeOverrides,
   VapidPublicKeyResponse,
@@ -173,7 +173,7 @@ export function updateMemory(conn: Connection, id: string, patch: Partial<Create
   return apiFetch(conn, `/api/memories/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
-export function reviewMemory(conn: Connection, id: string, req: ReviewMemoryRequest): Promise<Memory> {
+export function reviewMemory(conn: Connection, id: string, req: MemoryReviewCommand): Promise<Memory> {
   return apiFetch(conn, `/api/memories/${id}/review`, { method: "PATCH", body: JSON.stringify(req) });
 }
 

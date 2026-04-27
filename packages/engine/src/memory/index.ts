@@ -1,4 +1,4 @@
-import type { Memory, CreateMemoryRequest, ReviewMemoryRequest, MemoryStatus, MemoryKind } from "@minions/shared";
+import type { Memory, CreateMemoryRequest, MemoryReviewCommand, MemoryStatus, MemoryKind } from "@minions/shared";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { MemoryStore } from "./store.js";
 import { review as doReview } from "./review.js";
@@ -10,7 +10,7 @@ export interface MemorySubsystem {
   get: (id: string) => Memory | null;
   create: (req: CreateMemoryRequest) => Promise<Memory>;
   update: (id: string, patch: Partial<Pick<Memory, "title" | "body" | "pinned">>) => Promise<Memory>;
-  review: (id: string, req: ReviewMemoryRequest) => Promise<Memory>;
+  review: (id: string, req: MemoryReviewCommand) => Promise<Memory>;
   delete: (id: string) => Promise<void>;
   renderPreamble: (repoId?: string) => string;
 }

@@ -1,4 +1,4 @@
-import type { Memory, ReviewMemoryRequest } from "@minions/shared";
+import type { Memory, MemoryReviewCommand } from "@minions/shared";
 import type { EventBus } from "../bus/eventBus.js";
 import type { MemoryStore } from "./store.js";
 import { EngineError } from "../errors.js";
@@ -8,7 +8,7 @@ export function review(
   store: MemoryStore,
   bus: EventBus,
   id: string,
-  req: ReviewMemoryRequest
+  req: MemoryReviewCommand
 ): Memory {
   const memory = store.getById(id);
   if (!memory) {

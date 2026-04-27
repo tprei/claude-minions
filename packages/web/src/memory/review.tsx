@@ -1,12 +1,12 @@
 import { useState } from "react";
-import type { Memory, ReviewMemoryRequest } from "@minions/shared";
+import type { Memory, MemoryReviewCommand } from "@minions/shared";
 import { cx } from "../util/classnames.js";
 
 interface Props {
   memory: Memory;
   supersededMemory?: Memory;
   allMemories: Memory[];
-  onReview: (req: ReviewMemoryRequest) => Promise<void>;
+  onReview: (req: MemoryReviewCommand) => Promise<void>;
   onEdit: () => void;
   onClose: () => void;
 }
@@ -18,7 +18,7 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function act(req: ReviewMemoryRequest) {
+  async function act(req: MemoryReviewCommand) {
     setActing(true);
     setError(null);
     try {
