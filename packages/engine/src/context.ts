@@ -30,7 +30,7 @@ export interface EngineContext {
     transcript: (slug: string, sinceSeq?: number) => import("@minions/shared").TranscriptEvent[];
     stop: (slug: string, reason?: string) => Promise<void>;
     close: (slug: string, removeWorktree?: boolean) => Promise<void>;
-    reply: (slug: string, text: string) => Promise<void>;
+    reply: (slug: string, text: string, attachments?: import("@minions/shared").AttachmentInput[]) => Promise<void>;
     resumeAllActive: () => Promise<void>;
     diff: (slug: string) => Promise<import("@minions/shared").WorkspaceDiff>;
     screenshots: (slug: string) => Promise<import("@minions/shared").Screenshot[]>;

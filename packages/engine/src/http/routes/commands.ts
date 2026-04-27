@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { EngineContext } from "../../context.js";
 import type {
+  AttachmentInput,
   Command,
   CommandResult,
   PlanActionCommand,
@@ -15,6 +16,50 @@ function assertString(val: unknown, field: string): string {
     throw new EngineError("bad_request", `${field} must be a non-empty string`);
   }
   return val;
+}
+
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+]);
+
+function validateReplyAttachments(raw: unknown, field: string): AttachmentInput[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new EngineError("bad_request", `${field} must be an array`);
+  }
+  const out: AttachmentInput[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const a = raw[i];
+    if (!a || typeof a !== "object") {
+      throw new EngineError("bad_request", `${field}[${i}] must be an object`);
+    }
+    const obj = a as Record<string, unknown>;
+    const name = assertString(obj["name"], `${field}[${i}].name`);
+    const mimeType = assertString(obj["mimeType"], `${field}[${i}].mimeType`);
+    if (!ALLOWED_ATTACHMENT_MIME_TYPES.has(mimeType)) {
+      throw new EngineError(
+        "bad_request",
+        `${field}[${i}].mimeType must be one of ${[...ALLOWED_ATTACHMENT_MIME_TYPES].join(", ")}`,
+      );
+    }
+    const url = assertString(obj["url"], `${field}[${i}].url`);
+    if (!url.startsWith("/api/uploads/")) {
+      throw new EngineError(
+        "bad_request",
+        `${field}[${i}].url must start with /api/uploads/`,
+      );
+    }
+    if ("dataBase64" in obj) {
+      throw new EngineError(
+        "bad_request",
+        `${field}[${i}].dataBase64 is not accepted; upload first and pass url`,
+      );
+    }
+    out.push({ name, mimeType, url });
+  }
+  return out;
 }
 
 function planActionToStage(action: PlanActionCommand["action"]): ShipStage {
@@ -45,6 +90,7 @@ function validateCommand(body: unknown): Command {
         kind: "reply",
         sessionSlug: assertString(b["sessionSlug"], "sessionSlug"),
         text: assertString(b["text"], "text"),
+        attachments: validateReplyAttachments(b["attachments"], "attachments"),
       };
     case "stop":
       return {
@@ -185,7 +231,7 @@ export function registerCommandRoutes(app: FastifyInstance, ctx: EngineContext):
 async function dispatchCommand(cmd: Command, ctx: EngineContext): Promise<CommandResult> {
   switch (cmd.kind) {
     case "reply":
-      await ctx.sessions.reply(cmd.sessionSlug, cmd.text);
+      await ctx.sessions.reply(cmd.sessionSlug, cmd.text, cmd.attachments);
       return { ok: true };
 
     case "stop":

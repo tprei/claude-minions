@@ -195,15 +195,14 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
   const handleSubmit = useCallback(
     async (text: string, attachments: Attachment[]) => {
       if (!conn) return;
+      const uploaded = attachments
+        .filter((a) => a.url)
+        .map((a) => ({ name: a.name, mimeType: a.mimeType, url: a.url! }));
       await postCommand(conn, {
         kind: "reply",
         sessionSlug: session.slug,
         text,
-        attachments: attachments.map((a) => ({
-          name: a.name,
-          mimeType: a.mimeType,
-          dataBase64: a.dataBase64,
-        })),
+        ...(uploaded.length > 0 ? { attachments: uploaded } : {}),
       });
     },
     [session.slug, conn],
