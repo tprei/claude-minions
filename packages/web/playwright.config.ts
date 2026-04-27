@@ -1,4 +1,8 @@
 import { defineConfig } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   testDir: "e2e",
@@ -14,7 +18,7 @@ export default defineConfig({
   },
   webServer: {
     command: "node ../engine/dist/cli.js",
-    cwd: __dirname,
+    cwd: here,
     env: {
       MINIONS_TOKEN: "devtoken",
       MINIONS_PROVIDER: "mock",
