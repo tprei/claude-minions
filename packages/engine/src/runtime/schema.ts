@@ -117,6 +117,14 @@ const fields: RuntimeField[] = [
     enumValues: ["merge", "squash", "rebase"],
     group: "execution",
   },
+  {
+    key: "autoCommitOnCompletion",
+    label: "Auto-commit on completion",
+    description: "Automatically commit worktree changes when a session completes successfully",
+    type: "boolean",
+    default: true,
+    group: "execution",
+  },
 ];
 
 export const runtimeConfigSchema: RuntimeConfigSchema = {
