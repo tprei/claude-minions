@@ -1,19 +1,30 @@
 import { create } from "zustand";
 import type { RuntimeConfigSchema, RuntimeOverrides } from "../types.js";
 
-interface RuntimeStore {
+export interface RuntimeSlice {
   schema: RuntimeConfigSchema | null;
   values: RuntimeOverrides;
   effective: RuntimeOverrides;
-  replace: (schema: RuntimeConfigSchema, values: RuntimeOverrides, effective: RuntimeOverrides) => void;
+}
+
+interface RuntimeStore {
+  byConnection: Map<string, RuntimeSlice>;
+  replace: (
+    connId: string,
+    schema: RuntimeConfigSchema,
+    values: RuntimeOverrides,
+    effective: RuntimeOverrides,
+  ) => void;
 }
 
 export const useRuntimeStore = create<RuntimeStore>((set) => ({
-  schema: null,
-  values: {},
-  effective: {},
+  byConnection: new Map(),
 
-  replace(schema, values, effective) {
-    set({ schema, values, effective });
+  replace(connId, schema, values, effective) {
+    set(s => {
+      const byConnection = new Map(s.byConnection);
+      byConnection.set(connId, { schema, values, effective });
+      return { byConnection };
+    });
   },
 }));

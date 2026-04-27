@@ -2,14 +2,18 @@ import { create } from "zustand";
 import type { ResourceSnapshot } from "../types.js";
 
 interface ResourceStore {
-  snapshot: ResourceSnapshot | null;
-  push: (snapshot: ResourceSnapshot) => void;
+  byConnection: Map<string, ResourceSnapshot>;
+  push: (connId: string, snapshot: ResourceSnapshot) => void;
 }
 
 export const useResourceStore = create<ResourceStore>((set) => ({
-  snapshot: null,
+  byConnection: new Map(),
 
-  push(snapshot) {
-    set({ snapshot });
+  push(connId, snapshot) {
+    set(s => {
+      const byConnection = new Map(s.byConnection);
+      byConnection.set(connId, snapshot);
+      return { byConnection };
+    });
   },
 }));

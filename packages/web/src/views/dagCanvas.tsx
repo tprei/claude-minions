@@ -13,7 +13,7 @@ import ReactFlow, {
 } from "reactflow";
 import dagre from "dagre";
 import type { DAG, DAGNode, DAGNodeStatus } from "@minions/shared";
-import { useDagStore } from "../store/dagStore.js";
+import { useDagStore, EMPTY_DAGS } from "../store/dagStore.js";
 import { useConnectionStore } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
@@ -152,9 +152,11 @@ interface Props {
 
 export function DagCanvasView({ dagId }: Props) {
   const enabled = useFeature("dags");
-  const dagsMap = useDagStore((s) => s.dags);
-  const dags = useMemo(() => Array.from(dagsMap.values()), [dagsMap]);
   const activeId = useConnectionStore((s) => s.activeId);
+  const dagsMap = useDagStore(
+    (s) => (activeId ? s.byConnection.get(activeId) ?? EMPTY_DAGS : EMPTY_DAGS),
+  );
+  const dags = useMemo(() => Array.from(dagsMap.values()), [dagsMap]);
 
   const selectDag = useCallback(
     (id: string) => {

@@ -2,34 +2,52 @@ import { create } from "zustand";
 import type { DAG } from "../types.js";
 
 interface DagStore {
-  dags: Map<string, DAG>;
-  replaceAll: (dags: DAG[]) => void;
-  upsert: (dag: DAG) => void;
-  remove: (id: string) => void;
+  byConnection: Map<string, Map<string, DAG>>;
+  replaceAll: (connId: string, dags: DAG[]) => void;
+  upsert: (connId: string, dag: DAG) => void;
+  remove: (connId: string, id: string) => void;
+}
+
+export const EMPTY_DAGS: Map<string, DAG> = new Map();
+
+function withSlice(
+  byConnection: Map<string, Map<string, DAG>>,
+  connId: string,
+  mutator: (slice: Map<string, DAG>) => void,
+): Map<string, Map<string, DAG>> {
+  const next = new Map(byConnection);
+  const existing = next.get(connId);
+  const slice = existing ? new Map(existing) : new Map<string, DAG>();
+  mutator(slice);
+  next.set(connId, slice);
+  return next;
 }
 
 export const useDagStore = create<DagStore>((set) => ({
-  dags: new Map(),
+  byConnection: new Map(),
 
-  replaceAll(dags) {
-    const map = new Map<string, DAG>();
-    for (const d of dags) map.set(d.id, d);
-    set({ dags: map });
+  replaceAll(connId, dags) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.clear();
+        for (const d of dags) slice.set(d.id, d);
+      }),
+    }));
   },
 
-  upsert(dag) {
-    set(s => {
-      const dags = new Map(s.dags);
-      dags.set(dag.id, dag);
-      return { dags };
-    });
+  upsert(connId, dag) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.set(dag.id, dag);
+      }),
+    }));
   },
 
-  remove(id) {
-    set(s => {
-      const dags = new Map(s.dags);
-      dags.delete(id);
-      return { dags };
-    });
+  remove(connId, id) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.delete(id);
+      }),
+    }));
   },
 }));

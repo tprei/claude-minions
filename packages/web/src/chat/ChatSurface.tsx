@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Session } from "@minions/shared";
-import { useSessionStore } from "../store/sessionStore.js";
+import { useSessionStore, EMPTY_SESSIONS, EMPTY_TRANSCRIPTS } from "../store/sessionStore.js";
 import { useRootStore } from "../store/root.js";
 import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
@@ -29,31 +29,13 @@ const SURFACE_TABS: Tab[] = [
 
 const MIN_WIDTH = 280;
 const DEFAULT_WIDTH = 380;
-const RESERVED_LEFT = 360;
-const WIDTH_STORAGE_KEY = "chat.width";
-
-function maxWidth(): number {
-  if (typeof window === "undefined") return DEFAULT_WIDTH;
-  return Math.max(MIN_WIDTH, window.innerWidth - RESERVED_LEFT);
-}
-
-function clampWidth(value: number): number {
-  return Math.min(Math.max(value, MIN_WIDTH), maxWidth());
-}
-
-function readStoredWidth(): number {
-  if (typeof window === "undefined") return DEFAULT_WIDTH;
-  const raw = window.localStorage.getItem(WIDTH_STORAGE_KEY);
-  if (!raw) return DEFAULT_WIDTH;
-  const parsed = Number.parseFloat(raw);
-  if (!Number.isFinite(parsed)) return DEFAULT_WIDTH;
-  return clampWidth(parsed);
-}
 
 function useSessionTranscript(session: Session) {
-  const transcripts = useSessionStore((s) => s.transcripts);
-  const setTranscript = useSessionStore((s) => s.setTranscript);
   const conn = useRootStore((s) => s.getActiveConnection());
+  const transcripts = useSessionStore(
+    (s) => (conn ? s.byConnection.get(conn.id)?.transcripts ?? EMPTY_TRANSCRIPTS : EMPTY_TRANSCRIPTS),
+  );
+  const setTranscript = useSessionStore((s) => s.setTranscript);
   const slug = session.slug;
   const hasLoaded = transcripts.has(slug);
 
@@ -61,8 +43,8 @@ function useSessionTranscript(session: Session) {
     if (!conn || hasLoaded) return;
     let cancelled = false;
     getTranscript(conn, slug)
-      .then((d) => { if (!cancelled) setTranscript(slug, d.items); })
-      .catch(() => { if (!cancelled) setTranscript(slug, []); });
+      .then((d) => { if (!cancelled) setTranscript(conn.id, slug, d.items); })
+      .catch(() => { if (!cancelled) setTranscript(conn.id, slug, []); });
     return () => { cancelled = true; };
   }, [conn, slug, hasLoaded, setTranscript]);
 
@@ -268,8 +250,11 @@ interface Props {
 export function ChatSurface({ sessionSlug }: Props) {
   const [open, setOpen] = useState(true);
   const [activeTab, setActiveTab] = useState("transcript");
-  const [width, setWidth] = useState<number>(() => readStoredWidth());
-  const sessionsMap = useSessionStore((s) => s.sessions);
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const activeId = useConnectionStore((s) => s.activeId);
+  const sessionsMap = useSessionStore(
+    (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
+  );
 
   const session = sessionSlug ? sessionsMap.get(sessionSlug) : undefined;
 
@@ -284,19 +269,7 @@ export function ChatSurface({ sessionSlug }: Props) {
   }, []);
 
   const handleDrag = useCallback((delta: number) => {
-    setWidth((w) => {
-      const next = clampWidth(w - delta);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(WIDTH_STORAGE_KEY, String(next));
-      }
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    const onResize = () => setWidth((w) => clampWidth(w));
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    setWidth((w) => Math.max(MIN_WIDTH, w - delta));
   }, []);
 
   if (!session) return null;

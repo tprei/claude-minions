@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import type { Session, SessionStatus, SessionMode } from "@minions/shared";
-import { useSessionStore } from "../store/sessionStore.js";
+import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
@@ -50,8 +50,10 @@ interface Props {
 }
 
 export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
-  const sessionsMap = useSessionStore((s) => s.sessions);
   const activeId = useConnectionStore((s) => s.activeId);
+  const sessionsMap = useSessionStore(
+    (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
+  );
   const [statusFilter, setStatusFilter] = useState<Set<SessionStatus>>(new Set());
   const [modeFilter, setModeFilter] = useState<Set<SessionMode>>(new Set());
   const [search, setSearch] = useState("");
