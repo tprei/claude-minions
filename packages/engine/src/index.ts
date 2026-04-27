@@ -10,7 +10,7 @@ import { RepoRepo } from "./store/repos/repoRepo.js";
 import { buildHttpServer } from "./http/server.js";
 import { registerRoutes } from "./http/routes/index.js";
 import { attachSseRoute } from "./http/sse.js";
-import { computeFeatureSets } from "./version/probes.js";
+import type { FeatureFlag } from "@minions/shared";
 import type { SubsystemDeps } from "./wiring.js";
 
 import { createAuditSubsystem } from "./audit/index.js";
@@ -32,6 +32,33 @@ import { createLoopsSubsystem } from "./loops/index.js";
 import { createVariantsSubsystem } from "./variants/index.js";
 import { createCiSubsystem } from "./ci/index.js";
 import { createStatsSubsystem } from "./stats/index.js";
+
+const ALL_FEATURES: FeatureFlag[] = [
+  "sessions",
+  "dags",
+  "ship",
+  "loops",
+  "variants",
+  "judge",
+  "checkpoints",
+  "memory",
+  "memory-mcp",
+  "audit",
+  "resources",
+  "push",
+  "external-tasks",
+  "runtime-overrides",
+  "github",
+  "quality-gates",
+  "readiness",
+  "ci-babysit",
+  "screenshots",
+  "diff",
+  "pr-preview",
+  "stack",
+  "split",
+  "voice-input",
+];
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -91,10 +118,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.ci = wire(createCiSubsystem(deps));
   ctx.stats = wire(createStatsSubsystem(deps));
 
-  let featuresReady: import("@minions/shared").FeatureFlag[] = [];
-  let featuresPending: { flag: import("@minions/shared").FeatureFlag; reason: string }[] = [];
-  ctx.features = () => featuresReady.slice();
-  ctx.featuresPending = () => featuresPending.map((f) => ({ ...f }));
+  ctx.features = () => [...ALL_FEATURES];
   ctx.repos = () => repoRepo.list();
 
   ctx.shutdown = async () => {
@@ -112,21 +136,11 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   await registerRoutes(app, ctx);
   attachSseRoute(app, ctx);
 
-  const featureSets = await computeFeatureSets(ctx);
-  featuresReady = featureSets.ready;
-  featuresPending = featureSets.pending;
-
   await app.listen({ port: env.port, host: env.host });
   engineLog.info("engine listening", { port: env.port, host: env.host });
 
   ctx.resource.start();
   await ctx.sessions.resumeAllActive();
-  await ctx.loops.tick();
-  setInterval(() => {
-    ctx.loops.tick().catch((e: unknown) => {
-      engineLog.error("loop tick error", { message: (e as Error).message });
-    });
-  }, env.loopTickSec * 1000);
 
   return ctx;
 }
