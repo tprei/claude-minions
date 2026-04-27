@@ -11,6 +11,7 @@ coverage
 .cache
 workspace/
 .workspace/
+.local-workspace/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
