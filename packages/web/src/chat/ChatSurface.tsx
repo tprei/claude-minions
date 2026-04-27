@@ -8,6 +8,7 @@ import { Diff } from "../components/Diff.js";
 import { Tabs, type Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
 import { QuickActions } from "./quickActions.js";
+import { RecoveryFooter } from "./RecoveryFooter.js";
 import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
@@ -17,7 +18,7 @@ import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { useConnectionStore } from "../connections/store.js";
 import type { Attachment } from "./attachments.js";
-import type { WorkspaceDiff, Checkpoint, Screenshot } from "@minions/shared";
+import type { Command, WorkspaceDiff, Checkpoint, Screenshot } from "@minions/shared";
 
 const SURFACE_TABS: Tab[] = [
   { id: "transcript", label: "Transcript" },
@@ -208,6 +209,14 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
     [session.slug, conn],
   );
 
+  const handleRecoveryAction = useCallback(
+    async (cmd: Command) => {
+      if (!conn) throw new Error("No active connection");
+      await postCommand(conn, cmd);
+    },
+    [conn],
+  );
+
   const inputDisabled = !conn || session.status === "completed" || session.status === "cancelled";
 
   return (
@@ -232,6 +241,7 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
         {activeTab === "dag" && <DagStatusPanel session={session} />}
       </div>
       <QuickActions session={session} />
+      <RecoveryFooter session={session} onAction={handleRecoveryAction} />
       <ChatInput
         onSubmit={handleSubmit}
         onSlashCommand={handleSlashCommand}
