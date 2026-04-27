@@ -10,7 +10,7 @@
     "dev": "tsx watch src/cli.ts",
     "start": "node dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --import tsx \"src/**/*.test.ts\"",
+    "test": "node --import tsx --test --test-reporter=spec",
     "lint": "echo skip"
   },
   "dependencies": {
