@@ -11,6 +11,8 @@ packages/
   web/         — single-page PWA: connections, transcripts, DAG canvas, chat
 ```
 
+- bin/engine.sh — sources .env.local and runs the engine
+
 ## Quick start
 
 ```bash
