@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type Database from "better-sqlite3";
 import type { RepoBinding } from "@minions/shared";
 
@@ -70,5 +72,33 @@ export class RepoRepo {
         defaultBranch: entry.defaultBranch ?? "main",
       });
     }
+  }
+
+  loadFromFile(jsonPath: string): boolean {
+    let text: string;
+    try {
+      text = fs.readFileSync(jsonPath, "utf8");
+    } catch {
+      return false;
+    }
+    let entries: { id: string; label: string; remote?: string; defaultBranch?: string }[];
+    try {
+      entries = JSON.parse(text);
+    } catch (err) {
+      throw new Error(`failed to parse ${jsonPath}: ${(err as Error).message}`);
+    }
+    for (const entry of entries) {
+      this.upsert({
+        id: entry.id,
+        label: entry.label,
+        remote: entry.remote,
+        defaultBranch: entry.defaultBranch ?? "main",
+      });
+    }
+    return true;
+  }
+
+  static repoFilePath(workspaceDir: string): string {
+    return path.join(workspaceDir, "repos.json");
   }
 }
