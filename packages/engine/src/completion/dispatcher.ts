@@ -8,6 +8,12 @@ import { sleep } from "../util/time.js";
 
 type CompletionHandler = (session: Session) => Promise<void>;
 
+export type CompletionHandlerErrorCallback = (
+  handler: CompletionHandler,
+  session: Session,
+  err: Error,
+) => void;
+
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 function isTerminal(status: Session["status"]): boolean {
@@ -21,6 +27,7 @@ export class CompletionDispatcher {
   constructor(
     private readonly bus: EventBus,
     private readonly log: Logger,
+    private readonly onHandlerError?: CompletionHandlerErrorCallback,
   ) {}
 
   register(handler: CompletionHandler): void {
@@ -50,11 +57,23 @@ export class CompletionDispatcher {
       try {
         await handler(session);
       } catch (err) {
+        const error = err as Error;
         this.log.error("completion handler error", {
           slug: session.slug,
           handler: handler.name,
-          err: (err as Error).message,
+          err: error.message,
         });
+        if (this.onHandlerError) {
+          try {
+            this.onHandlerError(handler, session, error);
+          } catch (cbErr) {
+            this.log.error("completion handler onError callback failed", {
+              slug: session.slug,
+              handler: handler.name,
+              err: (cbErr as Error).message,
+            });
+          }
+        }
       }
     }
   }
