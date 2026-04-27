@@ -109,13 +109,10 @@ describe("computeFeatureSets", () => {
     assert.match(memEntry!.reason, /memory subsystem not wired/);
   });
 
-  it("memory-mcp is always pending until provider spawn wires it", async () => {
+  it("memory-mcp is ready when the bridge script is present", async () => {
     const ctx = makeStubCtx();
     const result = await FEATURE_PROBES["memory-mcp"](ctx);
-    assert.equal(result.ready, false);
-    if (!result.ready) {
-      assert.match(result.reason, /memory MCP not yet wired/);
-    }
+    assert.equal(result.ready, true);
   });
 });
 
