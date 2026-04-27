@@ -1,4 +1,4 @@
-import { useState, type ReactElement, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactElement, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useConnectionStore } from "../connections/store.js";
 import { ConnectionPicker } from "../connections/picker.js";
@@ -6,6 +6,29 @@ import { useVersionStore } from "../store/version.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { cx } from "../util/classnames.js";
+import { sseStatusStore, type SseStatus } from "../transport/sseStatus.js";
+
+function SseStatusPill({ connId }: { connId: string }): ReactElement | null {
+  const status = useSyncExternalStore<SseStatus | undefined>(
+    sseStatusStore.subscribe,
+    () => sseStatusStore.get(connId),
+    () => undefined,
+  );
+  if (!status || status === "open") return null;
+  const reconnecting = status === "reconnecting";
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className={cx(
+        "pill border border-border bg-bg-elev text-fg-muted",
+        reconnecting && "animate-pulse",
+      )}
+    >
+      {reconnecting ? "reconnecting…" : "connecting…"}
+    </span>
+  );
+}
 
 interface HeaderProps {
   resourceIndicator?: ReactNode;
@@ -128,6 +151,8 @@ export function Header({ resourceIndicator, installPrompt }: HeaderProps): React
       </div>
 
       {activeId && <VersionPopover connId={activeId} />}
+
+      {activeId && <SseStatusPill connId={activeId} />}
 
       <div className="flex-1 min-w-0" />
 
