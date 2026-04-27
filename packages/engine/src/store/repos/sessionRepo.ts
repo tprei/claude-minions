@@ -55,6 +55,29 @@ interface SessionRow {
   metadata: string;
 }
 
+export interface PageCursor {
+  updatedAt: string;
+  slug: string;
+}
+
+export interface ListSessionsOptions {
+  status?: SessionStatus[];
+  mode?: SessionMode[];
+  repoId?: string;
+  q?: string;
+  limit?: number;
+  cursor?: PageCursor;
+}
+
+export interface ListSessionsResult {
+  items: Session[];
+  nextCursor?: PageCursor;
+}
+
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`);
+}
+
 function rowToSession(row: SessionRow, childSlugs: string[]): Session {
   let pr: PRSummary | undefined;
   if (row.pr_number && row.pr_url && row.pr_state && row.pr_base && row.pr_head && row.pr_title) {
@@ -216,6 +239,53 @@ export class SessionRepo {
     return (this.stmtChildren.all(parentSlug) as { slug: string }[])
       .map((r) => this.get(r.slug))
       .filter((s): s is Session => s !== null);
+  }
+
+  listPaged(opts: ListSessionsOptions): ListSessionsResult {
+    const limit = opts.limit ?? 100;
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    if (opts.status && opts.status.length > 0) {
+      const placeholders = opts.status.map(() => "?").join(",");
+      where.push(`status IN (${placeholders})`);
+      params.push(...opts.status);
+    }
+    if (opts.mode && opts.mode.length > 0) {
+      const placeholders = opts.mode.map(() => "?").join(",");
+      where.push(`mode IN (${placeholders})`);
+      params.push(...opts.mode);
+    }
+    if (opts.repoId) {
+      where.push(`repo_id = ?`);
+      params.push(opts.repoId);
+    }
+    if (opts.q) {
+      const pattern = `%${escapeLike(opts.q)}%`;
+      where.push(`LOWER(title) LIKE LOWER(?) ESCAPE '\\'`);
+      params.push(pattern);
+    }
+    if (opts.cursor) {
+      where.push(`(updated_at < ? OR (updated_at = ? AND slug < ?))`);
+      params.push(opts.cursor.updatedAt, opts.cursor.updatedAt, opts.cursor.slug);
+    }
+
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const sql = `SELECT * FROM sessions ${whereSql} ORDER BY updated_at DESC, slug DESC LIMIT ?`;
+    params.push(limit + 1);
+
+    const rows = this.db.prepare(sql).all(...params) as SessionRow[];
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const items = pageRows.map((r) => rowToSession(r, this.childSlugs(r.slug)));
+
+    let nextCursor: PageCursor | undefined;
+    if (hasMore) {
+      const last = pageRows[pageRows.length - 1]!;
+      nextCursor = { updatedAt: last.updated_at, slug: last.slug };
+    }
+
+    return { items, nextCursor };
   }
 
   insert(session: Session): void {

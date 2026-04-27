@@ -1,12 +1,98 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fs from "node:fs";
+import {
+  SESSION_STATUSES,
+  SESSION_MODES,
+  type SessionStatus,
+  type SessionMode,
+  type ListEnvelope,
+  type Session,
+} from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import { EngineError } from "../errors.js";
+import type { PageCursor } from "../store/repos/sessionRepo.js";
+
+const STATUS_SET: ReadonlySet<string> = new Set(SESSION_STATUSES);
+const MODE_SET: ReadonlySet<string> = new Set(SESSION_MODES);
+
+interface ListSessionsQuery {
+  status?: string;
+  mode?: string;
+  repoId?: string;
+  q?: string;
+  limit?: string;
+  cursor?: string;
+}
+
+function parseCsvEnum<T extends string>(
+  raw: string,
+  allowed: ReadonlySet<string>,
+  paramName: string,
+): T[] {
+  const parts = raw.split(",").map((p) => p.trim()).filter((p) => p.length > 0);
+  const invalid = parts.filter((p) => !allowed.has(p));
+  if (invalid.length > 0) {
+    throw new EngineError(
+      "bad_request",
+      `Invalid ${paramName} value(s): ${invalid.join(", ")}`,
+      { invalid, allowed: [...allowed] },
+    );
+  }
+  return parts as T[];
+}
+
+function parseLimit(raw: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 200) {
+    throw new EngineError("bad_request", "limit must be an integer between 1 and 200");
+  }
+  return n;
+}
+
+function decodeCursor(raw: string): PageCursor {
+  let decoded: string;
+  try {
+    decoded = Buffer.from(raw, "base64").toString("utf8");
+  } catch {
+    throw new EngineError("bad_request", "Invalid cursor");
+  }
+  const sep = decoded.lastIndexOf(":");
+  if (sep <= 0 || sep === decoded.length - 1) {
+    throw new EngineError("bad_request", "Invalid cursor");
+  }
+  return { updatedAt: decoded.slice(0, sep), slug: decoded.slice(sep + 1) };
+}
+
+function encodeCursor(cursor: PageCursor): string {
+  return Buffer.from(`${cursor.updatedAt}:${cursor.slug}`, "utf8").toString("base64");
+}
 
 export function registerSessionsRoutes(app: FastifyInstance, ctx: EngineContext): void {
-  app.get("/api/sessions", async (_req, reply) => {
-    return reply.send({ items: ctx.sessions.list() });
-  });
+  app.get(
+    "/api/sessions",
+    async (req: FastifyRequest<{ Querystring: ListSessionsQuery }>, reply) => {
+      const q = req.query;
+      const status = q.status ? parseCsvEnum<SessionStatus>(q.status, STATUS_SET, "status") : undefined;
+      const mode = q.mode ? parseCsvEnum<SessionMode>(q.mode, MODE_SET, "mode") : undefined;
+      const limit = q.limit ? parseLimit(q.limit) : 100;
+      const cursor = q.cursor ? decodeCursor(q.cursor) : undefined;
+
+      const result = ctx.sessions.listPaged({
+        status,
+        mode,
+        repoId: q.repoId,
+        q: q.q,
+        limit,
+        cursor,
+      });
+
+      const envelope: ListEnvelope<Session> = { items: result.items };
+      if (result.nextCursor) {
+        envelope.nextCursor = encodeCursor(result.nextCursor);
+      }
+      return reply.send(envelope);
+    },
+  );
 
   app.get("/api/sessions/:slug", async (req: FastifyRequest<{ Params: { slug: string } }>, reply) => {
     const session = ctx.sessions.get(req.params.slug);

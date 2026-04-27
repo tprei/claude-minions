@@ -1,6 +1,8 @@
 import type { Connection } from "../connections/store.js";
 import type {
   Session,
+  SessionStatus,
+  SessionMode,
   CreateSessionRequest,
   CreateVariantsRequest,
   TranscriptEvent,
@@ -76,8 +78,28 @@ export async function apiFetch<T>(
   return res.json() as Promise<T>;
 }
 
-export function getSessions(conn: Connection): Promise<ListEnvelope<Session>> {
-  return apiFetch(conn, "/api/sessions");
+export interface GetSessionsOptions {
+  status?: SessionStatus[];
+  mode?: SessionMode[];
+  repoId?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export function getSessions(
+  conn: Connection,
+  opts?: GetSessionsOptions,
+): Promise<ListEnvelope<Session>> {
+  const params = new URLSearchParams();
+  if (opts?.status && opts.status.length > 0) params.set("status", opts.status.join(","));
+  if (opts?.mode && opts.mode.length > 0) params.set("mode", opts.mode.join(","));
+  if (opts?.repoId) params.set("repoId", opts.repoId);
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts?.cursor) params.set("cursor", opts.cursor);
+  const qs = params.toString();
+  return apiFetch(conn, qs ? `/api/sessions?${qs}` : "/api/sessions");
 }
 
 export function getSession(conn: Connection, slug: string): Promise<Session> {

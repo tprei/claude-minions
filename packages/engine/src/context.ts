@@ -25,6 +25,7 @@ export interface EngineContext {
     create: (req: import("@minions/shared").CreateSessionRequest) => Promise<import("@minions/shared").Session>;
     get: (slug: string) => import("@minions/shared").Session | null;
     list: () => import("@minions/shared").Session[];
+    listPaged: (opts: import("./store/repos/sessionRepo.js").ListSessionsOptions) => import("./store/repos/sessionRepo.js").ListSessionsResult;
     listWithTranscript: () => import("@minions/shared").SessionWithTranscript[];
     transcript: (slug: string) => import("@minions/shared").TranscriptEvent[];
     stop: (slug: string, reason?: string) => Promise<void>;

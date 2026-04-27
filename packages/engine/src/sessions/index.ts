@@ -17,6 +17,7 @@ export function createSessionsSubsystem(deps: SubsystemDeps): SubsystemResult<En
     create: (req) => registry.create(req),
     get: (slug) => registry.get(slug),
     list: () => registry.list(),
+    listPaged: (opts) => registry.listPaged(opts),
     listWithTranscript: () => registry.listWithTranscript(),
     transcript: (slug) => registry.transcript(slug),
     stop: (slug, reason) => registry.stop(slug, reason),

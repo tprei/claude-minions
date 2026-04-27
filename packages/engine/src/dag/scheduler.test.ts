@@ -149,6 +149,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
       },
       get: () => null,
       list: () => [],
+      listPaged: () => ({ items: [] }),
       listWithTranscript: () => [],
       transcript: () => [],
       stop: async () => {},

@@ -27,6 +27,7 @@ import { Screenshots } from "./screenshots.js";
 import { Checkpoints } from "./checkpoints.js";
 import { computeDiff } from "./diff.js";
 import { rowToSession, rowToTranscriptEvent, type SessionRow, type TranscriptRow } from "./mapper.js";
+import { SessionRepo, type ListSessionsOptions, type ListSessionsResult } from "../store/repos/sessionRepo.js";
 import { workspacePaths } from "../workspace/paths.js";
 import { ensureBareClone } from "../workspace/cloner.js";
 import { addWorktree, removeWorktree, initScratchRepo } from "../workspace/worktree.js";
@@ -65,6 +66,7 @@ export class SessionRegistry {
   private readonly screenshots: Screenshots;
   private readonly checkpointStore: Checkpoints;
   private readonly paths: ReturnType<typeof workspacePaths>;
+  private readonly repo: SessionRepo;
 
   private readonly insertSession: Database.Statement;
   private readonly updateSession: Database.Statement;
@@ -83,6 +85,7 @@ export class SessionRegistry {
 
     this.paths = workspacePaths(workspaceDir);
 
+    this.repo = new SessionRepo(db);
     this.collector = new TranscriptCollector({ db, bus, log });
     this.replyQueue = new ReplyQueue(db);
     this.screenshots = new Screenshots({
@@ -164,6 +167,10 @@ export class SessionRegistry {
   list(): Session[] {
     const rows = this.listSessions.all() as SessionRow[];
     return rows.map((r) => this.buildSession(r));
+  }
+
+  listPaged(opts: ListSessionsOptions): ListSessionsResult {
+    return this.repo.listPaged(opts);
   }
 
   listWithTranscript(): SessionWithTranscript[] {

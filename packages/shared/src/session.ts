@@ -1,22 +1,28 @@
 import type { TranscriptEvent } from "./transcript.js";
 
-export type SessionStatus =
-  | "pending"
-  | "running"
-  | "waiting_input"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export const SESSION_STATUSES = [
+  "pending",
+  "running",
+  "waiting_input",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
 
-export type SessionMode =
-  | "task"
-  | "dag-task"
-  | "plan"
-  | "think"
-  | "review"
-  | "ship"
-  | "rebase-resolver"
-  | "loop";
+export type SessionStatus = (typeof SESSION_STATUSES)[number];
+
+export const SESSION_MODES = [
+  "task",
+  "dag-task",
+  "plan",
+  "think",
+  "review",
+  "ship",
+  "rebase-resolver",
+  "loop",
+] as const;
+
+export type SessionMode = (typeof SESSION_MODES)[number];
 
 export type ShipStage = "think" | "plan" | "dag" | "verify" | "done";
 
