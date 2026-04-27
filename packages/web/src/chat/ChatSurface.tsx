@@ -291,11 +291,11 @@ export function ChatSurface({ sessionSlug }: Props) {
 
   return (
     <div
-      className="flex flex-shrink-0 border-l border-border bg-bg-soft min-h-0 max-w-[60vw]"
+      className="flex flex-shrink-0 border-l border-border bg-bg-soft min-h-0 h-full max-w-[60vw]"
       style={{ width }}
     >
       <ResizeHandle onDrag={handleDrag} />
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         <SurfacePanel
           session={session}
           activeTab={activeTab}
