@@ -5,6 +5,8 @@ import { AttachmentBar, useAttachments, type Attachment } from "./attachments.js
 import { startListening, stopListening, isVoiceSupported, type VoiceSession } from "./voice.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { cx } from "../util/classnames.js";
+import { useRootStore } from "../store/root.js";
+import { uploadAttachment } from "../transport/rest.js";
 import type { SlashCommand } from "./slashCommands.js";
 
 interface Props {
@@ -40,11 +42,14 @@ function parseSlashCommand(value: string): { cmd: SlashCommand; args: string[] }
 export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hint }: Props) {
   const [value, setValue] = useState("");
   const [autocompleteIdx, setAutocompleteIdx] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const voiceRef = useRef<VoiceSession | null>(null);
   const [listening, setListening] = useState(false);
   const voiceEnabled = useFeature("voice-input");
   const { attachments, setAttachments, onPaste, onDrop, clear: clearAttachments } = useAttachments();
+  const conn = useRootStore((s) => s.getActiveConnection());
 
   const matches = matchSlash(value) ?? [];
   const showAutocomplete = matches.length > 0;
@@ -53,7 +58,7 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
     setAutocompleteIdx(0);
   }, [value]);
 
-  const submit = useCallback(() => {
+  const submit = useCallback(async () => {
     const trimmed = value.trim();
     if (!trimmed && attachments.length === 0) return;
     const parsed = parseSlashCommand(trimmed);
@@ -63,10 +68,33 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
       clearAttachments();
       return;
     }
-    onSubmit(trimmed, attachments);
+    let uploaded: Attachment[] = attachments;
+    if (attachments.some((a) => !a.url)) {
+      if (!conn) {
+        setUploadError("No active connection for upload");
+        return;
+      }
+      setUploading(true);
+      setUploadError(null);
+      try {
+        uploaded = await Promise.all(
+          attachments.map(async (a) => {
+            if (a.url) return a;
+            const res = await uploadAttachment(conn, a.file);
+            return { ...a, url: res.url };
+          }),
+        );
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : "Upload failed");
+        setUploading(false);
+        return;
+      }
+      setUploading(false);
+    }
+    onSubmit(trimmed, uploaded);
     setValue("");
     clearAttachments();
-  }, [value, attachments, onSubmit, onSlashCommand, clearAttachments]);
+  }, [value, attachments, conn, onSubmit, onSlashCommand, clearAttachments]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showAutocomplete) {
@@ -91,7 +119,7 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      submit();
+      void submit();
     }
   };
 
@@ -128,6 +156,9 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
       onDragOver={(e) => e.preventDefault()}
     >
       <AttachmentBar attachments={attachments} onChange={setAttachments} />
+      {uploadError && (
+        <div className="px-3 pt-1 text-xs text-red-400">Upload failed: {uploadError}</div>
+      )}
       {showAutocomplete && (
         <div className="absolute bottom-full left-0 right-0 px-3 pb-1 z-50">
           <AutocompletePopover
@@ -176,14 +207,14 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
         )}
         <button
           type="button"
-          onClick={submit}
-          disabled={disabled || (!value.trim() && attachments.length === 0)}
+          onClick={() => void submit()}
+          disabled={disabled || uploading || (!value.trim() && attachments.length === 0)}
           className={cx(
             "btn-primary shrink-0 text-xs",
-            (disabled || (!value.trim() && attachments.length === 0)) && "opacity-50 cursor-not-allowed",
+            (disabled || uploading || (!value.trim() && attachments.length === 0)) && "opacity-50 cursor-not-allowed",
           )}
         >
-          Send
+          {uploading ? "Uploading…" : "Send"}
         </button>
       </div>
       {hint && (

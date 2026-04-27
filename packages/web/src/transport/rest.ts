@@ -255,3 +255,31 @@ export function listLoops(conn: Connection): Promise<ListEnvelope<LoopDefinition
 export function upsertLoop(conn: Connection, loop: Omit<LoopDefinition, "id" | "createdAt" | "updatedAt" | "consecutiveFailures">): Promise<LoopDefinition> {
   return apiFetch(conn, "/api/loops", { method: "POST", body: JSON.stringify(loop) });
 }
+
+export interface UploadResponse {
+  url: string;
+  name: string;
+  mimeType: string;
+  byteSize: number;
+}
+
+export async function uploadAttachment(conn: Connection, file: File): Promise<UploadResponse> {
+  const url = `${conn.baseUrl.replace(/\/$/, "")}/api/uploads`;
+  const fd = new FormData();
+  fd.set("file", file);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${conn.token}` },
+    body: fd,
+  });
+  if (!res.ok) {
+    let body: { error: string; message: string; detail?: Record<string, unknown> };
+    try {
+      body = await res.json() as typeof body;
+    } catch {
+      body = { error: "unknown", message: res.statusText };
+    }
+    throw new ApiError(res.status, body);
+  }
+  return res.json() as Promise<UploadResponse>;
+}
