@@ -276,6 +276,17 @@ export class SessionRegistry {
       JSON.stringify(req.metadata ?? {}),
     );
 
+    if (mode === "ship") {
+      this.deps.db.prepare(`
+        INSERT INTO ship_state(session_slug, stage, notes, updated_at)
+        VALUES (?, 'think', '[]', ?)
+        ON CONFLICT(session_slug) DO NOTHING
+      `).run(slug, now);
+      this.deps.db.prepare(
+        `UPDATE sessions SET ship_stage = 'think', updated_at = ? WHERE slug = ?`,
+      ).run(now, slug);
+    }
+
     const sessionRow = this.getSessionRow(slug)!;
     const session = this.buildSession(sessionRow);
     bus.emit({ kind: "session_created", session });
