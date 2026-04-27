@@ -5,6 +5,7 @@ import { useRootStore } from "../store/root.js";
 import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
 import { Diff } from "../components/Diff.js";
+import { PRPanel } from "./PRPanel.js";
 import { Tabs, type Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
 import { QuickActions } from "./quickActions.js";
@@ -19,13 +20,19 @@ import { useConnectionStore } from "../connections/store.js";
 import type { Attachment } from "./attachments.js";
 import type { WorkspaceDiff, Checkpoint, Screenshot } from "@minions/shared";
 
-const SURFACE_TABS: Tab[] = [
-  { id: "transcript", label: "Transcript" },
-  { id: "diff", label: "Diff" },
-  { id: "checkpoints", label: "Checkpoints" },
-  { id: "screenshots", label: "Screenshots" },
-  { id: "dag", label: "DAG status" },
-];
+const TRANSCRIPT_TAB: Tab = { id: "transcript", label: "Transcript" };
+const DIFF_TAB: Tab = { id: "diff", label: "Diff" };
+const PR_TAB: Tab = { id: "pr", label: "PR" };
+const CHECKPOINTS_TAB: Tab = { id: "checkpoints", label: "Checkpoints" };
+const SCREENSHOTS_TAB: Tab = { id: "screenshots", label: "Screenshots" };
+const DAG_TAB: Tab = { id: "dag", label: "DAG status" };
+
+function buildTabs(session: Session): Tab[] {
+  const tabs: Tab[] = [TRANSCRIPT_TAB, DIFF_TAB];
+  if (session.pr) tabs.push(PR_TAB);
+  tabs.push(CHECKPOINTS_TAB, SCREENSHOTS_TAB, DAG_TAB);
+  return tabs;
+}
 
 const MIN_WIDTH = 280;
 const DEFAULT_WIDTH = 380;
@@ -222,10 +229,11 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
           ×
         </button>
       </div>
-      <Tabs tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
+      <Tabs tabs={buildTabs(session)} active={activeTab} onChange={onTabChange} />
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {activeTab === "transcript" && <Transcript events={events} />}
         {activeTab === "diff" && <DiffPanel session={session} />}
+        {activeTab === "pr" && session.pr && <PRPanel session={session} />}
         {activeTab === "checkpoints" && <CheckpointsPanel session={session} />}
         {activeTab === "screenshots" && <ScreenshotsPanel session={session} />}
         {activeTab === "dag" && <DagStatusPanel session={session} />}
@@ -252,6 +260,12 @@ export function ChatSurface({ sessionSlug }: Props) {
   const sessionsMap = useSessionStore((s) => s.sessions);
 
   const session = sessionSlug ? sessionsMap.get(sessionSlug) : undefined;
+
+  useEffect(() => {
+    if (activeTab === "pr" && session && !session.pr) {
+      setActiveTab("transcript");
+    }
+  }, [activeTab, session]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
