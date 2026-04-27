@@ -1,6 +1,6 @@
 # claude-minions
 
-A self-hostable multi-agent coding orchestrator: engine + installable PWA.
+A self-hostable, self-driving multi-agent coding orchestrator: engine + installable PWA.
 
 ## Layout
 
