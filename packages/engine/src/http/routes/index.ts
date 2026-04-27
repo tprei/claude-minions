@@ -20,7 +20,7 @@ import { registerVariantsRoutes } from "../../variants/routes.js";
 import { registerDoctorRoutes } from "./doctor.js";
 
 export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): Promise<void> {
-  registerHealthRoutes(app);
+  registerHealthRoutes(app, ctx);
   registerVersionRoutes(app, ctx);
   registerStatsRoutes(app, ctx);
   registerMetricsRoutes(app, ctx);

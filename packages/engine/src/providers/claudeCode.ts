@@ -10,7 +10,7 @@ import type {
   ProviderEvent,
   ParseStreamState,
 } from "./provider.js";
-import { mockProvider } from "./mock.js";
+import { EngineError } from "../errors.js";
 
 type NdjsonLine = Record<string, unknown>;
 
@@ -235,7 +235,7 @@ function buildSpawnHandle(
   return handle;
 }
 
-async function findClaudeBinary(): Promise<string | null> {
+export async function findClaudeBinary(): Promise<string | null> {
   const { exec } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execAsync = promisify(exec);
@@ -253,8 +253,13 @@ export const claudeCodeProvider: AgentProvider = {
   async spawn(opts: ProviderSpawnOpts): Promise<ProviderHandle> {
     const claudeBin = await findClaudeBinary();
     if (!claudeBin) {
-      process.stderr.write("[claude-code] claude binary not found, falling back to mock\n");
-      return mockProvider.spawn(opts);
+      process.stderr.write(
+        "[claude-code] claude binary not found; refusing to silently fall back to mock\n",
+      );
+      throw new EngineError(
+        "upstream",
+        "claude CLI not found in $PATH. Install claude-code CLI or set MINIONS_PROVIDER=mock if you intentionally want the in-process stub.",
+      );
     }
 
     const args = [
@@ -295,8 +300,13 @@ export const claudeCodeProvider: AgentProvider = {
   async resume(opts: ProviderResumeOpts): Promise<ProviderHandle> {
     const claudeBin = await findClaudeBinary();
     if (!claudeBin) {
-      process.stderr.write("[claude-code] claude binary not found, falling back to mock for resume\n");
-      return mockProvider.resume(opts);
+      process.stderr.write(
+        "[claude-code] claude binary not found; refusing to silently fall back to mock\n",
+      );
+      throw new EngineError(
+        "upstream",
+        "claude CLI not found in $PATH. Install claude-code CLI or set MINIONS_PROVIDER=mock if you intentionally want the in-process stub.",
+      );
     }
 
     const args = ["--output-format", "stream-json", "--print", "--verbose", "--dangerously-skip-permissions"];
