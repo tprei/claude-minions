@@ -1,3 +1,5 @@
+import path from "node:path";
+import fs from "node:fs";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
@@ -31,15 +33,40 @@ export async function buildHttpServer(ctx: EngineContext): Promise<ReturnType<ty
   });
 
   app.addHook("preHandler", async (req, reply) => {
-    const url = req.url.split("?")[0];
-    if (url === "/api/health") {
-      return;
-    }
-    if (url === "/api/events") {
-      return;
-    }
+    const url = req.url.split("?")[0] ?? "";
+    if (!url.startsWith("/api/")) return;
+    if (url === "/api/health") return;
+    if (url === "/api/events") return;
     await buildAuthPreHandler(ctx.env.token)(req, reply);
   });
+
+  if (ctx.env.webDist) {
+    const webDist = ctx.env.webDist;
+    if (!fs.existsSync(webDist)) {
+      ctx.log.warn("MINIONS_WEB_DIST not found; web will not be served", { webDist });
+    } else {
+      await app.register(staticFiles, {
+        root: webDist,
+        prefix: "/",
+        decorateReply: false,
+        wildcard: false,
+      });
+      const indexHtml = path.join(webDist, "index.html");
+      app.setNotFoundHandler(async (req, reply) => {
+        if (req.url.startsWith("/api/")) {
+          await reply.status(404).send({ error: "not_found", message: `Route ${req.method}:${req.url} not found` });
+          return;
+        }
+        if (fs.existsSync(indexHtml)) {
+          const html = fs.readFileSync(indexHtml, "utf8");
+          await reply.type("text/html").send(html);
+          return;
+        }
+        await reply.status(404).send({ error: "not_found", message: "Web bundle not built" });
+      });
+      ctx.log.info("serving web bundle", { webDist });
+    }
+  }
 
   app.setErrorHandler(async (err, _req, reply) => {
     if (isEngineError(err)) {

@@ -1,0 +1,49 @@
+# Single-container deploy: engine serves /api + the built PWA on /.
+#
+# First-time setup on the mini PC:
+#   git clone https://github.com/tprei/claude-minions.git ~/minions
+#   cd ~/minions
+#   cp .env.local.example .env.deploy
+#   # edit .env.deploy: set MINIONS_TOKEN, MINIONS_REPOS, the GH App vars,
+#   # set MINIONS_GH_APP_PRIVATE_KEY=/secrets/gh-app.pem
+#   mkdir -p ./secrets ./data
+#   cp /path/to/your/.minions-gh-app.pem ./secrets/gh-app.pem
+#   docker compose up -d --build
+#
+# Update:
+#   git pull && docker compose up -d --build
+#
+# The web UI is served from the same port; visit http://<mini-pc-ip>:8787/ ;
+# add a connection in the picker pointing back at http://<mini-pc-ip>:8787/
+# with your MINIONS_TOKEN.
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: minions/engine:local
+    container_name: minions
+    restart: unless-stopped
+    env_file:
+      - .env.deploy
+    environment:
+      MINIONS_HOST: 0.0.0.0
+      MINIONS_PORT: 8787
+      MINIONS_WORKSPACE: /data/workspace
+      MINIONS_SERVE_WEB: "true"
+      MINIONS_WEB_DIST: /app/packages/web/dist
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./data:/data
+      - ./secrets:/secrets:ro
+      # Mount your existing claude CLI auth so the in-container claude
+      # binary can use it without re-logging in.
+      - ${HOME}/.claude:/root/.claude:ro
+    healthcheck:
+      test: ["CMD","node","-e","require('http').get('http://127.0.0.1:8787/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

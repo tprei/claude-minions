@@ -25,3 +25,7 @@ coverage
 *.db-wal
 .pnpm-store/
 packages/web/dev-dist/
+
+/secrets/
+/data/
+.env.deploy

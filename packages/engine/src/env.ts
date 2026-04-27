@@ -17,6 +17,7 @@ export interface EngineEnv {
   ssePingSec: number;
   apiVersion: string;
   libraryVersion: string;
+  webDist: string | null;
 }
 
 function parseList(v: string | undefined): string[] {
@@ -75,5 +76,9 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): EngineEnv {
     ssePingSec: asInt(env.MINIONS_SSE_PING_SEC, 25),
     apiVersion: "1",
     libraryVersion: "0.1.0",
+    webDist:
+      env.MINIONS_SERVE_WEB === "true" && env.MINIONS_WEB_DIST
+        ? path.resolve(env.MINIONS_WEB_DIST)
+        : null,
   };
 }

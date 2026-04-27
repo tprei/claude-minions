@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1.7
+
+# ----- builder ----------------------------------------------------------------
+FROM node:20-bookworm-slim AS builder
+WORKDIR /app
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git python3 build-essential ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/engine/package.json packages/engine/
+COPY packages/web/package.json    packages/web/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/shared ./packages/shared
+COPY packages/engine ./packages/engine
+COPY packages/web    ./packages/web
+
+RUN pnpm --filter @minions/shared run build \
+ && pnpm --filter @minions/engine run build \
+ && pnpm --filter @minions/web    run build
+
+# ----- runtime ----------------------------------------------------------------
+FROM node:20-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates openssh-client tini \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+# claude CLI for the claude-code provider
+RUN npm i -g @anthropic-ai/claude-code
+
+COPY --from=builder /app/pnpm-workspace.yaml /app/pnpm-lock.yaml /app/package.json ./
+COPY --from=builder /app/packages/shared/package.json packages/shared/
+COPY --from=builder /app/packages/engine/package.json packages/engine/
+COPY --from=builder /app/packages/web/package.json    packages/web/
+COPY --from=builder /app/packages/shared/dist         packages/shared/dist
+COPY --from=builder /app/packages/engine/dist         packages/engine/dist
+COPY --from=builder /app/packages/web/dist            packages/web/dist
+
+RUN pnpm install --prod --frozen-lockfile
+
+EXPOSE 8787
+VOLUME ["/data/workspace", "/secrets"]
+
+ENV MINIONS_PORT=8787 \
+    MINIONS_HOST=0.0.0.0 \
+    MINIONS_WORKSPACE=/data/workspace \
+    MINIONS_SERVE_WEB=true \
+    MINIONS_WEB_DIST=/app/packages/web/dist
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:'+process.env.MINIONS_PORT+'/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
+ENTRYPOINT ["tini","--"]
+CMD ["node","packages/engine/dist/cli.js"]
