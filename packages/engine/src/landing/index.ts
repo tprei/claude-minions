@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import simpleGit from "simple-git";
 import type { EngineContext } from "../context.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
@@ -11,6 +12,25 @@ import { EngineError } from "../errors.js";
 
 function isOnlineRemote(remote: string): boolean {
   return /^(https?:\/\/|ssh:\/\/|git:\/\/|git@)/.test(remote);
+}
+
+function runGh(args: string[], opts: { cwd: string; log: Logger }): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("gh", args, { cwd: opts.cwd, env: process.env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c: Buffer) => (stdout += c.toString("utf8")));
+    child.stderr.on("data", (c: Buffer) => (stderr += c.toString("utf8")));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        opts.log.info("gh ok", { args: args.join(" ") });
+        resolve(stdout.trim());
+      } else {
+        reject(new Error(`gh ${args.join(" ")} exited ${code}: ${stderr.trim() || stdout.trim()}`));
+      }
+    });
+  });
 }
 
 class LandingManager {
@@ -49,44 +69,56 @@ class LandingManager {
 
     await this.ensurePushedAndPRed(slug);
 
-    await git.fetch("origin", baseBranch);
+    const refreshedAfterPush = this.ctx.sessions.get(slug) ?? session;
+    const repo = session.repoId ? this.ctx.repos().find((r) => r.id === session.repoId) : undefined;
+    const onlineFlow = !!(repo?.remote && isOnlineRemote(repo.remote)) && !!refreshedAfterPush.pr;
 
-    try {
-      await git.rebase([`origin/${baseBranch}`]);
-    } catch (err) {
-      const message = (err as Error).message;
-      if (message.includes("conflict") || message.includes("CONFLICT")) {
-        await git.rebase(["--abort"]).catch(() => {});
-        throw new Error(`rebase conflict during land: ${message}`);
+    if (onlineFlow && refreshedAfterPush.pr) {
+      const prNumber = refreshedAfterPush.pr.number;
+      const flag = strategy === "squash" ? "--squash" : strategy === "rebase" ? "--rebase" : "--merge";
+      const args = ["pr", "merge", String(prNumber), flag, "--delete-branch=false"];
+      try {
+        await runGh(args, { cwd: session.worktreePath, log: this.log });
+      } catch (err) {
+        throw new EngineError(
+          "upstream",
+          `failed to merge PR #${prNumber} on GitHub: ${(err as Error).message}`,
+        );
       }
-      throw err;
-    }
-
-    const mainGit = simpleGit(session.worktreePath);
-
-    if (strategy === "squash") {
-      await mainGit.checkout(baseBranch);
-      await mainGit.merge([headBranch, "--squash"]);
-      await mainGit.commit(`Squash merge ${headBranch} into ${baseBranch}`, { "--no-edit": null });
-    } else if (strategy === "rebase") {
-      await mainGit.checkout(baseBranch);
-      await mainGit.merge([headBranch, "--ff-only"]);
+      try {
+        await git.fetch("origin", baseBranch);
+      } catch {
+        /* best effort */
+      }
     } else {
-      await mainGit.checkout(baseBranch);
-      await mainGit.merge([headBranch, "--no-ff"]);
-    }
+      try {
+        await git.fetch("origin", baseBranch);
+      } catch {
+        /* best effort — local-only flows may not have an upstream ref */
+      }
 
-    if (session.repoId) {
-      const repo = this.ctx.repos().find((r) => r.id === session.repoId);
-      if (repo?.remote && isOnlineRemote(repo.remote)) {
-        try {
-          await mainGit.push("origin", baseBranch);
-        } catch (err) {
-          throw new EngineError(
-            "upstream",
-            `failed to push ${baseBranch} to origin: ${(err as Error).message}`,
-          );
+      try {
+        await git.rebase([`origin/${baseBranch}`]);
+      } catch (err) {
+        const message = (err as Error).message;
+        if (message.includes("conflict") || message.includes("CONFLICT")) {
+          await git.rebase(["--abort"]).catch(() => {});
+          throw new Error(`rebase conflict during land: ${message}`);
         }
+        throw err;
+      }
+
+      const mainGit = simpleGit(session.worktreePath);
+      if (strategy === "squash") {
+        await mainGit.checkout(baseBranch);
+        await mainGit.merge([headBranch, "--squash"]);
+        await mainGit.commit(`Squash merge ${headBranch} into ${baseBranch}`, { "--no-edit": null });
+      } else if (strategy === "rebase") {
+        await mainGit.checkout(baseBranch);
+        await mainGit.merge([headBranch, "--ff-only"]);
+      } else {
+        await mainGit.checkout(baseBranch);
+        await mainGit.merge([headBranch, "--no-ff"]);
       }
     }
 
