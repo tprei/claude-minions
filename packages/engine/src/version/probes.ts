@@ -1,5 +1,6 @@
-import { mkdirSync, rmdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmdirSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FeatureFlag } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 
@@ -44,7 +45,14 @@ export const FEATURE_PROBES: Record<FeatureFlag, FeatureProbe> = {
     }
   },
 
-  "memory-mcp": () => pending("memory MCP not yet wired into provider spawn"),
+  "memory-mcp": () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const enginePkgRoot = path.resolve(here, "..", "..");
+    const distBridge = path.join(enginePkgRoot, "dist", "memory", "mcpBridge.mjs");
+    const srcBridge = path.join(enginePkgRoot, "src", "memory", "mcpBridge.mjs");
+    if (existsSync(distBridge) || existsSync(srcBridge)) return READY;
+    return pending("memory MCP bridge script not found");
+  },
 
   audit: (ctx) => (ctx.audit ? READY : pending("audit subsystem not wired")),
 
