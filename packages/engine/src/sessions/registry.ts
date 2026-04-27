@@ -105,6 +105,7 @@ export class SessionRegistry {
   private readonly getProviderState: Database.Statement;
   private readonly upsertProviderState: Database.Statement;
   private readonly listTranscript: Database.Statement;
+  private readonly listTranscriptSince: Database.Statement;
   private readonly updateSessionStatus: Database.Statement;
   private readonly getRepo: Database.Statement;
 
@@ -169,6 +170,9 @@ export class SessionRegistry {
     `);
     this.listTranscript = db.prepare(
       `SELECT * FROM transcript_events WHERE session_slug = ? ORDER BY seq ASC`,
+    );
+    this.listTranscriptSince = db.prepare(
+      `SELECT * FROM transcript_events WHERE session_slug = ? AND seq > ? ORDER BY seq ASC`,
     );
     this.getRepo = db.prepare(`SELECT * FROM repos WHERE id = ?`);
 
@@ -243,8 +247,10 @@ export class SessionRegistry {
     }));
   }
 
-  transcript(slug: string): TranscriptEvent[] {
-    const rows = this.listTranscript.all(slug) as TranscriptRow[];
+  transcript(slug: string, sinceSeq?: number): TranscriptEvent[] {
+    const rows = sinceSeq === undefined
+      ? (this.listTranscript.all(slug) as TranscriptRow[])
+      : (this.listTranscriptSince.all(slug, sinceSeq) as TranscriptRow[]);
     return rows.map(rowToTranscriptEvent);
   }
 

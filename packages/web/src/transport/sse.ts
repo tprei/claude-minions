@@ -1,5 +1,6 @@
 import type { Connection } from "../connections/store.js";
 import { sseStatusStore, type SseStatus } from "./sseStatus.js";
+import { fetchTranscript } from "./rest.js";
 import type {
   ServerEventKind,
   SessionCreatedEvent,
@@ -59,6 +60,7 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
   let closed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   const cleanups: Array<() => void> = [];
+  const highWaterBySlug = new Map<string, number>();
 
   function setStatus(status: SseStatus): void {
     sseStatusStore.set(conn.id, status);
@@ -74,6 +76,7 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
   function open(): void {
     if (closed) return;
     setStatus(attempt === 0 ? "connecting" : "reconnecting");
+    const attemptAtOpen = attempt;
     const url = `${conn.baseUrl.replace(/\/$/, "")}/api/events?token=${encodeURIComponent(conn.token)}`;
     es = new EventSource(url);
 
@@ -106,6 +109,9 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
         if (kind === "hello") {
           attempt = 0;
           setStatus("open");
+          if (attemptAtOpen > 0) {
+            void backfillSinceHighWater();
+          }
         }
         dispatch(kind, data);
       });
@@ -135,6 +141,31 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
     open();
   }
 
+  async function backfillSinceHighWater(): Promise<void> {
+    const snapshots = [...highWaterBySlug.entries()];
+    for (const [slug, sinceSeq] of snapshots) {
+      if (closed) return;
+      try {
+        const env = await fetchTranscript(conn, slug, sinceSeq);
+        const sorted = [...env.items].sort((a, b) => a.seq - b.seq);
+        for (const event of sorted) {
+          if (event.seq <= sinceSeq) continue;
+          dispatchTranscriptEvent({ kind: "transcript_event", sessionSlug: slug, event });
+        }
+      } catch {
+        // best-effort: next reconnect will retry
+      }
+    }
+  }
+
+  function dispatchTranscriptEvent(e: TranscriptEventEvent): void {
+    const prev = highWaterBySlug.get(e.sessionSlug) ?? -1;
+    if (e.event.seq > prev) {
+      highWaterBySlug.set(e.sessionSlug, e.event.seq);
+    }
+    handlers.onTranscriptEvent?.(e);
+  }
+
   function dispatch(kind: ServerEventKind, data: unknown): void {
     switch (kind) {
       case "hello": handlers.onHello?.(data as HelloEvent); break;
@@ -145,7 +176,7 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
       case "dag_created": handlers.onDagCreated?.(data as DagCreatedEvent); break;
       case "dag_updated": handlers.onDagUpdated?.(data as DagUpdatedEvent); break;
       case "dag_deleted": handlers.onDagDeleted?.(data as DagDeletedEvent); break;
-      case "transcript_event": handlers.onTranscriptEvent?.(data as TranscriptEventEvent); break;
+      case "transcript_event": dispatchTranscriptEvent(data as TranscriptEventEvent); break;
       case "resource": handlers.onResource?.(data as ResourceEvent); break;
       case "session_screenshot_captured": handlers.onSessionScreenshotCaptured?.(data as SessionScreenshotCapturedEvent); break;
       case "memory_proposed": handlers.onMemoryProposed?.(data as MemoryProposedEvent); break;

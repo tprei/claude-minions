@@ -112,13 +112,31 @@ export function registerSessionsRoutes(app: FastifyInstance, ctx: EngineContext)
     return reply.send({ ok: true });
   });
 
-  app.get("/api/sessions/:slug/transcript", async (req: FastifyRequest<{ Params: { slug: string } }>, reply) => {
-    const session = ctx.sessions.get(req.params.slug);
-    if (!session) {
-      throw new EngineError("not_found", `Session ${req.params.slug} not found`);
-    }
-    return reply.send({ items: ctx.sessions.transcript(req.params.slug) });
-  });
+  app.get(
+    "/api/sessions/:slug/transcript",
+    async (
+      req: FastifyRequest<{ Params: { slug: string }; Querystring: { since?: string } }>,
+      reply,
+    ) => {
+      const session = ctx.sessions.get(req.params.slug);
+      if (!session) {
+        throw new EngineError("not_found", `Session ${req.params.slug} not found`);
+      }
+      let sinceSeq: number | undefined;
+      const rawSince = req.query.since;
+      if (rawSince !== undefined && rawSince !== "") {
+        if (!/^\d+$/.test(rawSince)) {
+          throw new EngineError("bad_request", "since must be a non-negative integer");
+        }
+        const n = Number(rawSince);
+        if (!Number.isInteger(n) || n < 0) {
+          throw new EngineError("bad_request", "since must be a non-negative integer");
+        }
+        sinceSeq = n;
+      }
+      return reply.send({ items: ctx.sessions.transcript(req.params.slug, sinceSeq) });
+    },
+  );
 
   app.get("/api/sessions/:slug/diff", async (req: FastifyRequest<{ Params: { slug: string } }>, reply) => {
     const session = ctx.sessions.get(req.params.slug);
