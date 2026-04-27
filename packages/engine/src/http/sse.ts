@@ -7,6 +7,12 @@ export function attachSseRoute(app: FastifyInstance, ctx: EngineContext): void {
     "/api/events",
     { preHandler: buildAuthPreHandler(ctx.env.token) },
     async (req, reply) => {
+      const origin = req.headers.origin;
+      if (origin && ctx.env.corsOrigins.includes(origin)) {
+        reply.raw.setHeader("Access-Control-Allow-Origin", origin);
+        reply.raw.setHeader("Access-Control-Allow-Credentials", "true");
+        reply.raw.setHeader("Vary", "Origin");
+      }
       reply.raw.setHeader("Content-Type", "text/event-stream");
       reply.raw.setHeader("Cache-Control", "no-cache");
       reply.raw.setHeader("Connection", "keep-alive");

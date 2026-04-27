@@ -1,4 +1,5 @@
 import { useState, type ReactElement, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useConnectionStore } from "../connections/store.js";
 import { ConnectionPicker } from "../connections/picker.js";
 import { useVersionStore } from "../store/version.js";
@@ -81,10 +82,10 @@ function VersionPopover({ connId }: { connId: string }): ReactElement | null {
 }
 
 export function Header({ resourceIndicator, installPrompt }: HeaderProps): ReactElement {
-  const { connections, activeId } = useConnectionStore(s => ({
+  const { connections, activeId } = useConnectionStore(useShallow(s => ({
     connections: s.connections,
     activeId: s.activeId,
-  }));
+  })));
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const activeConn = connections.find(c => c.id === activeId);

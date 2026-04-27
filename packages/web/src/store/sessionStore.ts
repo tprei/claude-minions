@@ -8,6 +8,7 @@ interface SessionStore {
   upsertSession: (session: Session) => void;
   removeSession: (slug: string) => void;
   appendTranscriptEvent: (slug: string, event: TranscriptEvent) => void;
+  setTranscript: (slug: string, events: TranscriptEvent[]) => void;
 }
 
 export const useSessionStore = create<SessionStore>((set) => ({
@@ -42,7 +43,19 @@ export const useSessionStore = create<SessionStore>((set) => ({
     set(s => {
       const transcripts = new Map(s.transcripts);
       const existing = transcripts.get(slug) ?? [];
+      const last = existing.length > 0 ? existing[existing.length - 1] : undefined;
+      if (last && last.seq >= event.seq) {
+        return { transcripts: s.transcripts };
+      }
       transcripts.set(slug, [...existing, event]);
+      return { transcripts };
+    });
+  },
+
+  setTranscript(slug, events) {
+    set(s => {
+      const transcripts = new Map(s.transcripts);
+      transcripts.set(slug, [...events].sort((a, b) => a.seq - b.seq));
       return { transcripts };
     });
   },

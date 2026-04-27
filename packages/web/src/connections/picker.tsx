@@ -1,4 +1,5 @@
 import { useState, type ReactElement } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useConnectionStore, type Connection } from "./store.js";
 import { AddDialog } from "./addDialog.js";
 import { cx } from "../util/classnames.js";
@@ -31,11 +32,11 @@ function ConnectionRow({ conn, active, onSelect }: { conn: Connection; active: b
 }
 
 export function ConnectionPicker({ onClose }: PickerProps): ReactElement {
-  const { connections, activeId, setActive } = useConnectionStore(s => ({
+  const { connections, activeId, setActive } = useConnectionStore(useShallow(s => ({
     connections: s.connections,
     activeId: s.activeId,
     setActive: s.setActive,
-  }));
+  })));
   const [showAdd, setShowAdd] = useState(false);
 
   function handleSelect(id: string): void {

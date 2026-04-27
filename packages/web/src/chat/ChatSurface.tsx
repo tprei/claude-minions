@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { Session } from "@minions/shared";
 import { useSessionStore } from "../store/sessionStore.js";
 import { useRootStore } from "../store/root.js";
-import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots } from "../transport/rest.js";
+import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
 import { Diff } from "../components/Diff.js";
 import { Tabs, type Tab } from "./Tabs.js";
@@ -32,7 +32,21 @@ const DEFAULT_WIDTH = 380;
 
 function useSessionTranscript(session: Session) {
   const transcripts = useSessionStore((s) => s.transcripts);
-  return transcripts.get(session.slug) ?? [];
+  const setTranscript = useSessionStore((s) => s.setTranscript);
+  const conn = useRootStore((s) => s.getActiveConnection());
+  const slug = session.slug;
+  const hasLoaded = transcripts.has(slug);
+
+  useEffect(() => {
+    if (!conn || hasLoaded) return;
+    let cancelled = false;
+    getTranscript(conn, slug)
+      .then((d) => { if (!cancelled) setTranscript(slug, d.items); })
+      .catch(() => { if (!cancelled) setTranscript(slug, []); });
+    return () => { cancelled = true; };
+  }, [conn, slug, hasLoaded, setTranscript]);
+
+  return transcripts.get(slug) ?? [];
 }
 
 function DiffPanel({ session }: { session: Session }) {

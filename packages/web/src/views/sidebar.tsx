@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useMemo, type ReactElement } from "react";
 import { useConnectionStore } from "../connections/store.js";
 import { useVersionStore } from "../store/version.js";
 import { setUrlState } from "../routing/urlState.js";
@@ -62,11 +62,8 @@ export function Sidebar({
   onOpenLoops,
 }: SidebarProps): ReactElement {
   const activeId = useConnectionStore(s => s.activeId);
-  const features = useVersionStore(s => {
-    if (!activeId) return new Set<string>();
-    const info = s.byConnection.get(activeId);
-    return new Set(info?.features ?? []);
-  });
+  const featureList = useVersionStore(s => (activeId ? s.byConnection.get(activeId)?.features : undefined));
+  const features = useMemo(() => new Set<string>(featureList ?? []), [featureList]);
 
   function navigate(view: ViewKind): void {
     if (!activeId) return;

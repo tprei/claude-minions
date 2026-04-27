@@ -13,6 +13,10 @@ coverage
 /.workspace/
 /.local-workspace/
 /.dev-workspace/
+/.playwright-mcp/
+/session-detail.png
+/session-transcript.png
+/scripts/inspect-ui*.mjs
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
