@@ -37,14 +37,14 @@ export function Diff({ text, className, wrap = true }: Props) {
   const wrapClass = wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre";
   if (hunks.length === 0) {
     return (
-      <pre className={cx("text-xs font-mono text-zinc-400 p-2", wrapClass, className)}>{text}</pre>
+      <pre className={cx("text-xs font-mono text-fg-muted p-2", wrapClass, className)}>{text}</pre>
     );
   }
   return (
     <div className={cx("text-xs font-mono rounded overflow-hidden border border-border", className)}>
       {hunks.map((hunk, i) => (
         <div key={i}>
-          <div className="bg-zinc-800 text-blue-400 px-3 py-1 text-[11px]">{hunk.header}</div>
+          <div className="bg-bg-elev text-blue-400 px-3 py-1 text-[11px]">{hunk.header}</div>
           {hunk.lines.map((line, j) => (
             <div
               key={j}
@@ -53,7 +53,7 @@ export function Diff({ text, className, wrap = true }: Props) {
                 wrapClass,
                 line.kind === "add" && "bg-green-950 text-green-300",
                 line.kind === "remove" && "bg-red-950 text-red-300",
-                line.kind === "context" && "text-zinc-400",
+                line.kind === "context" && "text-fg-muted",
               )}
             >
               {line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "}

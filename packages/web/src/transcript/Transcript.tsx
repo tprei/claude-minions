@@ -9,9 +9,9 @@ const NEAR_BOTTOM_THRESHOLD = 120;
 function TurnSeparator({ turn }: { turn: number }) {
   return (
     <div className="flex items-center gap-2 my-1.5 select-none">
-      <div className="flex-1 border-t border-dotted border-zinc-800" />
-      <span className="text-[9px] text-zinc-600">turn {turn}</span>
-      <div className="flex-1 border-t border-dotted border-zinc-800" />
+      <div className="flex-1 border-t border-dotted border-border" />
+      <span className="text-[9px] text-fg-subtle">turn {turn}</span>
+      <div className="flex-1 border-t border-dotted border-border" />
     </div>
   );
 }
@@ -87,7 +87,7 @@ export function Transcript({ events }: Props) {
       className="flex-1 overflow-y-auto px-4 py-3 space-y-0.5"
     >
       {events.length === 0 && (
-        <div className="text-sm text-zinc-500 text-center mt-12">No events yet.</div>
+        <div className="text-sm text-fg-subtle text-center mt-12">No events yet.</div>
       )}
       {rows}
       {!autoScroll && (

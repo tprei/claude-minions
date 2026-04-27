@@ -42,12 +42,12 @@ function ShipPipelineForSession({ session }: SessionPipelineProps) {
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <div className="mb-6">
-        <h2 className="text-lg font-semibold text-zinc-100">{session.title}</h2>
-        <p className="text-sm text-zinc-500 mt-1">Ship pipeline · {session.status}</p>
+        <h2 className="text-lg font-semibold text-fg">{session.title}</h2>
+        <p className="text-sm text-fg-subtle mt-1">Ship pipeline · {session.status}</p>
       </div>
 
       <div className="relative">
-        <div className="absolute top-5 left-5 right-5 h-0.5 bg-zinc-700" aria-hidden />
+        <div className="absolute top-5 left-5 right-5 h-0.5 bg-bg-elev" aria-hidden />
         <div className="relative flex justify-between gap-2">
           {STAGES.map((stage, idx) => {
             const isDone = idx < currentIdx;
@@ -60,7 +60,7 @@ function ShipPipelineForSession({ session }: SessionPipelineProps) {
                     "w-10 h-10 rounded-full flex items-center justify-center text-lg border-2 transition-colors",
                     isDone && "bg-teal-900 border-teal-500",
                     isCurrent && "bg-blue-900 border-blue-400 ring-2 ring-blue-400/30",
-                    isPending && "bg-zinc-900 border-zinc-700",
+                    isPending && "bg-bg-soft border-border",
                   )}
                 >
                   {isDone ? "✓" : STAGE_ICON[stage]}
@@ -70,7 +70,7 @@ function ShipPipelineForSession({ session }: SessionPipelineProps) {
                     "mt-2 text-xs font-medium",
                     isDone && "text-teal-400",
                     isCurrent && "text-blue-300",
-                    isPending && "text-zinc-600",
+                    isPending && "text-fg-subtle",
                   )}
                 >
                   {stage}
@@ -84,10 +84,10 @@ function ShipPipelineForSession({ session }: SessionPipelineProps) {
       <div className="mt-8 card p-4">
         <div className="flex items-center gap-2 mb-2">
           <span className="text-xl">{STAGE_ICON[currentStage]}</span>
-          <span className="font-medium text-zinc-100 capitalize">{currentStage}</span>
+          <span className="font-medium text-fg capitalize">{currentStage}</span>
           <span className="pill bg-blue-900 text-blue-300 text-[10px] ml-auto">current</span>
         </div>
-        <p className="text-sm text-zinc-400">{STAGE_DESC[currentStage]}</p>
+        <p className="text-sm text-fg-muted">{STAGE_DESC[currentStage]}</p>
       </div>
 
       {currentStage !== "done" && session.status !== "running" && (
@@ -120,15 +120,15 @@ export function ShipPipelineView({ sessionSlug }: Props) {
     const shipSessions = sessions.filter((s) => s.mode === "ship");
     return (
       <div className="p-6">
-        <h2 className="text-sm font-medium text-zinc-300 mb-4">Ship sessions</h2>
+        <h2 className="text-sm font-medium text-fg-muted mb-4">Ship sessions</h2>
         {shipSessions.length === 0 && (
-          <p className="text-sm text-zinc-500">No ship-mode sessions.</p>
+          <p className="text-sm text-fg-subtle">No ship-mode sessions.</p>
         )}
         <div className="space-y-2">
           {shipSessions.map((s) => (
             <div key={s.slug} className="card px-4 py-3">
-              <div className="text-sm font-medium text-zinc-100">{s.title}</div>
-              <div className="text-xs text-zinc-500">
+              <div className="text-sm font-medium text-fg">{s.title}</div>
+              <div className="text-xs text-fg-subtle">
                 {s.slug} · stage: {s.shipStage ?? "think"}
               </div>
             </div>
@@ -141,7 +141,7 @@ export function ShipPipelineView({ sessionSlug }: Props) {
   const session = sessionsMap.get(sessionSlug);
   if (!session || session.mode !== "ship") {
     return (
-      <div className="p-6 text-sm text-zinc-500">
+      <div className="p-6 text-sm text-fg-subtle">
         Session not found or not in ship mode.
       </div>
     );

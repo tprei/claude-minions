@@ -84,25 +84,25 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
       {COLUMNS.map((col) => {
         const items = byStatus.get(col.status) ?? [];
         const limited = col.limit ? items.slice(0, col.limit) : items;
-        const headerClass = COL_HEADER_BG[col.status] ?? "bg-zinc-900/40 border-zinc-700/40";
+        const headerClass = COL_HEADER_BG[col.status] ?? "bg-bg-soft/40 border-border/40";
         return (
-          <div key={col.status} className="flex flex-col w-72 shrink-0 snap-start">
+          <div key={col.status} className="flex flex-col w-[calc(100vw-2rem)] sm:w-72 shrink-0 snap-start">
             <div className={cx("flex items-center gap-2 rounded-t-lg px-3 py-2 border mb-1", headerClass)}>
               <span className={cx("w-2 h-2 rounded-full", STATUS_DOT[col.status])} />
-              <span className="text-sm font-medium text-zinc-200">{col.label}</span>
-              <span className="ml-auto text-xs text-zinc-500">{items.length}</span>
+              <span className="text-sm font-medium text-fg-muted">{col.label}</span>
+              <span className="ml-auto text-xs text-fg-subtle">{items.length}</span>
             </div>
             <div className="flex-1 overflow-y-auto space-y-2">
               {limited.map((s) => (
                 <KanbanCard key={s.slug} session={s} onClick={() => navigate(s.slug)} />
               ))}
               {col.limit && items.length > col.limit && (
-                <div className="text-xs text-zinc-500 text-center py-1">
+                <div className="text-xs text-fg-subtle text-center py-1">
                   +{items.length - col.limit} more
                 </div>
               )}
               {limited.length === 0 && (
-                <div className="text-xs text-zinc-600 text-center py-4">empty</div>
+                <div className="text-xs text-fg-subtle text-center py-4">empty</div>
               )}
             </div>
           </div>
@@ -116,10 +116,10 @@ function KanbanCard({ session, onClick }: { session: Session; onClick: () => voi
   return (
     <div
       onClick={onClick}
-      className="card p-2 cursor-pointer hover:border-zinc-600 transition-colors space-y-1"
+      className="card p-3 hover:bg-bg-elev cursor-pointer transition-colors space-y-1.5"
     >
       <div className="flex items-start justify-between gap-1.5">
-        <span className="text-xs text-zinc-100 leading-snug line-clamp-2">{session.title}</span>
+        <span className="text-xs text-fg leading-snug line-clamp-2">{session.title}</span>
         {session.attention.length > 0 && (
           <span className="pill bg-red-900 text-red-300 text-[10px] shrink-0">
             {session.attention.length}
@@ -131,12 +131,12 @@ function KanbanCard({ session, onClick }: { session: Session; onClick: () => voi
           {session.mode}
         </span>
         {session.branch && (
-          <span className="pill bg-zinc-800 text-zinc-400 text-[10px] font-mono truncate max-w-[8rem]">
+          <span className="pill bg-bg-elev text-fg-muted text-[10px] font-mono truncate max-w-[8rem]">
             {session.branch}
           </span>
         )}
       </div>
-      <div className="text-[10px] text-zinc-500">{relTime(session.updatedAt)}</div>
+      <div className="text-[10px] text-fg-muted">{relTime(session.updatedAt)}</div>
     </div>
   );
 }

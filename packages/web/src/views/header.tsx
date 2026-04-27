@@ -17,7 +17,7 @@ function ThemeToggle(): ReactElement {
   return (
     <button
       onClick={toggle}
-      className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-bg-elev transition-colors"
+      className="w-8 h-8 flex items-center justify-center rounded-lg text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors"
       aria-label={`Switch to ${effective === "dark" ? "light" : "dark"} mode`}
     >
       {effective === "dark" ? (
@@ -45,7 +45,7 @@ function VersionPopover({ connId }: { connId: string }): ReactElement | null {
     <div className="relative">
       <button
         onClick={() => setOpen(v => !v)}
-        className="text-xs text-zinc-500 hover:text-zinc-300 font-mono transition-colors px-1"
+        className="text-xs text-fg-subtle hover:text-fg-muted font-mono transition-colors px-1"
       >
         v{info.libraryVersion}
       </button>
@@ -53,22 +53,22 @@ function VersionPopover({ connId }: { connId: string }): ReactElement | null {
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} aria-hidden="true" />
           <div className="absolute right-0 top-8 z-40 card p-3 min-w-[220px] shadow-2xl">
-            <p className="text-xs font-medium text-zinc-300 mb-2">Engine info</p>
+            <p className="text-xs font-medium text-fg-muted mb-2">Engine info</p>
             <dl className="text-xs space-y-1">
               <div className="flex justify-between gap-4">
-                <dt className="text-zinc-500">API version</dt>
-                <dd className="font-mono text-zinc-300">{info.apiVersion}</dd>
+                <dt className="text-fg-subtle">API version</dt>
+                <dd className="font-mono text-fg-muted">{info.apiVersion}</dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-zinc-500">Provider</dt>
-                <dd className="text-zinc-300">{info.provider}</dd>
+                <dt className="text-fg-subtle">Provider</dt>
+                <dd className="text-fg-muted">{info.provider}</dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-zinc-500">Resources</dt>
-                <dd className={hasResources ? "text-ok" : "text-zinc-600"}>{hasResources ? "enabled" : "disabled"}</dd>
+                <dt className="text-fg-subtle">Resources</dt>
+                <dd className={hasResources ? "text-ok" : "text-fg-subtle"}>{hasResources ? "enabled" : "disabled"}</dd>
               </div>
             </dl>
-            <p className="text-xs text-zinc-500 mt-2 font-medium">Features</p>
+            <p className="text-xs text-fg-subtle mt-2 font-medium">Features</p>
             <div className="flex flex-wrap gap-1 mt-1">
               {info.features.map(f => (
                 <span key={f} className="pill bg-accent/10 text-accent border border-accent/20">{f}</span>
@@ -107,12 +107,12 @@ export function Header({ resourceIndicator, installPrompt }: HeaderProps): React
                 style={{ background: activeConn.color }}
                 aria-hidden="true"
               />
-              <span className="text-zinc-200 max-w-[140px] truncate">{activeConn.label}</span>
+              <span className="text-fg-muted max-w-[140px] truncate">{activeConn.label}</span>
             </>
           ) : (
-            <span className="text-zinc-500">No connection</span>
+            <span className="text-fg-subtle">No connection</span>
           )}
-          <svg className="w-3 h-3 text-zinc-500 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-3 h-3 text-fg-subtle ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
         </button>

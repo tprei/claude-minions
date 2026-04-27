@@ -15,8 +15,8 @@ function ConnectionRow({ conn, active, onSelect }: { conn: Connection; active: b
       className={cx(
         "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors text-left",
         active
-          ? "bg-accent/20 text-zinc-100"
-          : "hover:bg-bg-elev text-zinc-300",
+          ? "bg-accent/20 text-fg"
+          : "hover:bg-bg-elev text-fg-muted",
       )}
     >
       <span
@@ -25,7 +25,7 @@ function ConnectionRow({ conn, active, onSelect }: { conn: Connection; active: b
         aria-hidden="true"
       />
       <span className="flex-1 truncate">{conn.label}</span>
-      <span className="text-xs text-zinc-600 truncate max-w-[120px]">{conn.baseUrl}</span>
+      <span className="text-xs text-fg-subtle truncate max-w-[120px]">{conn.baseUrl}</span>
       {active && <span className="text-accent text-xs">●</span>}
     </button>
   );
@@ -47,9 +47,9 @@ export function ConnectionPicker({ onClose }: PickerProps): ReactElement {
   return (
     <>
       <div className="card p-2 min-w-[260px] shadow-2xl">
-        <p className="text-xs text-zinc-500 font-medium px-3 py-1.5">Connections</p>
+        <p className="text-xs text-fg-subtle font-medium px-3 py-1.5">Connections</p>
         {connections.length === 0 && (
-          <p className="text-xs text-zinc-600 px-3 py-2">No connections yet.</p>
+          <p className="text-xs text-fg-subtle px-3 py-2">No connections yet.</p>
         )}
         {connections.map(conn => (
           <ConnectionRow
@@ -62,7 +62,7 @@ export function ConnectionPicker({ onClose }: PickerProps): ReactElement {
         <div className="border-t border-border mt-1 pt-1">
           <button
             onClick={() => setShowAdd(true)}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-zinc-400 hover:text-zinc-100 hover:bg-bg-elev transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors"
           >
             <span className="text-accent">+</span>
             Add connection

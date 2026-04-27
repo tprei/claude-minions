@@ -32,13 +32,13 @@ export function AutoFormField({ field, value, onChange, onReset }: Props) {
   return (
     <div className="flex flex-col gap-1.5 py-3 border-b border-border last:border-0">
       <div className="flex items-center gap-2">
-        <label className="text-sm font-medium text-zinc-200 flex-1">{field.label}</label>
+        <label className="text-sm font-medium text-fg-muted flex-1">{field.label}</label>
         {field.requiresRestart && (
           <span className="pill bg-orange-900/40 text-orange-300 text-[10px]">restart</span>
         )}
         <button
           type="button"
-          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="text-xs text-fg-subtle hover:text-fg-muted transition-colors"
           onClick={() => onReset(field.key)}
           title="Reset to default"
         >
@@ -47,7 +47,7 @@ export function AutoFormField({ field, value, onChange, onReset }: Props) {
       </div>
 
       {field.description && (
-        <p className="text-xs text-zinc-500">{field.description}</p>
+        <p className="text-xs text-fg-subtle">{field.description}</p>
       )}
 
       {field.type === "boolean" && (
@@ -57,7 +57,7 @@ export function AutoFormField({ field, value, onChange, onReset }: Props) {
           aria-checked={Boolean(currentValue)}
           className={cx(
             "w-10 h-5 rounded-full transition-colors relative",
-            Boolean(currentValue) ? "bg-accent" : "bg-zinc-700"
+            Boolean(currentValue) ? "bg-accent" : "bg-bg-elev"
           )}
           onClick={() => onChange(field.key, !Boolean(currentValue))}
         >
@@ -107,12 +107,12 @@ export function AutoFormField({ field, value, onChange, onReset }: Props) {
             {(Array.isArray(currentValue) ? (currentValue as string[]) : []).map(tag => (
               <span
                 key={tag}
-                className="pill bg-bg-soft border border-border text-zinc-300 gap-1"
+                className="pill bg-bg-soft border border-border text-fg-muted gap-1"
               >
                 {tag}
                 <button
                   type="button"
-                  className="text-zinc-500 hover:text-zinc-200 ml-0.5"
+                  className="text-fg-subtle hover:text-fg-muted ml-0.5"
                   onClick={() => removeTag(tag)}
                   aria-label={`Remove ${tag}`}
                 >
@@ -171,7 +171,7 @@ export function AutoForm({ groups, fields, values, onChange, onReset }: GroupedF
 
       {groupedFields.map(({ group, fields: gFields }) => (
         <div key={group.id} className="mt-2">
-          <h3 className="px-4 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider bg-bg-soft border-y border-border">
+          <h3 className="px-4 py-2 text-xs font-semibold text-fg-subtle uppercase tracking-wider bg-bg-soft border-y border-border">
             {group.label}
           </h3>
           <div className="px-4">

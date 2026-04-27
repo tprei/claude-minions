@@ -24,7 +24,7 @@ export function QuickActions({ session }: Props) {
           key={action.id}
           type="button"
           onClick={() => handleAction(action.command)}
-          className={cx("pill bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs cursor-pointer border border-border transition-colors")}
+          className={cx("pill bg-bg-elev hover:bg-bg-elev text-fg-muted text-xs cursor-pointer border border-border transition-colors")}
         >
           {action.label}
         </button>

@@ -23,8 +23,8 @@ export function Tabs({ tabs, active, onChange, className }: Props) {
           className={cx(
             "px-4 py-2 text-xs transition-colors whitespace-nowrap",
             active === tab.id
-              ? "text-zinc-100 border-b-2 border-accent -mb-px"
-              : "text-zinc-500 hover:text-zinc-300",
+              ? "text-fg border-b-2 border-accent -mb-px"
+              : "text-fg-subtle hover:text-fg-muted",
           )}
         >
           {tab.label}

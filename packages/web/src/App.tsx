@@ -126,7 +126,7 @@ export function App(): ReactElement {
 
       {auditOpen && (
         <Sheet open={auditOpen} onClose={() => setAuditOpen(false)} side="right" title="Audit">
-          <div className="p-4 text-sm text-zinc-400">Audit drawer — provided by Web C</div>
+          <div className="p-4 text-sm text-fg-muted">Audit drawer — provided by Web C</div>
         </Sheet>
       )}
     </>

@@ -77,7 +77,7 @@ export function Sidebar({
   return (
     <div className="flex flex-col h-full py-2 gap-1">
       <div className="px-2">
-        <p className="text-xs text-zinc-600 uppercase tracking-wider px-2 py-1">Views</p>
+        <p className="text-xs text-fg-subtle uppercase tracking-wider px-2 py-1">Views</p>
         {VIEW_OPTIONS.map(opt => {
           const gated = opt.feature && !features.has(opt.feature);
           return (
@@ -88,8 +88,8 @@ export function Sidebar({
               className={cx(
                 "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors text-left",
                 currentView === opt.id
-                  ? "bg-accent/20 text-zinc-100"
-                  : "text-zinc-400 hover:text-zinc-100 hover:bg-bg-elev",
+                  ? "bg-accent/20 text-fg"
+                  : "text-fg-muted hover:text-fg hover:bg-bg-elev",
                 gated && "opacity-40 cursor-not-allowed",
               )}
             >
@@ -103,7 +103,7 @@ export function Sidebar({
       <div className="border-t border-border mx-2 my-1" />
 
       <div className="px-2">
-        <p className="text-xs text-zinc-600 uppercase tracking-wider px-2 py-1">Status</p>
+        <p className="text-xs text-fg-subtle uppercase tracking-wider px-2 py-1">Status</p>
         {STATUS_FILTERS.map(f => (
           <button
             key={f.value}
@@ -111,8 +111,8 @@ export function Sidebar({
             className={cx(
               "w-full text-left px-2 py-1 rounded text-xs transition-colors",
               filterStatus === f.value
-                ? "text-zinc-100 bg-bg-elev"
-                : "text-zinc-500 hover:text-zinc-300",
+                ? "text-fg bg-bg-elev"
+                : "text-fg-subtle hover:text-fg-muted",
             )}
           >
             {f.label}
@@ -121,7 +121,7 @@ export function Sidebar({
       </div>
 
       <div className="px-2">
-        <p className="text-xs text-zinc-600 uppercase tracking-wider px-2 py-1">Mode</p>
+        <p className="text-xs text-fg-subtle uppercase tracking-wider px-2 py-1">Mode</p>
         {MODE_FILTERS.map(f => (
           <button
             key={f.value}
@@ -129,8 +129,8 @@ export function Sidebar({
             className={cx(
               "w-full text-left px-2 py-1 rounded text-xs transition-colors",
               filterMode === f.value
-                ? "text-zinc-100 bg-bg-elev"
-                : "text-zinc-500 hover:text-zinc-300",
+                ? "text-fg bg-bg-elev"
+                : "text-fg-subtle hover:text-fg-muted",
             )}
           >
             {f.label}
@@ -142,22 +142,22 @@ export function Sidebar({
 
       <div className="px-2 flex flex-col gap-0.5">
         {features.has("loops") && (
-          <button onClick={onOpenLoops} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-100 hover:bg-bg-elev transition-colors">
+          <button onClick={onOpenLoops} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
             <span>↺</span> Loops
           </button>
         )}
         {features.has("memory") && (
-          <button onClick={onOpenMemory} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-100 hover:bg-bg-elev transition-colors">
+          <button onClick={onOpenMemory} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
             <span>🧠</span> Memory
           </button>
         )}
         {features.has("runtime-overrides") && (
-          <button onClick={onOpenRuntime} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-100 hover:bg-bg-elev transition-colors">
+          <button onClick={onOpenRuntime} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
             <span>⚙</span> Runtime
           </button>
         )}
         {features.has("audit") && (
-          <button onClick={onOpenAudit} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-100 hover:bg-bg-elev transition-colors">
+          <button onClick={onOpenAudit} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
             <span>📋</span> Audit
           </button>
         )}

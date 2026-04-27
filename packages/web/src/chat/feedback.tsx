@@ -44,7 +44,7 @@ export function MessageFeedback({ event, sessionSlug }: Props) {
 
   if (voted) {
     return (
-      <div className="flex items-center gap-1 text-[10px] text-zinc-600">
+      <div className="flex items-center gap-1 text-[10px] text-fg-subtle">
         {voted === "up" ? "👍" : "👎"} feedback recorded
       </div>
     );
@@ -56,7 +56,7 @@ export function MessageFeedback({ event, sessionSlug }: Props) {
         type="button"
         disabled={submitting}
         onClick={() => submit("up")}
-        className="text-zinc-600 hover:text-green-400 text-xs transition-colors"
+        className="text-fg-subtle hover:text-green-400 text-xs transition-colors"
         title="Thumbs up"
       >
         👍
@@ -65,14 +65,14 @@ export function MessageFeedback({ event, sessionSlug }: Props) {
         type="button"
         disabled={submitting}
         onClick={() => setShowReason((v) => !v)}
-        className="text-zinc-600 hover:text-red-400 text-xs transition-colors"
+        className="text-fg-subtle hover:text-red-400 text-xs transition-colors"
         title="Thumbs down"
       >
         👎
       </button>
       {showReason && (
         <div className="absolute bottom-full left-0 mb-1 bg-bg-elev border border-border rounded-xl p-3 shadow-xl z-50 w-52">
-          <p className="text-xs text-zinc-400 mb-2">What went wrong?</p>
+          <p className="text-xs text-fg-muted mb-2">What went wrong?</p>
           <div className="flex flex-col gap-1 mb-2">
             {REASONS.map((r) => (
               <button
@@ -84,7 +84,7 @@ export function MessageFeedback({ event, sessionSlug }: Props) {
                 }}
                 className={cx(
                   "text-left text-xs px-2 py-1 rounded hover:bg-bg-soft transition-colors",
-                  reason === r ? "text-zinc-100" : "text-zinc-400",
+                  reason === r ? "text-fg" : "text-fg-muted",
                 )}
               >
                 {r}

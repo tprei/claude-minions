@@ -17,8 +17,8 @@ export function QrImport({ onDone }: QrImportProps): ReactElement {
 
   return (
     <div className="card p-6 flex flex-col items-center gap-4 text-center">
-      <p className="text-sm font-medium text-zinc-300">QR import</p>
-      <p className="text-xs text-zinc-500">
+      <p className="text-sm font-medium text-fg-muted">QR import</p>
+      <p className="text-xs text-fg-subtle">
         QR scanning is provided by the pwa module (Web C).
         This slot emits a Connection candidate when a code is scanned.
       </p>

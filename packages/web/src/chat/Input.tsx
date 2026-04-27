@@ -148,7 +148,7 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder }: P
           disabled={disabled}
           rows={1}
           className={cx(
-            "flex-1 resize-none bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none min-h-[2rem] max-h-40 leading-6",
+            "flex-1 resize-none bg-transparent text-sm text-fg placeholder:text-fg-subtle focus:outline-none min-h-[2rem] max-h-40 leading-6",
             disabled && "opacity-50 cursor-not-allowed",
           )}
           style={{ height: "auto", overflowY: value.includes("\n") ? "auto" : "hidden" }}
@@ -166,7 +166,7 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder }: P
               "p-1.5 rounded-lg transition-colors",
               listening
                 ? "text-red-400 bg-red-900/30 hover:bg-red-900/50"
-                : "text-zinc-500 hover:text-zinc-300 hover:bg-bg-elev",
+                : "text-fg-subtle hover:text-fg-muted hover:bg-bg-elev",
             )}
             title={listening ? "Stop recording" : "Start voice input"}
           >

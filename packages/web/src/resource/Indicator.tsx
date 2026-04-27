@@ -49,18 +49,18 @@ export function ResourceIndicator({ snapshot }: Props) {
           "pill border cursor-pointer select-none tabular-nums transition-colors",
           warn
             ? "border-amber-700 bg-amber-900/20 text-amber-300"
-            : "border-border bg-bg-soft text-zinc-400 hover:text-zinc-200"
+            : "border-border bg-bg-soft text-fg-muted hover:text-fg-muted"
         )}
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
         aria-label="Resource usage"
       >
         <span>{cpuPct}% cpu</span>
-        <span className="text-zinc-600">·</span>
+        <span className="text-fg-subtle">·</span>
         <span>{memPct}% mem</span>
-        <span className="text-zinc-600">·</span>
+        <span className="text-fg-subtle">·</span>
         <span>{lagMs}ms</span>
-        <span className="text-zinc-600">·</span>
+        <span className="text-fg-subtle">·</span>
         <span>{sessions.total}s</span>
       </button>
 

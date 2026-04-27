@@ -43,7 +43,7 @@ export function MemoryEdit({ memory, onSave, onCancel }: Props) {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4 p-4">
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs text-zinc-400">Kind</label>
+        <label className="text-xs text-fg-muted">Kind</label>
         <div className="flex gap-2 flex-wrap">
           {KINDS.map(k => (
             <button
@@ -51,7 +51,7 @@ export function MemoryEdit({ memory, onSave, onCancel }: Props) {
               type="button"
               className={cx("pill cursor-pointer border", kind === k
                 ? "bg-accent/20 border-accent text-accent"
-                : "border-border text-zinc-400")}
+                : "border-border text-fg-muted")}
               onClick={() => setKind(k)}
             >
               {k}
@@ -61,7 +61,7 @@ export function MemoryEdit({ memory, onSave, onCancel }: Props) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs text-zinc-400">Scope</label>
+        <label className="text-xs text-fg-muted">Scope</label>
         <div className="flex gap-2">
           {(["global", "repo"] as const).map(s => (
             <button
@@ -69,7 +69,7 @@ export function MemoryEdit({ memory, onSave, onCancel }: Props) {
               type="button"
               className={cx("pill cursor-pointer border", scope === s
                 ? "bg-accent/20 border-accent text-accent"
-                : "border-border text-zinc-400")}
+                : "border-border text-fg-muted")}
               onClick={() => setScope(s)}
             >
               {s}
@@ -80,7 +80,7 @@ export function MemoryEdit({ memory, onSave, onCancel }: Props) {
 
       {scope === "repo" && (
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs text-zinc-400">Repo ID</label>
+          <label className="text-xs text-fg-muted">Repo ID</label>
           <input
             className="input"
             value={repoId}
@@ -98,11 +98,11 @@ export function MemoryEdit({ memory, onSave, onCancel }: Props) {
           onChange={e => setPinned(e.target.checked)}
           className="accent-accent"
         />
-        <label htmlFor="pinned" className="text-sm text-zinc-300">Pinned</label>
+        <label htmlFor="pinned" className="text-sm text-fg-muted">Pinned</label>
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs text-zinc-400">Title</label>
+        <label className="text-xs text-fg-muted">Title</label>
         <input
           className="input"
           value={title}
@@ -113,7 +113,7 @@ export function MemoryEdit({ memory, onSave, onCancel }: Props) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs text-zinc-400">Body</label>
+        <label className="text-xs text-fg-muted">Body</label>
         <textarea
           className="input resize-none min-h-[120px]"
           value={body}

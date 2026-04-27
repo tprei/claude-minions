@@ -64,7 +64,7 @@ function DiffPanel({ session }: { session: Session }) {
   }, [session.slug, conn]);
 
   if (loading) return <div className="flex items-center justify-center h-full"><Spinner /></div>;
-  if (!diff) return <div className="p-4 text-sm text-zinc-500">No diff available.</div>;
+  if (!diff) return <div className="p-4 text-sm text-fg-subtle">No diff available.</div>;
   return (
     <div className="p-4 overflow-auto flex-1">
       <Diff text={diff.patch} />
@@ -89,12 +89,12 @@ function CheckpointsPanel({ session }: { session: Session }) {
   if (loading) return <div className="flex items-center justify-center h-full"><Spinner /></div>;
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-2">
-      {items.length === 0 && <p className="text-sm text-zinc-500">No checkpoints.</p>}
+      {items.length === 0 && <p className="text-sm text-fg-subtle">No checkpoints.</p>}
       {items.map((c) => (
         <div key={c.id} className="card p-3 text-sm">
-          <div className="text-zinc-100 font-mono text-xs">{c.id.slice(0, 8)}</div>
-          <div className="text-zinc-400 mt-0.5">{c.message}</div>
-          <div className="text-zinc-600 text-xs mt-1">turn {c.turn}</div>
+          <div className="text-fg font-mono text-xs">{c.id.slice(0, 8)}</div>
+          <div className="text-fg-muted mt-0.5">{c.message}</div>
+          <div className="text-fg-subtle text-xs mt-1">turn {c.turn}</div>
         </div>
       ))}
     </div>
@@ -118,7 +118,7 @@ function ScreenshotsPanel({ session }: { session: Session }) {
   if (loading) return <div className="flex items-center justify-center h-full"><Spinner /></div>;
   return (
     <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-2">
-      {screenshots.length === 0 && <p className="text-sm text-zinc-500 col-span-2">No screenshots.</p>}
+      {screenshots.length === 0 && <p className="text-sm text-fg-subtle col-span-2">No screenshots.</p>}
       {screenshots.map((s) => (
         <img
           key={s.filename}
@@ -135,13 +135,13 @@ function DagStatusPanel({ session }: { session: Session }) {
   const activeId = useConnectionStore((s) => s.activeId);
 
   if (!session.dagId) {
-    return <div className="p-4 text-sm text-zinc-500">No DAG linked to this session.</div>;
+    return <div className="p-4 text-sm text-fg-subtle">No DAG linked to this session.</div>;
   }
   return (
-    <div className="p-4 text-sm text-zinc-300">
-      <div>DAG: <span className="font-mono text-zinc-400">{session.dagId}</span></div>
+    <div className="p-4 text-sm text-fg-muted">
+      <div>DAG: <span className="font-mono text-fg-muted">{session.dagId}</span></div>
       {session.dagNodeId && (
-        <div className="mt-1">Node: <span className="font-mono text-zinc-400">{session.dagNodeId}</span></div>
+        <div className="mt-1">Node: <span className="font-mono text-fg-muted">{session.dagNodeId}</span></div>
       )}
       <button
         type="button"
@@ -212,11 +212,11 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <span className="text-xs font-medium text-zinc-200 truncate flex-1">{session.title}</span>
+        <span className="text-xs font-medium text-fg-muted truncate flex-1">{session.title}</span>
         <button
           type="button"
           onClick={onClose}
-          className="text-zinc-500 hover:text-zinc-300 text-lg leading-none"
+          className="text-fg-subtle hover:text-fg-muted text-lg leading-none"
           title="Close (press ?)"
         >
           ×

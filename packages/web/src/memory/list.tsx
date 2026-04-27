@@ -14,7 +14,7 @@ const STATUS_COLOR: Record<MemoryStatus, string> = {
   pending: "bg-yellow-900/40 text-yellow-300",
   approved: "bg-green-900/40 text-green-300",
   rejected: "bg-red-900/40 text-red-300",
-  superseded: "bg-zinc-700/40 text-zinc-400",
+  superseded: "bg-bg-elev/40 text-fg-muted",
   pending_deletion: "bg-red-900/40 text-red-400",
 };
 
@@ -42,7 +42,7 @@ export function MemoryList({ memories, filter, onSelect }: Props) {
 
   if (filtered.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-zinc-500 text-sm">
+      <div className="flex flex-col items-center justify-center py-16 text-fg-subtle text-sm">
         No memories found
       </div>
     );
@@ -84,14 +84,14 @@ function MemoryRow({ memory, onClick }: RowProps) {
             {memory.pinned && (
               <span className="text-amber-400 text-xs" title="Pinned">★</span>
             )}
-            <span className="text-xs text-zinc-500 ml-auto shrink-0">
+            <span className="text-xs text-fg-subtle ml-auto shrink-0">
               {memory.scope === "repo" && memory.repoId
                 ? `repo:${memory.repoId}`
                 : "global"}
             </span>
           </div>
-          <p className="text-sm font-medium text-zinc-200 truncate">{memory.title}</p>
-          <p className="text-xs text-zinc-400 mt-0.5 line-clamp-2">{memory.body}</p>
+          <p className="text-sm font-medium text-fg-muted truncate">{memory.title}</p>
+          <p className="text-xs text-fg-muted mt-0.5 line-clamp-2">{memory.body}</p>
         </div>
       </div>
     </button>

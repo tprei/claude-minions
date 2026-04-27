@@ -40,16 +40,16 @@ export function AutocompletePopover({ commands, activeIndex, onSelect, onClose }
               }}
               className={cx(
                 "w-full text-left px-3 py-2 flex items-baseline gap-3 transition-colors",
-                i === activeIndex ? "bg-accent/20 text-zinc-100" : "hover:bg-bg-soft text-zinc-300",
+                i === activeIndex ? "bg-accent/20 text-fg" : "hover:bg-bg-soft text-fg-muted",
               )}
             >
               <span className="font-mono text-sm text-accent-soft">/{cmd.name}</span>
               {cmd.args.length > 0 && (
-                <span className="text-xs text-zinc-500">
+                <span className="text-xs text-fg-subtle">
                   {cmd.args.map((a) => (a.required ? `<${a.name}>` : `[${a.name}]`)).join(" ")}
                 </span>
               )}
-              <span className="text-xs text-zinc-600 ml-auto truncate">{cmd.hint}</span>
+              <span className="text-xs text-fg-subtle ml-auto truncate">{cmd.hint}</span>
             </button>
           </li>
         ))}

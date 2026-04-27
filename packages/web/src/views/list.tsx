@@ -112,7 +112,7 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
                 "pill text-xs cursor-pointer border",
                 statusFilter.has(s)
                   ? "bg-accent text-white border-accent"
-                  : "bg-bg-elev text-zinc-400 border-border",
+                  : "bg-bg-elev text-fg-muted border-border",
               )}
             >
               {s}
@@ -129,7 +129,7 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
                 "pill text-xs cursor-pointer border",
                 modeFilter.has(m)
                   ? "bg-accent text-white border-accent"
-                  : "bg-bg-elev text-zinc-400 border-border",
+                  : "bg-bg-elev text-fg-muted border-border",
               )}
             >
               {m}
@@ -140,10 +140,10 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
 
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 && (
-          <div className="text-sm text-zinc-500 text-center mt-16">No sessions match.</div>
+          <div className="text-sm text-fg-subtle text-center mt-16">No sessions match.</div>
         )}
         <table className="w-full text-sm hidden sm:table">
-          <thead className="sticky top-0 bg-bg-soft border-b border-border text-xs text-zinc-500">
+          <thead className="sticky top-0 bg-bg-soft border-b border-border text-xs text-fg-subtle">
             <tr>
               <th className="text-left px-4 py-2 font-normal">title</th>
               <th className="text-left px-4 py-2 font-normal">mode</th>
@@ -174,10 +174,10 @@ function SessionCard({ session, onClick }: { session: Session; onClick: () => vo
   return (
     <div
       onClick={onClick}
-      className="card p-3 cursor-pointer hover:border-zinc-600 transition-colors space-y-2"
+      className="card p-3 cursor-pointer hover:border-border transition-colors space-y-2"
     >
       <div className="flex items-start justify-between gap-2">
-        <span className="text-sm text-zinc-100 leading-snug line-clamp-2">{session.title}</span>
+        <span className="text-sm text-fg leading-snug line-clamp-2">{session.title}</span>
         {session.attention.length > 0 && (
           <span className="pill bg-red-900 text-red-300 text-[10px] shrink-0">
             {session.attention.length}
@@ -188,17 +188,17 @@ function SessionCard({ session, onClick }: { session: Session; onClick: () => vo
         <span className={cx("pill text-[10px]", MODE_COLOR[session.mode])}>
           {session.mode}
         </span>
-        <span className="inline-flex items-center gap-1.5 pill bg-bg-elev text-zinc-400 text-[10px]">
+        <span className="inline-flex items-center gap-1.5 pill bg-bg-elev text-fg-muted text-[10px]">
           <span className={cx("w-2 h-2 rounded-full", STATUS_DOT[session.status])} />
           {session.status}
         </span>
         {session.repoId && (
-          <span className="pill bg-zinc-800 text-zinc-400 text-[10px] truncate max-w-[10rem]">
+          <span className="pill bg-bg-elev text-fg-muted text-[10px] truncate max-w-[10rem]">
             {session.repoId}
           </span>
         )}
       </div>
-      <div className="text-[10px] text-zinc-500">{relTime(session.updatedAt)}</div>
+      <div className="text-[10px] text-fg-subtle">{relTime(session.updatedAt)}</div>
     </div>
   );
 }
@@ -209,7 +209,7 @@ function SessionRow({ session, onClick }: { session: Session; onClick: () => voi
       onClick={onClick}
       className="border-b border-border/50 hover:bg-bg-elev cursor-pointer transition-colors"
     >
-      <td className="px-4 py-2 max-w-xs truncate text-zinc-100">{session.title}</td>
+      <td className="px-4 py-2 max-w-xs truncate text-fg">{session.title}</td>
       <td className="px-4 py-2">
         <span className={cx("pill text-[11px]", MODE_COLOR[session.mode])}>
           {session.mode}
@@ -218,11 +218,11 @@ function SessionRow({ session, onClick }: { session: Session; onClick: () => voi
       <td className="px-4 py-2">
         <div className="flex items-center gap-1.5">
           <span className={cx("w-2 h-2 rounded-full shrink-0", STATUS_DOT[session.status])} />
-          <span className="text-zinc-400 text-xs">{session.status}</span>
+          <span className="text-fg-muted text-xs">{session.status}</span>
         </div>
       </td>
-      <td className="px-4 py-2 text-zinc-500 text-xs hidden md:table-cell">{session.repoId ?? "—"}</td>
-      <td className="px-4 py-2 text-zinc-500 text-xs font-mono hidden md:table-cell truncate max-w-[10rem]">
+      <td className="px-4 py-2 text-fg-subtle text-xs hidden md:table-cell">{session.repoId ?? "—"}</td>
+      <td className="px-4 py-2 text-fg-subtle text-xs font-mono hidden md:table-cell truncate max-w-[10rem]">
         {session.branch ?? "—"}
       </td>
       <td className="px-4 py-2 hidden sm:table-cell">
@@ -232,7 +232,7 @@ function SessionRow({ session, onClick }: { session: Session; onClick: () => voi
           </span>
         )}
       </td>
-      <td className="px-4 py-2 text-zinc-500 text-xs whitespace-nowrap">
+      <td className="px-4 py-2 text-fg-subtle text-xs whitespace-nowrap">
         {relTime(session.updatedAt)}
       </td>
     </tr>

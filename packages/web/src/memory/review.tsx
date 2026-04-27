@@ -37,18 +37,18 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
     <div className="flex flex-col gap-4 p-4">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <p className="text-xs text-zinc-500 mb-1">
+          <p className="text-xs text-fg-subtle mb-1">
             {memory.scope === "repo" && memory.repoId
               ? `repo:${memory.repoId}`
               : "global"}{" "}
             · {memory.kind}
             {memory.proposedBy && ` · by ${memory.proposedBy}`}
           </p>
-          <h3 className="text-base font-semibold text-zinc-100">{memory.title}</h3>
+          <h3 className="text-base font-semibold text-fg">{memory.title}</h3>
         </div>
         <span className={cx(
           "pill shrink-0",
-          memory.status === "pending" ? "bg-yellow-900/40 text-yellow-300" : "bg-zinc-700/40 text-zinc-400"
+          memory.status === "pending" ? "bg-yellow-900/40 text-yellow-300" : "bg-bg-elev/40 text-fg-muted"
         )}>
           {memory.status}
         </span>
@@ -56,27 +56,27 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
 
       {memory.supersedes && (
         <div className="rounded-lg bg-bg-soft border border-border p-3">
-          <p className="text-xs text-zinc-500 mb-1">Supersedes</p>
+          <p className="text-xs text-fg-subtle mb-1">Supersedes</p>
           {supersededMemory ? (
             <div>
-              <p className="text-sm font-medium text-zinc-300">{supersededMemory.title}</p>
-              <p className="text-xs text-zinc-500 mt-1 line-clamp-3">{supersededMemory.body}</p>
+              <p className="text-sm font-medium text-fg-muted">{supersededMemory.title}</p>
+              <p className="text-xs text-fg-subtle mt-1 line-clamp-3">{supersededMemory.body}</p>
             </div>
           ) : (
-            <p className="text-xs text-zinc-400">ID: {memory.supersedes}</p>
+            <p className="text-xs text-fg-muted">ID: {memory.supersedes}</p>
           )}
         </div>
       )}
 
       <div className="rounded-lg bg-bg-soft border border-border p-3">
-        <p className="text-xs text-zinc-500 mb-2">Body</p>
-        <pre className="text-sm text-zinc-200 whitespace-pre-wrap font-sans">{memory.body}</pre>
+        <p className="text-xs text-fg-subtle mb-2">Body</p>
+        <pre className="text-sm text-fg-muted whitespace-pre-wrap font-sans">{memory.body}</pre>
       </div>
 
       {memory.rejectionReason && (
         <div className="rounded-lg bg-red-950/30 border border-red-900/40 p-3">
           <p className="text-xs text-red-400 mb-1">Rejection reason</p>
-          <p className="text-sm text-zinc-300">{memory.rejectionReason}</p>
+          <p className="text-sm text-fg-muted">{memory.rejectionReason}</p>
         </div>
       )}
 
@@ -84,7 +84,7 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
 
       {mode === "reject" && (
         <div className="flex flex-col gap-2">
-          <label className="text-xs text-zinc-400">Rejection reason (optional)</label>
+          <label className="text-xs text-fg-muted">Rejection reason (optional)</label>
           <input
             className="input"
             value={rejectReason}
@@ -106,7 +106,7 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
 
       {mode === "supersede" && (
         <div className="flex flex-col gap-2">
-          <label className="text-xs text-zinc-400">Pick memory to supersede</label>
+          <label className="text-xs text-fg-muted">Pick memory to supersede</label>
           <select
             className="input"
             value={supersedesId}

@@ -45,7 +45,7 @@ export function StatusBanner({ event }: Props) {
             </div>
           )}
           {verdict.rationale !== undefined && (
-            <div className="text-zinc-300">{verdict.rationale}</div>
+            <div className="text-fg-muted">{verdict.rationale}</div>
           )}
           {verdict.scores !== undefined && (
             <div className="flex gap-3 flex-wrap">

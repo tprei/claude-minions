@@ -31,22 +31,22 @@ interface Props {
 export function ToolResult({ event }: Props) {
   const fmt = detectFormat(event);
   return (
-    <div className="my-0.5 ml-4 border-l-2 border-zinc-700 pl-3">
+    <div className="my-0.5 ml-4 border-l-2 border-border pl-3">
       <div className="flex items-center gap-2 mb-1">
         <span className={cx("pill text-[10px]", STATUS_COLORS[event.status])}>
           {event.status}
         </span>
         {event.toolName && (
-          <span className="text-[11px] text-zinc-500 font-mono">{event.toolName}</span>
+          <span className="text-[11px] text-fg-subtle font-mono">{event.toolName}</span>
         )}
         {event.truncated && (
-          <span className="pill bg-zinc-700 text-zinc-400 text-[10px]">truncated</span>
+          <span className="pill bg-bg-elev text-fg-muted text-[10px]">truncated</span>
         )}
       </div>
       {fmt === "markdown" && <Markdown text={event.body} />}
       {fmt === "diff" && <Diff text={event.body} wrap />}
       {fmt === "json" && (
-        <pre className="text-[11px] text-zinc-300 bg-zinc-900 rounded p-2 border border-border overflow-x-auto">
+        <pre className="text-[11px] text-fg-muted bg-bg-soft rounded p-2 border border-border overflow-x-auto">
           {event.body}
         </pre>
       )}
@@ -58,7 +58,7 @@ export function ToolResult({ event }: Props) {
         />
       )}
       {(fmt === "text" || fmt === "binary") && (
-        <pre className="text-sm text-zinc-300 bg-zinc-900 rounded p-2 border border-border whitespace-pre-wrap break-words">
+        <pre className="text-sm text-fg-muted bg-bg-soft rounded p-2 border border-border whitespace-pre-wrap break-words">
           {event.body}
         </pre>
       )}

@@ -62,7 +62,7 @@ interface BarProps {
 
 function Bar({ pct: p, color }: BarProps) {
   return (
-    <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+    <div className="h-1.5 rounded-full bg-bg-elev overflow-hidden">
       <div
         className="h-full rounded-full transition-all"
         style={{ width: `${p}%`, background: color }}
@@ -80,7 +80,7 @@ export function ResourcePanel({ snapshot, lagHistory }: Props) {
   return (
     <div className="card p-4 flex flex-col gap-4 text-sm">
       <div className="flex flex-col gap-1">
-        <div className="flex justify-between text-xs text-zinc-400">
+        <div className="flex justify-between text-xs text-fg-muted">
           <span>CPU</span>
           <span>{cpuPct}% · {cpu.cores} cores · limit {cpu.limitCores.toFixed(1)}</span>
         </div>
@@ -88,7 +88,7 @@ export function ResourcePanel({ snapshot, lagHistory }: Props) {
       </div>
 
       <div className="flex flex-col gap-1">
-        <div className="flex justify-between text-xs text-zinc-400">
+        <div className="flex justify-between text-xs text-fg-muted">
           <span>Memory</span>
           <span>{bytes(memory.usedBytes)} / {bytes(memory.limitBytes)} · RSS {bytes(memory.rssBytes)}</span>
         </div>
@@ -96,16 +96,16 @@ export function ResourcePanel({ snapshot, lagHistory }: Props) {
       </div>
 
       <div className="flex flex-col gap-1">
-        <div className="flex justify-between text-xs text-zinc-400">
+        <div className="flex justify-between text-xs text-fg-muted">
           <span>Disk</span>
           <span>{bytes(disk.usedBytes)} / {bytes(disk.totalBytes)}</span>
         </div>
         <Bar pct={diskPct} color={diskPct > 90 ? "#f59e0b" : "#10b981"} />
-        <p className="text-[10px] text-zinc-600 truncate">{disk.workspacePath}</p>
+        <p className="text-[10px] text-fg-subtle truncate">{disk.workspacePath}</p>
       </div>
 
       <div className="flex flex-col gap-1">
-        <div className="flex justify-between items-center text-xs text-zinc-400 mb-1">
+        <div className="flex justify-between items-center text-xs text-fg-muted mb-1">
           <span>Event-loop lag</span>
           <span>{eventLoop.lagMs.toFixed(1)} ms</span>
         </div>
@@ -117,10 +117,10 @@ export function ResourcePanel({ snapshot, lagHistory }: Props) {
         />
       </div>
 
-      <div className="flex gap-4 text-xs text-zinc-400 border-t border-border pt-3">
-        <span><span className="text-zinc-200 font-medium">{sessions.total}</span> total</span>
-        <span><span className="text-zinc-200 font-medium">{sessions.running}</span> running</span>
-        <span><span className="text-zinc-200 font-medium">{sessions.waiting}</span> waiting</span>
+      <div className="flex gap-4 text-xs text-fg-muted border-t border-border pt-3">
+        <span><span className="text-fg-muted font-medium">{sessions.total}</span> total</span>
+        <span><span className="text-fg-muted font-medium">{sessions.running}</span> running</span>
+        <span><span className="text-fg-muted font-medium">{sessions.waiting}</span> waiting</span>
       </div>
     </div>
   );

@@ -83,7 +83,7 @@ export function MemoryDrawer({ api, onClose }: Props) {
             ←
           </button>
         )}
-        <h2 className="text-sm font-semibold text-zinc-200 flex-1">
+        <h2 className="text-sm font-semibold text-fg-muted flex-1">
           {mode.kind === "list" && "Memories"}
           {mode.kind === "edit" && (mode.memory ? "Edit Memory" : "New Memory")}
           {mode.kind === "review" && "Review Memory"}
@@ -119,7 +119,7 @@ export function MemoryDrawer({ api, onClose }: Props) {
                   "pill cursor-pointer border whitespace-nowrap",
                   filter.tab === t.id
                     ? "bg-accent/20 border-accent text-accent"
-                    : "border-border text-zinc-400 hover:text-zinc-200"
+                    : "border-border text-fg-muted hover:text-fg-muted"
                 )}
                 onClick={() => setFilter(f => ({ ...f, tab: t.id }))}
               >

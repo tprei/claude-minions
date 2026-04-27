@@ -19,7 +19,7 @@ export function Thinking({ event }: Props) {
         <span className={cx("transition-transform", expanded ? "rotate-90" : "")}>›</span>
       </button>
       {expanded && (
-        <pre className="mt-1 text-xs text-zinc-400 whitespace-pre-wrap bg-zinc-900 rounded p-2 border border-border">
+        <pre className="mt-1 text-xs text-fg-muted whitespace-pre-wrap bg-bg-soft rounded p-2 border border-border">
           {event.text}
         </pre>
       )}

@@ -10,7 +10,7 @@ interface PillProps {
 export function Pill({ children, color, className }: PillProps): ReactElement {
   return (
     <span
-      className={cx("pill bg-bg-elev text-zinc-300 border border-border", className)}
+      className={cx("pill bg-bg-elev text-fg-muted border border-border", className)}
       style={color ? { borderColor: color, color } : undefined}
     >
       {children}

@@ -23,12 +23,12 @@ import { cx } from "../util/classnames.js";
 import "reactflow/dist/style.css";
 
 const STATUS_COLOR: Record<DAGNodeStatus, string> = {
-  pending: "border-zinc-600 bg-zinc-900 text-zinc-400",
+  pending: "border-border bg-bg-soft text-fg-muted",
   ready: "border-blue-600 bg-blue-950 text-blue-300",
   running: "border-green-500 bg-green-950 text-green-300",
   done: "border-teal-600 bg-teal-950 text-teal-300",
   failed: "border-red-500 bg-red-950 text-red-300",
-  skipped: "border-zinc-600 bg-zinc-800 text-zinc-500",
+  skipped: "border-border bg-bg-elev text-fg-subtle",
   "ci-pending": "border-amber-500 bg-amber-950 text-amber-300",
   "ci-failed": "border-orange-500 bg-orange-950 text-orange-300",
   landed: "border-purple-600 bg-purple-950 text-purple-300",
@@ -180,9 +180,9 @@ export function DagCanvasView({ dagId }: Props) {
   if (!selected) {
     return (
       <div className="p-6">
-        <h2 className="text-sm font-medium text-zinc-300 mb-4">Select a DAG</h2>
+        <h2 className="text-sm font-medium text-fg-muted mb-4">Select a DAG</h2>
         {dags.length === 0 && (
-          <p className="text-sm text-zinc-500">No DAGs available.</p>
+          <p className="text-sm text-fg-subtle">No DAGs available.</p>
         )}
         <div className="space-y-2">
           {dags.map((dag) => (
@@ -190,10 +190,10 @@ export function DagCanvasView({ dagId }: Props) {
               key={dag.id}
               type="button"
               onClick={() => selectDag(dag.id)}
-              className="w-full text-left card px-4 py-3 hover:border-zinc-500 transition-colors"
+              className="w-full text-left card px-4 py-3 hover:border-border transition-colors"
             >
-              <div className="text-sm font-medium text-zinc-100">{dag.title}</div>
-              <div className="text-xs text-zinc-500 mt-0.5">
+              <div className="text-sm font-medium text-fg">{dag.title}</div>
+              <div className="text-xs text-fg-subtle mt-0.5">
                 {dag.id} · {dag.status} · {dag.nodes.length} nodes
               </div>
             </button>
@@ -209,13 +209,13 @@ export function DagCanvasView({ dagId }: Props) {
         <button
           type="button"
           onClick={clearDag}
-          className="text-zinc-500 hover:text-zinc-300"
+          className="text-fg-subtle hover:text-fg-muted"
         >
           ← all DAGs
         </button>
-        <span className="text-zinc-100 font-medium">{selected.title}</span>
-        <span className="pill bg-zinc-800 text-zinc-400 text-[10px]">{selected.status}</span>
-        <span className="text-zinc-600 text-xs">{selected.nodes.length} nodes</span>
+        <span className="text-fg font-medium">{selected.title}</span>
+        <span className="pill bg-bg-elev text-fg-muted text-[10px]">{selected.status}</span>
+        <span className="text-fg-subtle text-xs">{selected.nodes.length} nodes</span>
       </div>
       <div className="flex-1">
         <DagCanvasInner dag={selected} />

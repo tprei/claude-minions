@@ -63,7 +63,7 @@ export function RuntimeDrawer({ api, onClose }: Props) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
-        <h2 className="text-sm font-semibold text-zinc-200 flex-1">Runtime Config</h2>
+        <h2 className="text-sm font-semibold text-fg-muted flex-1">Runtime Config</h2>
         <button
           className="btn text-xs"
           onClick={load}

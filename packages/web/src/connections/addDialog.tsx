@@ -49,7 +49,7 @@ export function AddDialog({ onClose, onAdded }: AddDialogProps): ReactElement {
     <Modal open title="Add connection" onClose={onClose} className="max-w-sm">
       <form onSubmit={e => void handleSubmit(e)} className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-zinc-400">Label</label>
+          <label className="text-xs text-fg-muted">Label</label>
           <input
             className="input"
             placeholder="My engine"
@@ -59,7 +59,7 @@ export function AddDialog({ onClose, onAdded }: AddDialogProps): ReactElement {
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-zinc-400">Base URL</label>
+          <label className="text-xs text-fg-muted">Base URL</label>
           <input
             className="input"
             required
@@ -70,7 +70,7 @@ export function AddDialog({ onClose, onAdded }: AddDialogProps): ReactElement {
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-zinc-400">Bearer token</label>
+          <label className="text-xs text-fg-muted">Bearer token</label>
           <input
             className="input"
             type="password"
@@ -82,7 +82,7 @@ export function AddDialog({ onClose, onAdded }: AddDialogProps): ReactElement {
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-zinc-400">Color</label>
+          <label className="text-xs text-fg-muted">Color</label>
           <div className="flex gap-2">
             {PRESET_COLORS.map(c => (
               <button

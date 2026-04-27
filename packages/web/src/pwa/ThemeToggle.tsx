@@ -28,8 +28,8 @@ export function ThemeToggle() {
           className={cx(
             "px-2 py-1 rounded-md text-sm transition-colors",
             theme === t.id
-              ? "bg-bg-elev text-zinc-200"
-              : "text-zinc-500 hover:text-zinc-300"
+              ? "bg-bg-elev text-fg-muted"
+              : "text-fg-subtle hover:text-fg-muted"
           )}
           onClick={() => setTheme(t.id)}
           aria-pressed={theme === t.id}

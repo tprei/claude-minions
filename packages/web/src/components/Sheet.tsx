@@ -66,10 +66,10 @@ export function Sheet({ open, onClose, side = "bottom", title, children, classNa
         <div className="p-4">
           {title && (
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-zinc-100">{title}</h2>
+              <h2 className="text-sm font-semibold text-fg">{title}</h2>
               <button
                 onClick={onClose}
-                className="text-zinc-500 hover:text-zinc-100 transition-colors p-1 rounded"
+                className="text-fg-subtle hover:text-fg transition-colors p-1 rounded"
                 aria-label="Close"
               >
                 ✕

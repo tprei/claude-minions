@@ -42,7 +42,7 @@ export function AppLayout({ header, sidebar, main, chatSurface }: LayoutProps): 
       <div className="flex-shrink-0 h-12 border-b border-border flex items-center relative z-50 bg-bg">
         <button
           onClick={() => setSidebarOpen(v => !v)}
-          className="w-12 h-12 flex items-center justify-center text-zinc-500 hover:text-zinc-100 transition-colors flex-shrink-0"
+          className="w-12 h-12 flex items-center justify-center text-fg-subtle hover:text-fg transition-colors flex-shrink-0"
           aria-label="Toggle sidebar"
           aria-expanded={sidebarOpen}
         >

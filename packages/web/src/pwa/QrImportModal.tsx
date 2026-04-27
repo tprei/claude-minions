@@ -109,7 +109,7 @@ export function QrImportModal({ onImport, onClose }: Props) {
     >
       <div className="card flex flex-col gap-4 w-full max-w-sm p-4">
         <div className="flex items-center">
-          <h2 className="text-sm font-semibold text-zinc-200 flex-1">Import via QR</h2>
+          <h2 className="text-sm font-semibold text-fg-muted flex-1">Import via QR</h2>
           <button className="btn p-1.5" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
@@ -140,7 +140,7 @@ export function QrImportModal({ onImport, onClose }: Props) {
         )}
 
         {status === "scanning" && (
-          <p className="text-xs text-zinc-500 text-center">
+          <p className="text-xs text-fg-subtle text-center">
             Point camera at a Minions connection QR code
           </p>
         )}

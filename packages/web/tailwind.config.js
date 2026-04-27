@@ -1,5 +1,3 @@
-import typography from "@tailwindcss/typography";
-
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: "class",
@@ -7,12 +5,28 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: { DEFAULT: "#0b0d12", soft: "#11141b", elev: "#161a23" },
-        border: { DEFAULT: "#262a36", soft: "#1c2030" },
-        accent: { DEFAULT: "#7c5cff", soft: "#a78bfa", muted: "#3a2c80" },
-        ok: "#34d399",
-        warn: "#f59e0b",
-        err: "#f87171"
+        bg: {
+          DEFAULT: "rgb(var(--bg) / <alpha-value>)",
+          soft: "rgb(var(--bg-soft) / <alpha-value>)",
+          elev: "rgb(var(--bg-elev) / <alpha-value>)"
+        },
+        border: {
+          DEFAULT: "rgb(var(--border) / <alpha-value>)",
+          soft: "rgb(var(--border-soft) / <alpha-value>)"
+        },
+        accent: {
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          soft: "rgb(var(--accent-soft) / <alpha-value>)",
+          muted: "rgb(var(--accent-muted) / <alpha-value>)"
+        },
+        fg: {
+          DEFAULT: "rgb(var(--fg) / <alpha-value>)",
+          muted: "rgb(var(--fg-muted) / <alpha-value>)",
+          subtle: "rgb(var(--fg-subtle) / <alpha-value>)"
+        },
+        ok: "rgb(var(--ok) / <alpha-value>)",
+        warn: "rgb(var(--warn) / <alpha-value>)",
+        err: "rgb(var(--err) / <alpha-value>)"
       },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
@@ -20,5 +34,5 @@ export default {
       }
     }
   },
-  plugins: [typography]
+  plugins: []
 };

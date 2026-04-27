@@ -30,7 +30,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
       />
       <div className={cx("relative card p-6 w-full max-w-md shadow-2xl", className)}>
         {title && (
-          <h2 className="text-sm font-semibold text-zinc-100 mb-4">{title}</h2>
+          <h2 className="text-sm font-semibold text-fg mb-4">{title}</h2>
         )}
         {children}
       </div>

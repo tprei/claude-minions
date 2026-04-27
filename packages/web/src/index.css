@@ -3,6 +3,38 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --bg: 248 250 252;
+    --bg-soft: 241 245 249;
+    --bg-elev: 226 232 240;
+    --border: 203 213 225;
+    --border-soft: 226 232 240;
+    --fg: 15 23 42;
+    --fg-muted: 51 65 85;
+    --fg-subtle: 100 116 139;
+    --accent: 79 70 229;
+    --accent-soft: 99 102 241;
+    --accent-muted: 224 231 255;
+    --ok: 22 163 74;
+    --warn: 234 88 12;
+    --err: 220 38 38;
+  }
+  .dark {
+    --bg: 11 13 18;
+    --bg-soft: 17 20 27;
+    --bg-elev: 22 26 35;
+    --border: 38 42 54;
+    --border-soft: 28 32 48;
+    --fg: 244 244 245;
+    --fg-muted: 161 161 170;
+    --fg-subtle: 113 113 122;
+    --accent: 124 92 255;
+    --accent-soft: 167 139 250;
+    --accent-muted: 58 44 128;
+    --ok: 52 211 153;
+    --warn: 245 158 11;
+    --err: 248 113 113;
+  }
   html, body, #root { height: 100%; }
   body {
     -webkit-tap-highlight-color: transparent;
@@ -28,11 +60,9 @@
     @apply btn bg-accent text-white border-accent hover:bg-accent-soft;
   }
   .input {
-    @apply bg-bg-soft border border-border rounded-lg px-3 py-1.5 text-sm placeholder:text-zinc-500 focus:outline-none focus:border-accent;
+    @apply bg-bg-soft border border-border rounded-lg px-3 py-1.5 text-sm placeholder:text-fg-subtle focus:outline-none focus:border-accent;
   }
   .kbd {
-    @apply font-mono text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-soft text-zinc-400;
+    @apply font-mono text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-soft text-fg-subtle;
   }
 }
-
-.prose pre code { white-space: pre-wrap; word-break: break-word; }

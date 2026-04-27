@@ -18,7 +18,7 @@ export function Spinner({ size = "md", className }: SpinnerProps): ReactElement 
       role="status"
       aria-label="loading"
       className={cx(
-        "inline-block rounded-full border-zinc-600 border-t-accent animate-spin",
+        "inline-block rounded-full border-border border-t-accent animate-spin",
         sizeClass[size],
         className,
       )}
