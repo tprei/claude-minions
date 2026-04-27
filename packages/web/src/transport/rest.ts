@@ -111,6 +111,15 @@ export function getTranscript(conn: Connection, slug: string): Promise<ListEnvel
   return apiFetch(conn, `/api/sessions/${slug}/transcript`);
 }
 
+export function fetchTranscript(
+  conn: Connection,
+  slug: string,
+  sinceSeq?: number,
+): Promise<ListEnvelope<TranscriptEvent>> {
+  const qs = sinceSeq === undefined ? "" : `?since=${sinceSeq}`;
+  return apiFetch(conn, `/api/sessions/${slug}/transcript${qs}`);
+}
+
 export function getDiff(conn: Connection, slug: string): Promise<WorkspaceDiff> {
   return apiFetch(conn, `/api/sessions/${slug}/diff`);
 }

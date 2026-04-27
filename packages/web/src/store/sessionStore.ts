@@ -41,13 +41,19 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
   appendTranscriptEvent(slug, event) {
     set(s => {
-      const transcripts = new Map(s.transcripts);
-      const existing = transcripts.get(slug) ?? [];
+      const existing = s.transcripts.get(slug) ?? [];
       const last = existing.length > 0 ? existing[existing.length - 1] : undefined;
-      if (last && last.seq >= event.seq) {
+      if (last && event.seq > last.seq) {
+        const transcripts = new Map(s.transcripts);
+        transcripts.set(slug, [...existing, event]);
+        return { transcripts };
+      }
+      if (existing.some((e) => e.seq === event.seq)) {
         return { transcripts: s.transcripts };
       }
-      transcripts.set(slug, [...existing, event]);
+      const merged = [...existing, event].sort((a, b) => a.seq - b.seq);
+      const transcripts = new Map(s.transcripts);
+      transcripts.set(slug, merged);
       return { transcripts };
     });
   },
@@ -55,7 +61,13 @@ export const useSessionStore = create<SessionStore>((set) => ({
   setTranscript(slug, events) {
     set(s => {
       const transcripts = new Map(s.transcripts);
-      transcripts.set(slug, [...events].sort((a, b) => a.seq - b.seq));
+      const seen = new Set<number>();
+      const deduped = events.filter((e) => {
+        if (seen.has(e.seq)) return false;
+        seen.add(e.seq);
+        return true;
+      });
+      transcripts.set(slug, deduped.sort((a, b) => a.seq - b.seq));
       return { transcripts };
     });
   },
