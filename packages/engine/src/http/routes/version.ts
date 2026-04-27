@@ -8,6 +8,7 @@ export function registerVersionRoutes(app: FastifyInstance, ctx: EngineContext):
       apiVersion: ctx.env.apiVersion,
       libraryVersion: ctx.env.libraryVersion,
       features: ctx.features(),
+      featuresPending: ctx.featuresPending(),
       provider: ctx.env.provider,
       providers: [ctx.env.provider],
       repos: ctx.repos(),

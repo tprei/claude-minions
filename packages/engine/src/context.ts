@@ -131,7 +131,6 @@ export interface EngineContext {
   github: {
     enabled: () => boolean;
     fetchPR: (repoId: string, prNumber: number) => Promise<import("@minions/shared").PullRequestPreview>;
-    getToken: () => Promise<string>;
   };
 
   stats: {
@@ -142,6 +141,7 @@ export interface EngineContext {
   };
 
   features: () => import("@minions/shared").FeatureFlag[];
+  featuresPending: () => { flag: import("@minions/shared").FeatureFlag; reason: string }[];
   repos: () => import("@minions/shared").RepoBinding[];
 
   shutdown: () => Promise<void>;

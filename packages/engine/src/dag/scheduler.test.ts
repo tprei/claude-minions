@@ -191,6 +191,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
     db: {} as EngineContext["db"],
     workspaceDir: "/tmp",
     features: () => [],
+    featuresPending: () => [],
     repos: () => [],
     shutdown: async () => {},
   };

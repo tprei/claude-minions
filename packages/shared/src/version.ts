@@ -31,10 +31,16 @@ export interface RepoBinding {
   defaultBranch?: string;
 }
 
+export interface PendingFeature {
+  flag: FeatureFlag;
+  reason: string;
+}
+
 export interface VersionInfo {
   apiVersion: string;
   libraryVersion: string;
   features: FeatureFlag[];
+  featuresPending: PendingFeature[];
   provider: string;
   providers: string[];
   repos: RepoBinding[];
