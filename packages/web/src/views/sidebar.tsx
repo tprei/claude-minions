@@ -18,6 +18,7 @@ interface SidebarProps {
   onOpenMemory: () => void;
   onOpenRuntime: () => void;
   onOpenLoops: () => void;
+  onNavigate?: () => void;
 }
 
 interface ViewOption {
@@ -60,6 +61,7 @@ export function Sidebar({
   onOpenMemory,
   onOpenRuntime,
   onOpenLoops,
+  onNavigate,
 }: SidebarProps): ReactElement {
   const activeId = useConnectionStore(s => s.activeId);
   const featureList = useVersionStore(s => (activeId ? s.byConnection.get(activeId)?.features : undefined));
@@ -69,6 +71,7 @@ export function Sidebar({
     if (!activeId) return;
     const { sessionSlug, query } = parseUrl();
     setUrlState({ connectionId: activeId, view, sessionSlug, query });
+    onNavigate?.();
   }
 
   return (

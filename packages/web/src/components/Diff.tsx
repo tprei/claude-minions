@@ -3,6 +3,7 @@ import { cx } from "../util/classnames.js";
 interface Props {
   text: string;
   className?: string;
+  wrap?: boolean;
 }
 
 interface Hunk {
@@ -31,11 +32,12 @@ function parseHunks(raw: string): Hunk[] {
   return hunks;
 }
 
-export function Diff({ text, className }: Props) {
+export function Diff({ text, className, wrap = true }: Props) {
   const hunks = parseHunks(text);
+  const wrapClass = wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre";
   if (hunks.length === 0) {
     return (
-      <pre className={cx("text-xs font-mono text-zinc-400 p-2", className)}>{text}</pre>
+      <pre className={cx("text-xs font-mono text-zinc-400 p-2", wrapClass, className)}>{text}</pre>
     );
   }
   return (
@@ -47,7 +49,8 @@ export function Diff({ text, className }: Props) {
             <div
               key={j}
               className={cx(
-                "px-3 py-0.5 whitespace-pre",
+                "px-3 py-0.5",
+                wrapClass,
                 line.kind === "add" && "bg-green-950 text-green-300",
                 line.kind === "remove" && "bg-red-950 text-red-300",
                 line.kind === "context" && "text-zinc-400",

@@ -44,7 +44,7 @@ export function ToolResult({ event }: Props) {
         )}
       </div>
       {fmt === "markdown" && <Markdown text={event.body} />}
-      {fmt === "diff" && <Diff text={event.body} />}
+      {fmt === "diff" && <Diff text={event.body} wrap />}
       {fmt === "json" && (
         <pre className="text-[11px] text-zinc-300 bg-zinc-900 rounded p-2 border border-border overflow-x-auto">
           {event.body}
@@ -58,7 +58,7 @@ export function ToolResult({ event }: Props) {
         />
       )}
       {(fmt === "text" || fmt === "binary") && (
-        <pre className="text-[11px] text-zinc-300 bg-zinc-900 rounded p-2 border border-border overflow-x-auto whitespace-pre-wrap">
+        <pre className="text-sm text-zinc-300 bg-zinc-900 rounded p-2 border border-border whitespace-pre-wrap break-words">
           {event.body}
         </pre>
       )}

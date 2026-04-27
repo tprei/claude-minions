@@ -77,7 +77,7 @@ export function App(): ReactElement {
     <>
       <AppLayout
         header={<Header />}
-        sidebar={
+        sidebar={({ closeMobile }) => (
           <Sidebar
             currentView={view as ViewKind}
             filterStatus={filterStatus}
@@ -88,8 +88,9 @@ export function App(): ReactElement {
             onOpenMemory={() => setMemoryOpen(true)}
             onOpenRuntime={() => setRuntimeOpen(true)}
             onOpenLoops={() => setLoopsOpen(true)}
+            onNavigate={closeMobile}
           />
-        }
+        )}
         main={
           <ViewSwitcher
             view={view as ViewKind}

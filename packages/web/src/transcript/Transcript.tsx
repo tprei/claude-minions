@@ -8,10 +8,10 @@ const NEAR_BOTTOM_THRESHOLD = 120;
 
 function TurnSeparator({ turn }: { turn: number }) {
   return (
-    <div className="flex items-center gap-2 my-2 select-none">
-      <div className="flex-1 h-px bg-zinc-800" />
-      <span className="text-[10px] text-zinc-600">turn {turn}</span>
-      <div className="flex-1 h-px bg-zinc-800" />
+    <div className="flex items-center gap-2 my-1.5 select-none">
+      <div className="flex-1 border-t border-dotted border-zinc-800" />
+      <span className="text-[9px] text-zinc-600">turn {turn}</span>
+      <div className="flex-1 border-t border-dotted border-zinc-800" />
     </div>
   );
 }

@@ -34,3 +34,5 @@
     @apply font-mono text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-soft text-zinc-400;
   }
 }
+
+.prose pre code { white-space: pre-wrap; word-break: break-word; }

@@ -80,13 +80,13 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
   };
 
   return (
-    <div className="flex h-full gap-3 p-4 overflow-x-auto">
+    <div className="flex h-full gap-3 p-3 overflow-x-auto snap-x snap-mandatory">
       {COLUMNS.map((col) => {
         const items = byStatus.get(col.status) ?? [];
         const limited = col.limit ? items.slice(0, col.limit) : items;
         const headerClass = COL_HEADER_BG[col.status] ?? "bg-zinc-900/40 border-zinc-700/40";
         return (
-          <div key={col.status} className="flex flex-col w-64 shrink-0">
+          <div key={col.status} className="flex flex-col w-72 shrink-0 snap-start">
             <div className={cx("flex items-center gap-2 rounded-t-lg px-3 py-2 border mb-1", headerClass)}>
               <span className={cx("w-2 h-2 rounded-full", STATUS_DOT[col.status])} />
               <span className="text-sm font-medium text-zinc-200">{col.label}</span>
@@ -116,7 +116,7 @@ function KanbanCard({ session, onClick }: { session: Session; onClick: () => voi
   return (
     <div
       onClick={onClick}
-      className="card p-2.5 cursor-pointer hover:border-zinc-600 transition-colors space-y-1.5"
+      className="card p-2 cursor-pointer hover:border-zinc-600 transition-colors space-y-1"
     >
       <div className="flex items-start justify-between gap-1.5">
         <span className="text-xs text-zinc-100 leading-snug line-clamp-2">{session.title}</span>

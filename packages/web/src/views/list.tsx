@@ -142,7 +142,7 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
         {filtered.length === 0 && (
           <div className="text-sm text-zinc-500 text-center mt-16">No sessions match.</div>
         )}
-        <table className="w-full text-sm">
+        <table className="w-full text-sm hidden sm:table">
           <thead className="sticky top-0 bg-bg-soft border-b border-border text-xs text-zinc-500">
             <tr>
               <th className="text-left px-4 py-2 font-normal">title</th>
@@ -160,7 +160,45 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
             ))}
           </tbody>
         </table>
+        <div className="block sm:hidden p-2 space-y-2">
+          {filtered.map((session) => (
+            <SessionCard key={session.slug} session={session} onClick={() => navigate(session.slug)} />
+          ))}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function SessionCard({ session, onClick }: { session: Session; onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      className="card p-3 cursor-pointer hover:border-zinc-600 transition-colors space-y-2"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-sm text-zinc-100 leading-snug line-clamp-2">{session.title}</span>
+        {session.attention.length > 0 && (
+          <span className="pill bg-red-900 text-red-300 text-[10px] shrink-0">
+            {session.attention.length}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className={cx("pill text-[10px]", MODE_COLOR[session.mode])}>
+          {session.mode}
+        </span>
+        <span className="inline-flex items-center gap-1.5 pill bg-bg-elev text-zinc-400 text-[10px]">
+          <span className={cx("w-2 h-2 rounded-full", STATUS_DOT[session.status])} />
+          {session.status}
+        </span>
+        {session.repoId && (
+          <span className="pill bg-zinc-800 text-zinc-400 text-[10px] truncate max-w-[10rem]">
+            {session.repoId}
+          </span>
+        )}
+      </div>
+      <div className="text-[10px] text-zinc-500">{relTime(session.updatedAt)}</div>
     </div>
   );
 }
