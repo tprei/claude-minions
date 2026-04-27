@@ -103,6 +103,16 @@ export interface SessionWithTranscript extends Session {
   transcript: TranscriptEvent[];
 }
 
+export const ALLOWED_ATTACHMENT_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+export type AllowedAttachmentMimeType = (typeof ALLOWED_ATTACHMENT_MIME_TYPES)[number];
+
+export interface AttachmentInput {
+  name: string;
+  mimeType: string;
+  dataBase64?: string;
+  url?: string;
+}
+
 export interface CreateSessionRequest {
   prompt: string;
   mode?: SessionMode;
@@ -111,7 +121,7 @@ export interface CreateSessionRequest {
   baseBranch?: string;
   parentSlug?: string;
   modelHint?: string;
-  attachments?: { name: string; mimeType: string; dataBase64: string }[];
+  attachments?: AttachmentInput[];
   metadata?: Record<string, unknown>;
 }
 

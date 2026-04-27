@@ -381,11 +381,26 @@ export class SessionRegistry {
     await injectAssets(worktreePath);
 
     if (req.attachments && req.attachments.length > 0) {
-      const uploadsDir = paths.uploads(slug);
-      await ensureDir(uploadsDir);
+      const sessionUploads = paths.uploads(slug);
+      await ensureDir(sessionUploads);
+      const globalUploads = path.join(workspaceDir, "uploads");
       for (const att of req.attachments) {
-        const buf = Buffer.from(att.dataBase64, "base64");
-        await fs.writeFile(path.join(uploadsDir, att.name), buf);
+        const dst = path.join(sessionUploads, att.name);
+        if (att.url) {
+          if (!att.url.startsWith("/api/uploads/")) {
+            throw new EngineError("bad_request", "external attachment URLs not supported");
+          }
+          const filename = att.url.slice("/api/uploads/".length);
+          if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
+            throw new EngineError("bad_request", "invalid attachment url");
+          }
+          await fs.copyFile(path.join(globalUploads, filename), dst);
+        } else if (att.dataBase64) {
+          // transitional — T16 prefers url
+          await fs.writeFile(dst, Buffer.from(att.dataBase64, "base64"));
+        } else {
+          throw new EngineError("bad_request", "attachment must include url or dataBase64");
+        }
       }
     }
 
@@ -419,7 +434,6 @@ export class SessionRegistry {
       modelHint: req.modelHint,
       env,
       preamble,
-      attachments: req.attachments,
       mcpConfigPath,
     });
 

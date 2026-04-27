@@ -1,10 +1,14 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
+
+const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export interface Attachment {
   name: string;
   mimeType: string;
   dataBase64: string;
   previewUrl: string;
+  file: File;
+  url?: string;
 }
 
 function fileToAttachment(file: File): Promise<Attachment> {
@@ -18,6 +22,7 @@ function fileToAttachment(file: File): Promise<Attachment> {
         mimeType: file.type || "application/octet-stream",
         dataBase64: base64,
         previewUrl: result,
+        file,
       });
     };
     reader.onerror = () => reject(new Error("Failed to read file"));
@@ -31,6 +36,17 @@ interface Props {
 }
 
 export function AttachmentBar({ attachments, onChange }: Props) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const addFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const fileArr = Array.from(files).filter((f) => ALLOWED_MIME.has(f.type));
+      const converted = await Promise.all(fileArr.map(fileToAttachment));
+      onChange([...attachments, ...converted]);
+    },
+    [attachments, onChange],
+  );
+
   const remove = (i: number) => {
     onChange(attachments.filter((_, idx) => idx !== i));
   };
@@ -38,30 +54,30 @@ export function AttachmentBar({ attachments, onChange }: Props) {
   if (attachments.length === 0) return null;
 
   return (
-    <div className="flex gap-2 px-3 pt-2 overflow-x-auto">
+    <div className="flex flex-wrap gap-2 px-3 pt-2">
       {attachments.map((a, i) => (
         <div
           key={i}
-          className="flex items-center gap-2 shrink-0 rounded-lg border border-border bg-bg-elev pl-1 pr-1 py-1"
+          className="relative group w-14 h-14 rounded-lg overflow-hidden border border-border"
         >
-          <img
-            src={a.previewUrl}
-            alt={a.name}
-            className="w-8 h-8 rounded object-cover shrink-0"
-          />
-          <span className="text-xs text-fg-muted max-w-[140px] truncate">
-            {a.name}
-          </span>
+          <img src={a.previewUrl} alt={a.name} className="w-full h-full object-cover" />
           <button
             type="button"
             onClick={() => remove(i)}
-            aria-label={`Remove ${a.name}`}
-            className="w-5 h-5 flex items-center justify-center rounded text-fg-subtle hover:text-fg hover:bg-bg-soft text-sm leading-none"
+            className="absolute top-0 right-0 w-5 h-5 bg-black/70 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-bl"
           >
             ×
           </button>
         </div>
       ))}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        multiple
+        className="hidden"
+        onChange={(e) => e.target.files && addFiles(e.target.files)}
+      />
     </div>
   );
 }
@@ -72,7 +88,7 @@ export function useAttachments() {
   const onPaste = useCallback(
     async (e: React.ClipboardEvent) => {
       const images = Array.from(e.clipboardData.files).filter((f) =>
-        f.type.startsWith("image/"),
+        ALLOWED_MIME.has(f.type),
       );
       if (images.length === 0) return;
       e.preventDefault();
@@ -85,7 +101,7 @@ export function useAttachments() {
   const onDrop = useCallback(
     async (e: React.DragEvent) => {
       const images = Array.from(e.dataTransfer.files).filter((f) =>
-        f.type.startsWith("image/"),
+        ALLOWED_MIME.has(f.type),
       );
       if (images.length === 0) return;
       e.preventDefault();
@@ -99,4 +115,3 @@ export function useAttachments() {
 
   return { attachments, setAttachments, onPaste, onDrop, clear };
 }
-
