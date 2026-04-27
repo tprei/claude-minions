@@ -3,6 +3,7 @@ import type { DAG, DAGNode, DAGNodeStatus } from "@minions/shared";
 import type { EventBus } from "../bus/eventBus.js";
 import { nowIso } from "../util/time.js";
 import { newSlug } from "../util/ids.js";
+import type { ParsedDag } from "./parser.js";
 
 interface DagRow {
   id: string;
@@ -264,5 +265,56 @@ export class DagRepo {
   nextOrd(dagId: string): number {
     const result = this.stmtMaxOrd.get(dagId) as { max_ord: number } | undefined;
     return (result?.max_ord ?? -1) + 1;
+  }
+
+  createFromParsed(
+    parsed: ParsedDag,
+    opts: { repoId?: string; baseBranch?: string; rootSessionSlug?: string },
+  ): DAG {
+    const id = newSlug("dag");
+    const now = nowIso();
+    this.insert({
+      id,
+      title: parsed.title,
+      goal: parsed.goal,
+      repoId: opts.repoId,
+      baseBranch: opts.baseBranch,
+      rootSessionSlug: opts.rootSessionSlug,
+      status: "active",
+      metadata: {},
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const titleToId = new Map<string, string>();
+    const insertedIds: { id: string; rawDeps: string[] }[] = [];
+    let ord = 0;
+    for (const pn of parsed.nodes) {
+      const inserted = this.insertNode(
+        id,
+        {
+          title: pn.title,
+          prompt: pn.prompt,
+          status: "pending" as DAGNodeStatus,
+          dependsOn: [],
+          metadata: {},
+        },
+        ord++,
+      );
+      titleToId.set(pn.title, inserted.id);
+      insertedIds.push({ id: inserted.id, rawDeps: pn.dependsOn });
+    }
+
+    for (const { id: nodeId, rawDeps } of insertedIds) {
+      if (rawDeps.length === 0) continue;
+      const translated = rawDeps
+        .map((dep) => titleToId.get(dep))
+        .filter((v): v is string => typeof v === "string");
+      this.updateNode(nodeId, { dependsOn: translated });
+    }
+
+    const result = this.get(id);
+    if (!result) throw new Error(`dag not found after createFromParsed: ${id}`);
+    return result;
   }
 }
