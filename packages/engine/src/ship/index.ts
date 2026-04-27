@@ -1,12 +1,86 @@
 import type { ShipStage } from "@minions/shared";
+import type Database from "better-sqlite3";
 import type { EngineContext } from "../context.js";
+import type { Logger } from "../logger.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { ShipCoordinator } from "./coordinator.js";
+
+interface ShipStateRow {
+  session_slug: string;
+  stage: string;
+  notes: string;
+  updated_at: string;
+}
+
+function reconcileOnBoot(db: Database.Database, ctx: EngineContext, log: Logger): void {
+  const rows = db.prepare(`SELECT * FROM ship_state`).all() as ShipStateRow[];
+
+  for (const row of rows) {
+    const slug = row.session_slug;
+    const stage = row.stage as ShipStage;
+
+    try {
+      const session = ctx.sessions.get(slug);
+      if (!session) {
+        log.warn("ship boot reconcile: session row missing for ship_state", { slug, stage });
+        ctx.audit.record(
+          "system",
+          "ship.boot-reconcile",
+          { kind: "session", id: slug },
+          { stage, status: "session-missing" },
+        );
+        continue;
+      }
+
+      if (
+        session.status === "completed" ||
+        session.status === "failed" ||
+        session.status === "cancelled"
+      ) {
+        if (stage !== "done") {
+          log.warn("ship session terminated mid-stage", {
+            slug,
+            stage,
+            status: session.status,
+          });
+        }
+        ctx.audit.record(
+          "system",
+          "ship.boot-reconcile",
+          { kind: "session", id: slug },
+          { stage, status: session.status, midStage: stage !== "done" },
+        );
+        continue;
+      }
+
+      log.info("ship session re-armed", { slug, stage });
+      ctx.audit.record(
+        "system",
+        "ship.boot-reconcile",
+        { kind: "session", id: slug },
+        { stage, status: session.status, action: "re-armed" },
+      );
+    } catch (err) {
+      log.error("ship boot reconcile failed for row", {
+        slug,
+        err: (err as Error).message,
+      });
+      ctx.audit.record(
+        "system",
+        "ship.boot-reconcile.failed",
+        { kind: "session", id: slug },
+        { error: (err as Error).message },
+      );
+    }
+  }
+}
 
 export function createShipSubsystem(deps: SubsystemDeps): SubsystemResult<EngineContext["ship"]> {
   const { ctx, db, log } = deps;
 
   const coordinator = new ShipCoordinator(db, ctx, log.child({ subsystem: "ship-coordinator" }));
+
+  reconcileOnBoot(db, ctx, log.child({ subsystem: "ship-coordinator" }));
 
   const api: EngineContext["ship"] = {
     async advance(slug: string, toStage?: ShipStage, note?: string): Promise<void> {

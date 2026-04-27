@@ -1,5 +1,6 @@
 import type { DAG, DAGSplitRequest, StatusEvent } from "@minions/shared";
 import type { EngineContext } from "../context.js";
+import type { Logger } from "../logger.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { DagRepo } from "./model.js";
 import { DagScheduler } from "./scheduler.js";
@@ -12,6 +13,78 @@ import { EngineError } from "../errors.js";
 
 const DAG_FENCE_DETECT_RE = /```dag\s*\n([\s\S]*?)```/g;
 
+function reconcileStaleRunningNodes(
+  db: import("better-sqlite3").Database,
+  repo: DagRepo,
+  ctx: EngineContext,
+  log: Logger,
+): string[] {
+  const stmtClearSlug = db.prepare(
+    `UPDATE dag_nodes SET status = ?, session_slug = NULL WHERE id = ?`,
+  );
+  const dags = repo.list().filter((d) => d.status === "active");
+  const dagIds: string[] = [];
+  for (const dag of dags) {
+    try {
+      for (const node of dag.nodes) {
+        if (node.status !== "running") continue;
+        const sessionSlug = node.sessionSlug;
+        const session = sessionSlug ? ctx.sessions.get(sessionSlug) : null;
+        const sessionAlive =
+          session !== null &&
+          (session.status === "running" ||
+            session.status === "pending" ||
+            session.status === "waiting_input");
+        if (!sessionAlive) {
+          stmtClearSlug.run("pending", node.id);
+          ctx.audit.record(
+            "system",
+            "dag.boot-reconcile",
+            { kind: "dag", id: dag.id },
+            { nodeId: node.id, from: "running", to: "pending", sessionSlug: sessionSlug ?? null },
+          );
+          log.info("dag boot reconcile reset stale running node", {
+            dagId: dag.id,
+            nodeId: node.id,
+            sessionSlug: sessionSlug ?? null,
+          });
+        }
+      }
+      dagIds.push(dag.id);
+    } catch (err) {
+      log.error("dag boot reconcile failed for dag", { dagId: dag.id, err: (err as Error).message });
+      ctx.audit.record(
+        "system",
+        "dag.boot-reconcile.failed",
+        { kind: "dag", id: dag.id },
+        { error: (err as Error).message },
+      );
+    }
+  }
+  return dagIds;
+}
+
+async function dispatchAfterBootReconcile(
+  scheduler: DagScheduler,
+  dagIds: string[],
+  ctx: EngineContext,
+  log: Logger,
+): Promise<void> {
+  for (const dagId of dagIds) {
+    try {
+      await scheduler.tick(dagId);
+    } catch (err) {
+      log.error("dag boot reconcile tick failed", { dagId, err: (err as Error).message });
+      ctx.audit.record(
+        "system",
+        "dag.boot-reconcile.failed",
+        { kind: "dag", id: dagId },
+        { error: (err as Error).message, phase: "tick" },
+      );
+    }
+  }
+}
+
 export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineContext["dags"]> {
   const { ctx, db, bus, log } = deps;
 
@@ -23,6 +96,11 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
     ctx,
     log.child({ subsystem: "dag-terminal" }),
   );
+
+  const reconciledDagIds = reconcileStaleRunningNodes(db, repo, ctx, log);
+  dispatchAfterBootReconcile(scheduler, reconciledDagIds, ctx, log).catch((err) => {
+    log.error("dag boot reconcile dispatch error", { err: (err as Error).message });
+  });
 
   const subLog = log.child({ subsystem: "dag-parser-sub" });
   const warnedBlocksBySlug = new Map<string, Set<string>>();

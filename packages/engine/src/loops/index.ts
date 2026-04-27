@@ -90,6 +90,43 @@ export function createLoopsSubsystem(
 
   let tickHandle: ReturnType<typeof setInterval> | null = null;
 
+  const stmtBumpNextRun = db.prepare<[string, string, string], void>(
+    "UPDATE loops SET next_run_at=?, updated_at=? WHERE id=?",
+  );
+
+  function reconcileOnBoot(): void {
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const loops = list();
+    for (const loop of loops) {
+      if (!loop.nextRunAt) continue;
+      const nextMs = Date.parse(loop.nextRunAt);
+      if (!Number.isFinite(nextMs) || nextMs >= now) continue;
+      try {
+        stmtBumpNextRun.run(nowIso, nowIso, loop.id);
+        ctx.audit.record(
+          "system",
+          "loop.boot-reconcile",
+          { kind: "loop", id: loop.id },
+          { previousNextRunAt: loop.nextRunAt, nextRunAt: nowIso },
+        );
+        log.info("loop boot reconcile bumped nextRunAt", {
+          loopId: loop.id,
+          previousNextRunAt: loop.nextRunAt,
+          nextRunAt: nowIso,
+        });
+      } catch (err) {
+        log.error("loop boot reconcile failed for loop", { loopId: loop.id, err: (err as Error).message });
+        ctx.audit.record(
+          "system",
+          "loop.boot-reconcile.failed",
+          { kind: "loop", id: loop.id },
+          { error: (err as Error).message },
+        );
+      }
+    }
+  }
+
   function list(): LoopDefinition[] {
     return stmtList.all().map(rowToLoop);
   }
@@ -244,6 +281,7 @@ export function createLoopsSubsystem(
     log.info("loops scheduler started", { intervalMs });
   }
 
+  reconcileOnBoot();
   startScheduler();
 
   function onShutdown(): void {

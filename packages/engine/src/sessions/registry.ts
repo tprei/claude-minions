@@ -495,12 +495,23 @@ export class SessionRegistry {
       const slug = row.slug;
       if (this.handles.has(slug)) continue;
 
+      const worktreePath = row.worktree_path;
+      if (!worktreePath) {
+        log.warn("cannot resume session without worktree_path", { slug });
+        ctx.audit.record("system", "session.resume.skipped", { kind: "session", id: slug }, {
+          reason: "missing-worktree-path",
+        });
+        this.updateSessionStatus.run("failed", nowIso(), nowIso(), slug);
+        const updatedRow = this.getSessionRow(slug)!;
+        this.emitUpdated(this.buildSession(updatedRow));
+        continue;
+      }
+
       const providerState = this.getProviderState.get(slug) as ProviderStateRow | undefined;
       const providerName = row.provider;
 
       try {
         const provider = getProvider(providerName);
-        const worktreePath = row.worktree_path ?? "";
         const homeDir = this.paths.home(providerName);
 
         const env: Record<string, string> = {
@@ -539,9 +550,17 @@ export class SessionRegistry {
 
         this.pipeHandle(slug, handle, providerName);
 
+        ctx.audit.record("system", "session.resume", { kind: "session", id: slug }, {
+          provider: providerName,
+          externalId: handle.externalId ?? null,
+          pendingReplies: pending.length,
+        });
         log.info("resumed session", { slug });
       } catch (err) {
         log.error("failed to resume session", { slug, err: String(err) });
+        ctx.audit.record("system", "session.resume.failed", { kind: "session", id: slug }, {
+          error: String(err),
+        });
         this.updateSessionStatus.run("failed", nowIso(), nowIso(), slug);
         const updatedRow = this.getSessionRow(slug)!;
         this.emitUpdated(this.buildSession(updatedRow));
