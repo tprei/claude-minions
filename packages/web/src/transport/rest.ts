@@ -156,6 +156,26 @@ export function postCommand(conn: Connection, cmd: Command): Promise<CommandResu
   return apiFetch(conn, "/api/commands", { method: "POST", body: JSON.stringify(cmd) });
 }
 
+export interface CommandIntent {
+  onApply: () => void;
+  onReconcile: () => void;
+  onTimeout: () => void;
+}
+
+export async function postCommandWithIntent(
+  conn: Connection,
+  cmd: Command,
+  intent: CommandIntent,
+): Promise<CommandResult> {
+  intent.onApply();
+  try {
+    return await postCommand(conn, cmd);
+  } catch (err) {
+    intent.onTimeout();
+    throw err;
+  }
+}
+
 export function postMessage(
   conn: Connection,
   payload: { sessionSlug?: string; prompt: string; [k: string]: unknown },
