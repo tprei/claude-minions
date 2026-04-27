@@ -146,6 +146,13 @@ function buildSpawnHandle(
     stdio: ["pipe", "pipe", "pipe"],
   });
 
+  const stderrChunks: string[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf8");
+    stderrChunks.push(text);
+    process.stderr.write(`[claude-code:${child.pid}] ${text}`);
+  });
+
   const lineEmitter: Array<(line: string) => void> = [];
   const rl = readline.createInterface({ input: child.stdout! });
   rl.on("line", (line) => {
@@ -254,15 +261,11 @@ export const claudeCodeProvider: AgentProvider = {
       "--output-format", "stream-json",
       "--print",
       "--verbose",
+      "--dangerously-skip-permissions",
     ];
 
     if (opts.modelHint) {
       args.push("--model", opts.modelHint);
-    }
-
-    const homeDir = opts.env["MINIONS_CLAUDE_HOME"] ?? undefined;
-    if (homeDir) {
-      args.push("--config-dir", homeDir);
     }
 
     let fullPrompt = opts.prompt;
@@ -275,7 +278,6 @@ export const claudeCodeProvider: AgentProvider = {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...opts.env,
-      HOME: homeDir ?? process.env["HOME"] ?? "/tmp",
     };
 
     if (opts.attachments && opts.attachments.length > 0) {
@@ -297,21 +299,15 @@ export const claudeCodeProvider: AgentProvider = {
       return mockProvider.resume(opts);
     }
 
-    const args = ["--output-format", "stream-json", "--print", "--verbose"];
+    const args = ["--output-format", "stream-json", "--print", "--verbose", "--dangerously-skip-permissions"];
 
     if (opts.externalId) {
       args.push("--resume", opts.externalId);
     }
 
-    const homeDir = opts.env["MINIONS_CLAUDE_HOME"] ?? undefined;
-    if (homeDir) {
-      args.push("--config-dir", homeDir);
-    }
-
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...opts.env,
-      HOME: homeDir ?? process.env["HOME"] ?? "/tmp",
     };
 
     return buildSpawnHandle(claudeBin, args, { cwd: opts.worktree, env });
