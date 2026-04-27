@@ -1,9 +1,11 @@
 import { loadEnv } from "./env.js";
+import { loadDotenvFiles } from "./dotenv.js";
 import { createLogger } from "./logger.js";
 import { createEngine } from "./index.js";
 import type { EngineContext } from "./context.js";
 
 async function main(): Promise<void> {
+  loadDotenvFiles(process.cwd());
   const env = loadEnv(process.env);
   const log = createLogger(env.logLevel, { service: "engine" });
 

@@ -67,7 +67,14 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   const mutex = new KeyedMutex();
 
   const repoRepo = new RepoRepo(db);
-  repoRepo.loadFromEnv(process.env["MINIONS_REPOS"]);
+  const repoFile = RepoRepo.repoFilePath(env.workspace);
+  const fileLoaded = repoRepo.loadFromFile(repoFile);
+  if (fileLoaded) {
+    engineLog.info("loaded repos from file", { repoFile });
+  } else if (process.env["MINIONS_REPOS"]) {
+    engineLog.warn("MINIONS_REPOS env is deprecated; move JSON to repos.json under MINIONS_WORKSPACE", { repoFile });
+    repoRepo.loadFromEnv(process.env["MINIONS_REPOS"]);
+  }
 
   const ctx = {} as EngineContext;
   ctx.env = env;
