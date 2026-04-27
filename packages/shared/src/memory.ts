@@ -35,7 +35,7 @@ export interface CreateMemoryRequest {
   proposedFromSession?: string;
 }
 
-export interface ReviewMemoryRequest {
+export interface MemoryReviewCommand {
   decision: "approve" | "reject" | "delete" | "supersede";
   reason?: string;
   supersedesId?: string;

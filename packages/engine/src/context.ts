@@ -101,7 +101,7 @@ export interface EngineContext {
     get: (id: string) => import("@minions/shared").Memory | null;
     create: (req: import("@minions/shared").CreateMemoryRequest) => Promise<import("@minions/shared").Memory>;
     update: (id: string, patch: Partial<Pick<import("@minions/shared").Memory, "title" | "body" | "pinned">>) => Promise<import("@minions/shared").Memory>;
-    review: (id: string, decision: import("@minions/shared").ReviewMemoryRequest) => Promise<import("@minions/shared").Memory>;
+    review: (id: string, decision: import("@minions/shared").MemoryReviewCommand) => Promise<import("@minions/shared").Memory>;
     delete: (id: string) => Promise<void>;
     renderPreamble: (repoId?: string) => string;
   };

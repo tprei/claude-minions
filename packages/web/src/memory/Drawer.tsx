@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { Memory, CreateMemoryRequest, ReviewMemoryRequest } from "@minions/shared";
+import type { Memory, CreateMemoryRequest, MemoryReviewCommand } from "@minions/shared";
 import { cx } from "../util/classnames.js";
 import { MemoryList } from "./list.js";
 import { MemoryEdit } from "./edit.js";
@@ -60,7 +60,7 @@ export function MemoryDrawer({ api, onClose }: Props) {
     setMode({ kind: "list" });
   }
 
-  async function handleReview(memory: Memory, req: ReviewMemoryRequest) {
+  async function handleReview(memory: Memory, req: MemoryReviewCommand) {
     await api.patch(`/api/memories/${memory.id}/review`, req);
     await load();
     setMode({ kind: "list" });

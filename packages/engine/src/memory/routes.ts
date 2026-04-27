@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { EngineContext } from "../context.js";
-import type { MemoryKind, MemoryStatus, ReviewMemoryRequest } from "@minions/shared";
+import type { MemoryKind, MemoryStatus, MemoryReviewCommand } from "@minions/shared";
 import { EngineError } from "../errors.js";
 
 export function registerMemoryRoutes(app: FastifyInstance, ctx: EngineContext): void {
@@ -57,8 +57,8 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: EngineContext): 
     if (!valid.includes(body["decision"] as string)) {
       throw new EngineError("bad_request", `decision must be one of ${valid.join("|")}`);
     }
-    const reviewReq: ReviewMemoryRequest = {
-      decision: body["decision"] as ReviewMemoryRequest["decision"],
+    const reviewReq: MemoryReviewCommand = {
+      decision: body["decision"] as MemoryReviewCommand["decision"],
       reason: typeof body["reason"] === "string" ? body["reason"] : undefined,
       supersedesId: typeof body["supersedesId"] === "string" ? body["supersedesId"] : undefined,
     };

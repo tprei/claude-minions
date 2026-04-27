@@ -52,7 +52,7 @@ export type {
   MemoryStatus,
   Memory,
   CreateMemoryRequest,
-  ReviewMemoryRequest,
+  MemoryReviewCommand,
 } from "@minions/shared";
 
 export type {
