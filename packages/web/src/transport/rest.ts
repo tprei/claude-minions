@@ -5,6 +5,7 @@ import type {
   SessionMode,
   CreateSessionRequest,
   CreateVariantsRequest,
+  CreateVariantsResponse,
   TranscriptEvent,
   WorkspaceDiff,
   Screenshot,
@@ -230,7 +231,7 @@ export function getHealth(conn: Connection): Promise<{ ok: true }> {
   return apiFetch(conn, "/api/health");
 }
 
-export function postVariants(conn: Connection, req: CreateVariantsRequest): Promise<ListEnvelope<Session>> {
+export function postVariants(conn: Connection, req: CreateVariantsRequest): Promise<CreateVariantsResponse> {
   return apiFetch(conn, "/api/sessions/variants", { method: "POST", body: JSON.stringify(req) });
 }
 

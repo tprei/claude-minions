@@ -17,6 +17,7 @@ export type {
   SessionWithTranscript,
   CreateSessionRequest,
   CreateVariantsRequest,
+  CreateVariantsResponse,
 } from "@minions/shared";
 
 export type {

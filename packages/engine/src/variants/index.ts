@@ -2,7 +2,6 @@ import type { CreateVariantsRequest } from "@minions/shared";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { listenForVariantCompletions } from "./runner.js";
 import { runJudge } from "./judge.js";
-import { registerVariantsRoutes } from "./routes.js";
 
 export interface VariantsSubsystem {
   spawn: (req: CreateVariantsRequest) => Promise<{ parentSlug: string; childSlugs: string[] }>;
@@ -70,8 +69,5 @@ export function createVariantsSubsystem(deps: SubsystemDeps): SubsystemResult<Va
 
   return {
     api: { spawn, judge },
-    registerRoutes(app) {
-      registerVariantsRoutes(app, ctx);
-    },
   };
 }
