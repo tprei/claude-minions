@@ -6,7 +6,6 @@ import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getT
 import { Transcript } from "../transcript/Transcript.js";
 import { Diff } from "../components/Diff.js";
 import { Tabs, type Tab } from "./Tabs.js";
-import { SessionNav } from "./SessionNav.js";
 import { ChatInput } from "./Input.js";
 import { QuickActions } from "./quickActions.js";
 import { Sheet } from "../components/Sheet.js";
@@ -30,6 +29,26 @@ const SURFACE_TABS: Tab[] = [
 
 const MIN_WIDTH = 280;
 const DEFAULT_WIDTH = 380;
+const RESERVED_LEFT = 360;
+const WIDTH_STORAGE_KEY = "chat.width";
+
+function maxWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_WIDTH;
+  return Math.max(MIN_WIDTH, window.innerWidth - RESERVED_LEFT);
+}
+
+function clampWidth(value: number): number {
+  return Math.min(Math.max(value, MIN_WIDTH), maxWidth());
+}
+
+function readStoredWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_WIDTH;
+  const raw = window.localStorage.getItem(WIDTH_STORAGE_KEY);
+  if (!raw) return DEFAULT_WIDTH;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_WIDTH;
+  return clampWidth(parsed);
+}
 
 function useSessionTranscript(session: Session) {
   const transcripts = useSessionStore((s) => s.transcripts);
@@ -212,7 +231,17 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
-      <SessionNav activeSlug={session.slug} onClose={onClose} />
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+        <span className="text-xs font-medium text-fg-muted truncate flex-1">{session.title}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-fg-subtle hover:text-fg-muted text-lg leading-none"
+          title="Close (press ?)"
+        >
+          ×
+        </button>
+      </div>
       <Tabs tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {activeTab === "transcript" && <Transcript events={events} />}
@@ -239,7 +268,7 @@ interface Props {
 export function ChatSurface({ sessionSlug }: Props) {
   const [open, setOpen] = useState(true);
   const [activeTab, setActiveTab] = useState("transcript");
-  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [width, setWidth] = useState<number>(() => readStoredWidth());
   const sessionsMap = useSessionStore((s) => s.sessions);
 
   const session = sessionSlug ? sessionsMap.get(sessionSlug) : undefined;
@@ -255,7 +284,19 @@ export function ChatSurface({ sessionSlug }: Props) {
   }, []);
 
   const handleDrag = useCallback((delta: number) => {
-    setWidth((w) => Math.max(MIN_WIDTH, w - delta));
+    setWidth((w) => {
+      const next = clampWidth(w - delta);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(WIDTH_STORAGE_KEY, String(next));
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => setWidth((w) => clampWidth(w));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   if (!session) return null;
@@ -276,7 +317,7 @@ export function ChatSurface({ sessionSlug }: Props) {
 
   if (isMobile) {
     return (
-      <Sheet open={open} onClose={() => setOpen(false)}>
+      <Sheet open={open} onClose={() => setOpen(false)} title={session.title}>
         <div className="h-[80vh] flex flex-col">
           <SurfacePanel
             session={session}
@@ -291,11 +332,11 @@ export function ChatSurface({ sessionSlug }: Props) {
 
   return (
     <div
-      className="flex flex-shrink-0 border-l border-border bg-bg-soft min-h-0 h-full max-w-[60vw]"
+      className="flex flex-shrink-0 border-l border-border bg-bg-soft min-h-0 max-w-[60vw]"
       style={{ width }}
     >
       <ResizeHandle onDrag={handleDrag} />
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col">
         <SurfacePanel
           session={session}
           activeTab={activeTab}

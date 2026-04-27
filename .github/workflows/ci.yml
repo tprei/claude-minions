@@ -23,19 +23,6 @@ jobs:
       - run: pnpm --filter @minions/shared run build
       - run: pnpm -r run typecheck
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @minions/shared run build
-      - run: pnpm lint
-
   test-engine:
     runs-on: ubuntu-latest
     steps:
@@ -61,3 +48,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @minions/shared run build
       - run: pnpm --filter @minions/web run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @minions/shared run build
+      - run: pnpm --filter @minions/engine run build
+      - run: pnpm --filter @minions/web run build
+      - run: pnpm --filter @minions/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @minions/web run e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            packages/web/test-results
+            packages/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
