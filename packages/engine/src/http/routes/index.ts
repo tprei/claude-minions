@@ -17,6 +17,7 @@ import { registerReadinessRoutes } from "./readiness.js";
 import { registerIntakeRoutes } from "./intake.js";
 import { registerLoopRoutes } from "./loops.js";
 import { registerVariantRoutes } from "./variants.js";
+import { registerDoctorRoutes } from "./doctor.js";
 
 export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): Promise<void> {
   registerHealthRoutes(app);
@@ -36,4 +37,5 @@ export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): 
   registerIntakeRoutes(app, ctx);
   registerLoopRoutes(app, ctx);
   registerVariantRoutes(app, ctx);
+  registerDoctorRoutes(app, ctx);
 }
