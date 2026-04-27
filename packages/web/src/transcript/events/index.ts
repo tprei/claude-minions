@@ -21,10 +21,6 @@ const EVENT_MAP: Partial<Record<TranscriptEvent["kind"], EventComponent>> = {
   assistant_text: wrap(AssistantText),
   thinking: wrap(Thinking),
   user_message: wrap(UserMessage),
-  tool_call: wrap(ToolCall),
-  tool_result: wrap(ToolResult),
-  turn_started: wrap(TurnStarted),
-  turn_completed: wrap(TurnCompleted),
   status: wrap(StatusBanner),
 };
 
