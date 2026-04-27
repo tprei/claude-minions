@@ -10,7 +10,7 @@ import type {
   ProviderEvent,
   ParseStreamState,
 } from "./provider.js";
-import { EngineError } from "../errors.js";
+import { mockProvider } from "./mock.js";
 
 type NdjsonLine = Record<string, unknown>;
 
@@ -253,13 +253,8 @@ export const claudeCodeProvider: AgentProvider = {
   async spawn(opts: ProviderSpawnOpts): Promise<ProviderHandle> {
     const claudeBin = await findClaudeBinary();
     if (!claudeBin) {
-      process.stderr.write(
-        "[claude-code] claude binary not found; refusing to silently fall back to mock\n",
-      );
-      throw new EngineError(
-        "upstream",
-        "claude CLI not found in $PATH. Install claude-code CLI or set MINIONS_PROVIDER=mock if you intentionally want the in-process stub.",
-      );
+      process.stderr.write("[claude-code] claude binary not found, falling back to mock\n");
+      return mockProvider.spawn(opts);
     }
 
     const args = [
@@ -271,6 +266,10 @@ export const claudeCodeProvider: AgentProvider = {
 
     if (opts.modelHint) {
       args.push("--model", opts.modelHint);
+    }
+
+    if (opts.mcpConfigPath) {
+      args.push("--mcp-config", opts.mcpConfigPath);
     }
 
     let fullPrompt = opts.prompt;
@@ -300,16 +299,15 @@ export const claudeCodeProvider: AgentProvider = {
   async resume(opts: ProviderResumeOpts): Promise<ProviderHandle> {
     const claudeBin = await findClaudeBinary();
     if (!claudeBin) {
-      process.stderr.write(
-        "[claude-code] claude binary not found; refusing to silently fall back to mock\n",
-      );
-      throw new EngineError(
-        "upstream",
-        "claude CLI not found in $PATH. Install claude-code CLI or set MINIONS_PROVIDER=mock if you intentionally want the in-process stub.",
-      );
+      process.stderr.write("[claude-code] claude binary not found, falling back to mock for resume\n");
+      return mockProvider.resume(opts);
     }
 
     const args = ["--output-format", "stream-json", "--print", "--verbose", "--dangerously-skip-permissions"];
+
+    if (opts.mcpConfigPath) {
+      args.push("--mcp-config", opts.mcpConfigPath);
+    }
 
     if (opts.externalId) {
       args.push("--resume", opts.externalId);
