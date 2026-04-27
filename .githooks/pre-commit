@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+mapfile -t files < <(
+  git diff --cached --name-only --diff-filter=ACMR -z \
+    | tr '\0' '\n' \
+    | grep -E '^packages/.*\.tsx?$' || true
+)
+
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+if ! pnpm exec eslint --no-warn-ignored --max-warnings 0 "${files[@]}"; then
+  echo "pre-commit: eslint failed on staged files" >&2
+  exit 1
+fi

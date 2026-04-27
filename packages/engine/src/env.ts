@@ -10,6 +10,7 @@ export interface EngineEnv {
   provider: string;
   logLevel: "debug" | "info" | "warn" | "error";
   vapid: { publicKey: string; privateKey: string; subject: string } | null;
+  githubApp: { id: string; privateKey: string; installationId: string } | null;
   resourceSampleSec: number;
   loopTickSec: number;
   loopReservedInteractive: number;
@@ -50,6 +51,14 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): EngineEnv {
   const vapidPriv = env.MINIONS_VAPID_PRIVATE ?? "";
   const vapidSubject = env.MINIONS_VAPID_SUBJECT ?? `mailto:ops@${os.hostname()}`;
 
+  const ghAppId = env.MINIONS_GH_APP_ID ?? "";
+  const ghAppPrivateKey = env.MINIONS_GH_APP_PRIVATE_KEY ?? "";
+  const ghAppInstallationId = env.MINIONS_GH_APP_INSTALLATION_ID ?? "";
+  const githubApp =
+    ghAppId && ghAppPrivateKey && ghAppInstallationId
+      ? { id: ghAppId, privateKey: ghAppPrivateKey, installationId: ghAppInstallationId }
+      : null;
+
   return {
     port: asInt(env.MINIONS_PORT, 8787),
     host: env.MINIONS_HOST ?? "0.0.0.0",
@@ -59,6 +68,7 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): EngineEnv {
     provider: env.MINIONS_PROVIDER ?? "mock",
     logLevel: level(env.MINIONS_LOG_LEVEL),
     vapid: vapidPub && vapidPriv ? { publicKey: vapidPub, privateKey: vapidPriv, subject: vapidSubject } : null,
+    githubApp,
     resourceSampleSec: asInt(env.MINIONS_RESOURCE_SAMPLE_SEC, 2),
     loopTickSec: asInt(env.MINIONS_LOOP_TICK_SEC, 5),
     loopReservedInteractive: asInt(env.MINIONS_LOOP_RESERVED_INTERACTIVE, 4),

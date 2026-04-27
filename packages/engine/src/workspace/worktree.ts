@@ -27,6 +27,12 @@ export async function addWorktree(
 
   await bareGit.raw(["worktree", "add", "-b", branch, worktreePath, baseSha]);
 
+  try {
+    await simpleGit(worktreePath).raw(["config", "core.hooksPath", ".githooks"]);
+  } catch (err) {
+    log.warn("failed to set core.hooksPath on worktree", { worktreePath, err: String(err) });
+  }
+
   return { worktreePath, branch, baseSha };
 }
 

@@ -1,25 +1,43 @@
 import type { PullRequestPreview, CheckRun, CheckConclusion } from "@minions/shared";
 import { EngineError } from "../errors.js";
+import { appConfigured } from "../github/app.js";
 
 const GITHUB_API = "https://api.github.com";
 
-function token(): string {
-  return process.env["GITHUB_TOKEN"] ?? "";
+export interface AuthContext {
+  github: { getToken: () => Promise<string> };
 }
 
-function headers(): Record<string, string> {
-  const t = token();
-  const h: Record<string, string> = {
+export async function authHeader(ctx: AuthContext): Promise<{ Authorization: string }> {
+  if (appConfigured()) {
+    const token = await ctx.github.getToken();
+    return { Authorization: `Bearer ${token}` };
+  }
+  const pat = process.env["GITHUB_TOKEN"] ?? "";
+  if (!pat) {
+    throw new EngineError("unauthorized", "no GitHub credentials configured");
+  }
+  return { Authorization: `Bearer ${pat}` };
+}
+
+function baseHeaders(): Record<string, string> {
+  return {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
     "User-Agent": "minions-engine/0.1",
   };
-  if (t) h["Authorization"] = `Bearer ${t}`;
-  return h;
 }
 
-async function ghFetch(url: string, init?: RequestInit): Promise<unknown> {
-  const res = await fetch(url, { ...init, headers: { ...headers(), ...(init?.headers as Record<string, string> | undefined ?? {}) } });
+async function ghFetch(ctx: AuthContext, url: string, init?: RequestInit): Promise<unknown> {
+  const auth = await authHeader(ctx);
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      ...baseHeaders(),
+      ...auth,
+      ...(init?.headers as Record<string, string> | undefined ?? {}),
+    },
+  });
   if (!res.ok) {
     throw new EngineError(
       "upstream",
@@ -76,8 +94,14 @@ function mapConclusion(c: string | null): CheckConclusion | undefined {
   return (valid as string[]).includes(c) ? (c as CheckConclusion) : undefined;
 }
 
-export async function listChecks(owner: string, repo: string, sha: string): Promise<CheckRun[]> {
+export async function listChecks(
+  ctx: AuthContext,
+  owner: string,
+  repo: string,
+  sha: string,
+): Promise<CheckRun[]> {
   const data = await ghFetch(
+    ctx,
     `${GITHUB_API}/repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=100`,
   ) as GhCheckRunsResponse;
   return data.check_runs.map((r) => ({
@@ -90,13 +114,18 @@ export async function listChecks(owner: string, repo: string, sha: string): Prom
   }));
 }
 
-export async function getPR(owner: string, repo: string, number: number): Promise<PullRequestPreview> {
-  const pr = await ghFetch(`${GITHUB_API}/repos/${owner}/${repo}/pulls/${number}`) as GhPR;
+export async function getPR(
+  ctx: AuthContext,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<PullRequestPreview> {
+  const pr = await ghFetch(ctx, `${GITHUB_API}/repos/${owner}/${repo}/pulls/${number}`) as GhPR;
 
   const sha = pr.head.sha;
   let checks: CheckRun[] = [];
   try {
-    checks = await listChecks(owner, repo, sha);
+    checks = await listChecks(ctx, owner, repo, sha);
   } catch {
     checks = [];
   }
@@ -124,12 +153,13 @@ export async function getPR(owner: string, repo: string, number: number): Promis
 }
 
 export async function postIssueComment(
+  ctx: AuthContext,
   owner: string,
   repo: string,
   prNumber: number,
   body: string,
 ): Promise<void> {
-  await ghFetch(`${GITHUB_API}/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
+  await ghFetch(ctx, `${GITHUB_API}/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ body }),

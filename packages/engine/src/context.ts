@@ -131,6 +131,7 @@ export interface EngineContext {
   github: {
     enabled: () => boolean;
     fetchPR: (repoId: string, prNumber: number) => Promise<import("@minions/shared").PullRequestPreview>;
+    getToken: () => Promise<string>;
   };
 
   stats: {

@@ -1,14 +1,42 @@
-import { writeFile, chmod } from "node:fs/promises";
+import { writeFile, mkdir, chmod } from "node:fs/promises";
 import path from "node:path";
+import { GithubAppAuth, loadAppConfigFromEnv } from "../github/app.js";
 
-export function askpassScript(): string {
+const SHIM_DIR = ".askpass";
+const PAT_SHIM = "gh-pat.sh";
+const APP_SHIM = "gh-app.sh";
+const TOKEN_FILE = "token";
+
+function patShim(): string {
   const token = process.env["GITHUB_TOKEN"] ?? "";
-  return `#!/bin/sh\necho '${token.replace(/'/g, "'\\''")}'`;
+  return `#!/bin/sh\nprintf '%s' '${token.replace(/'/g, "'\\''")}'\n`;
+}
+
+function appShim(tokenPath: string): string {
+  const safe = tokenPath.replace(/'/g, "'\\''");
+  return `#!/bin/sh\ncat '${safe}'\n`;
 }
 
 export async function installAskpass(workspaceDir: string): Promise<void> {
-  const scriptPath = path.join(workspaceDir, ".git-askpass.sh");
-  await writeFile(scriptPath, askpassScript(), { encoding: "utf-8" });
+  const dir = path.join(workspaceDir, SHIM_DIR);
+  await mkdir(dir, { recursive: true });
+
+  const appConfig = loadAppConfigFromEnv();
+  if (appConfig) {
+    const tokenPath = path.join(dir, TOKEN_FILE);
+    const auth = new GithubAppAuth(appConfig);
+    const token = await auth.getInstallationToken();
+    await writeFile(tokenPath, token, { encoding: "utf-8", mode: 0o600 });
+
+    const scriptPath = path.join(dir, APP_SHIM);
+    await writeFile(scriptPath, appShim(tokenPath), { encoding: "utf-8" });
+    await chmod(scriptPath, 0o700);
+    process.env["GIT_ASKPASS"] = scriptPath;
+    return;
+  }
+
+  const scriptPath = path.join(dir, PAT_SHIM);
+  await writeFile(scriptPath, patShim(), { encoding: "utf-8" });
   await chmod(scriptPath, 0o700);
   process.env["GIT_ASKPASS"] = scriptPath;
 }

@@ -4,17 +4,20 @@ import type { Logger } from "../logger.js";
 import { EngineError } from "../errors.js";
 import { RepoRepo } from "../store/repos/repoRepo.js";
 import { parseGithubRemote } from "./parseRemote.js";
+import { GithubAppAuth, type GithubAppConfig } from "./app.js";
 
 export interface GithubSubsystemDeps {
   db: Database.Database;
   log: Logger;
   githubToken: string | null;
+  appConfig?: GithubAppConfig | null;
 }
 
 export interface GithubSubsystem {
   enabled: () => boolean;
   fetchPR: (repoId: string, prNumber: number) => Promise<PullRequestPreview>;
   postPRComment: (repoId: string, prNumber: number, body: string) => Promise<void>;
+  getToken: () => Promise<string>;
 }
 
 interface GithubPRResponse {
@@ -64,12 +67,16 @@ async function githubFetch(url: string, token: string, opts?: RequestInit): Prom
 
 export function createGithubSubsystem(deps: GithubSubsystemDeps): GithubSubsystem {
   const repoRepo = new RepoRepo(deps.db);
+  const appAuth = deps.appConfig ? new GithubAppAuth(deps.appConfig) : null;
 
-  function requireToken(): string {
-    if (!deps.githubToken) {
-      throw new EngineError("unauthorized", "GITHUB_TOKEN not configured");
+  async function getToken(): Promise<string> {
+    if (appAuth) {
+      return appAuth.getInstallationToken();
     }
-    return deps.githubToken;
+    if (deps.githubToken) {
+      return deps.githubToken;
+    }
+    throw new EngineError("unauthorized", "no GitHub credentials configured");
   }
 
   async function resolveOwnerRepo(repoId: string): Promise<{ owner: string; repo: string }> {
@@ -89,11 +96,13 @@ export function createGithubSubsystem(deps: GithubSubsystemDeps): GithubSubsyste
 
   return {
     enabled() {
-      return deps.githubToken !== null && deps.githubToken !== "";
+      return appAuth !== null || (deps.githubToken !== null && deps.githubToken !== "");
     },
 
+    getToken,
+
     async fetchPR(repoId, prNumber) {
-      const token = requireToken();
+      const token = await getToken();
       const { owner, repo } = await resolveOwnerRepo(repoId);
 
       const prRes = await githubFetch(
@@ -168,7 +177,7 @@ export function createGithubSubsystem(deps: GithubSubsystemDeps): GithubSubsyste
     },
 
     async postPRComment(repoId, prNumber, body) {
-      const token = requireToken();
+      const token = await getToken();
       const { owner, repo } = await resolveOwnerRepo(repoId);
 
       const res = await githubFetch(
