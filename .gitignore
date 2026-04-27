@@ -29,3 +29,4 @@ packages/web/dev-dist/
 /secrets/
 /data/
 .env.deploy
+/packages/web/.e2e-workspace/
