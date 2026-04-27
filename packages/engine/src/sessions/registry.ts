@@ -1,5 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
 import type {
   Session,
@@ -39,6 +41,15 @@ interface RepoRow {
   label: string;
   remote: string | null;
   default_branch: string;
+}
+
+function resolveBridgeScript(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const enginePkgRoot = path.resolve(here, "..", "..");
+  const distBridge = path.join(enginePkgRoot, "dist", "memory", "mcpBridge.mjs");
+  const srcBridge = path.join(enginePkgRoot, "src", "memory", "mcpBridge.mjs");
+  if (fsSync.existsSync(distBridge)) return distBridge;
+  return srcBridge;
 }
 
 interface ProviderStateRow {
@@ -232,6 +243,29 @@ export class SessionRegistry {
     return row.root_slug ?? parentSlug;
   }
 
+  private async writeMcpConfig(slug: string, worktreePath: string): Promise<string> {
+    const env = this.deps.ctx.env;
+    const minionsDir = path.join(worktreePath, ".minions");
+    await ensureDir(minionsDir);
+    const mcpConfigPath = path.join(minionsDir, "mcp-config.json");
+    const host = env.host === "0.0.0.0" ? "127.0.0.1" : env.host;
+    const config = {
+      mcpServers: {
+        "minions-memory": {
+          command: "node",
+          args: [resolveBridgeScript()],
+          env: {
+            MINIONS_SESSION_SLUG: slug,
+            MINIONS_TOKEN: env.token,
+            MINIONS_URL: `http://${host}:${env.port}`,
+          },
+        },
+      },
+    };
+    await fs.writeFile(mcpConfigPath, JSON.stringify(config, null, 2), "utf8");
+    return mcpConfigPath;
+  }
+
   private async setupAndSpawn(
     slug: string,
     req: CreateSessionRequest,
@@ -307,6 +341,8 @@ export class SessionRegistry {
       env["ANTHROPIC_API_KEY"] = process.env["ANTHROPIC_API_KEY"];
     }
 
+    const mcpConfigPath = await this.writeMcpConfig(slug, worktreePath);
+
     const handle = await provider.spawn({
       sessionSlug: slug,
       worktree: worktreePath,
@@ -315,6 +351,7 @@ export class SessionRegistry {
       env,
       preamble,
       attachments: req.attachments,
+      mcpConfigPath,
     });
 
     this.handles.set(slug, handle);
@@ -407,11 +444,16 @@ export class SessionRegistry {
           env["ANTHROPIC_API_KEY"] = process.env["ANTHROPIC_API_KEY"];
         }
 
+        const mcpConfigPath = worktreePath
+          ? await this.writeMcpConfig(slug, worktreePath)
+          : undefined;
+
         const handle = await provider.resume({
           sessionSlug: slug,
           worktree: worktreePath,
           externalId: providerState?.external_id ?? undefined,
           env,
+          mcpConfigPath,
         });
 
         this.handles.set(slug, handle);

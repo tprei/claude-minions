@@ -10,6 +10,7 @@ import { registerEntrypointRoutes } from "./entrypoints.js";
 import { registerSessionsRoutes } from "../../sessions/routes.js";
 import { registerDagRoutes } from "./dags.js";
 import { registerMemoryRoutes } from "./memories.js";
+import { registerMcpRoute } from "../../memory/mcpRoute.js";
 import { registerAuditRoutes } from "./audit.js";
 import { registerPushRoutes } from "./push.js";
 import { registerRuntimeRoutes } from "./runtime.js";
@@ -30,6 +31,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): 
   registerSessionsRoutes(app, ctx);
   registerDagRoutes(app, ctx);
   registerMemoryRoutes(app, ctx);
+  registerMcpRoute(app, ctx);
   registerAuditRoutes(app, ctx);
   registerPushRoutes(app, ctx);
   registerRuntimeRoutes(app, ctx);
