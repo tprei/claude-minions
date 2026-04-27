@@ -274,7 +274,7 @@ export function ChatSurface({ sessionSlug }: Props) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 btn text-xs z-40"
+        className="fixed bottom-4 right-4 btn text-xs z-40 shadow-lg"
       >
         💬 Open chat (?)
       </button>
@@ -299,9 +299,12 @@ export function ChatSurface({ sessionSlug }: Props) {
   }
 
   return (
-    <div className="fixed right-0 top-0 bottom-0 flex z-30" style={{ width }}>
+    <div
+      className="flex flex-shrink-0 border-l border-border bg-bg-soft min-h-0 max-w-[60vw]"
+      style={{ width }}
+    >
       <ResizeHandle onDrag={handleDrag} />
-      <div className="flex-1 flex flex-col shadow-2xl border-l border-border">
+      <div className="flex-1 min-w-0 flex flex-col">
         <SurfacePanel
           session={session}
           activeTab={activeTab}

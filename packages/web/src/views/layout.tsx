@@ -30,27 +30,16 @@ export function AppLayout({ header, sidebar, main, chatSurface }: LayoutProps): 
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <aside
           className={cx(
-            "flex-shrink-0 border-r border-border bg-bg-soft transition-all duration-200 overflow-hidden",
+            "flex-shrink-0 border-r border-border bg-bg-soft transition-[width] duration-150 overflow-hidden hidden md:block",
             sidebarOpen ? "w-56" : "w-0",
           )}
         >
           <div className="w-56 h-full overflow-y-auto">{sidebar}</div>
         </aside>
 
-        <main className="flex-1 min-w-0 overflow-hidden flex flex-col md:flex-row">
+        <main className="flex-1 min-w-0 overflow-hidden flex">
           <div className="flex-1 min-w-0 overflow-y-auto">{main}</div>
-
-          {chatSurface && (
-            <>
-              <div className="hidden md:block w-px bg-border flex-shrink-0" />
-              <div className="hidden md:flex flex-col w-80 flex-shrink-0 overflow-hidden">
-                {chatSurface}
-              </div>
-              <div className="md:hidden border-t border-border max-h-60 overflow-y-auto">
-                {chatSurface}
-              </div>
-            </>
-          )}
+          {chatSurface}
         </main>
       </div>
     </div>
