@@ -9,9 +9,10 @@ dist
 coverage
 .vite
 .cache
-workspace/
-.workspace/
-.local-workspace/
+/workspace/
+/.workspace/
+/.local-workspace/
+/.dev-workspace/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
