@@ -2,10 +2,13 @@ import { useEffect, useRef, useState, useCallback, type ReactNode } from "react"
 import type { TranscriptEvent, ToolResultEvent } from "@minions/shared";
 import { pickComponent } from "./events/index.js";
 import { OrphanedToolResult } from "./events/OrphanedToolResult.js";
+import { Timeline } from "./Timeline.js";
+import { cx } from "../util/classnames.js";
 
 const MAX_EVENTS = 500;
-const NEAR_BOTTOM_THRESHOLD = 80;
-const JUMP_BUTTON_THRESHOLD = 200;
+const NEAR_BOTTOM_THRESHOLD = 120;
+
+type TranscriptTab = "transcript" | "timeline";
 
 function TurnSeparator({ turn }: { turn: number }) {
   return (
@@ -25,14 +28,13 @@ function buildToolCallSet(events: TranscriptEvent[]): Set<string> {
   return ids;
 }
 
-interface Props {
+interface ViewProps {
   events: TranscriptEvent[];
 }
 
-export function Transcript({ events }: Props) {
+function TranscriptView({ events }: ViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mounted = useRef(false);
-  const [showJump, setShowJump] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
 
   const visible = events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events;
   const toolCallIds = buildToolCallSet(visible);
@@ -41,21 +43,14 @@ export function Transcript({ events }: Props) {
     const el = containerRef.current;
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowJump(distFromBottom > JUMP_BUTTON_THRESHOLD);
+    setAutoScroll(distFromBottom <= NEAR_BOTTOM_THRESHOLD);
   }, []);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    if (!mounted.current) {
-      mounted.current = true;
-      return;
+    if (autoScroll && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distFromBottom <= NEAR_BOTTOM_THRESHOLD) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [visible]);
+  }, [visible, autoScroll]);
 
   let lastTurn = -1;
   const rows: ReactNode[] = [];
@@ -90,30 +85,74 @@ export function Transcript({ events }: Props) {
   }
 
   return (
-    <div className="relative flex-1 min-h-0 flex flex-col">
-      <div
-        ref={containerRef}
-        onScroll={onScroll}
-        className="flex-1 overflow-y-auto px-4 py-3 space-y-0.5"
-      >
-        {events.length === 0 && (
-          <div className="text-sm text-fg-subtle text-center mt-12">No events yet.</div>
-        )}
-        {rows}
-      </div>
-      {showJump && (
+    <div
+      ref={containerRef}
+      onScroll={onScroll}
+      className="flex-1 overflow-y-auto px-4 py-3 space-y-0.5"
+    >
+      {events.length === 0 && (
+        <div className="text-sm text-fg-subtle text-center mt-12">No events yet.</div>
+      )}
+      {rows}
+      {!autoScroll && (
         <button
           type="button"
           onClick={() => {
-            const el = containerRef.current;
-            if (el) el.scrollTop = el.scrollHeight;
-            setShowJump(false);
+            setAutoScroll(true);
+            if (containerRef.current) {
+              containerRef.current.scrollTop = containerRef.current.scrollHeight;
+            }
           }}
-          className="absolute right-3 bottom-3 btn text-xs shadow-md"
+          className="fixed bottom-20 right-4 btn text-xs"
         >
-          ↓ Jump to latest
+          ↓ scroll to bottom
         </button>
       )}
+    </div>
+  );
+}
+
+interface TabButtonProps {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}
+
+function TabButton({ active, onClick, children }: TabButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cx(
+        "px-3 py-1 text-[11px] transition-colors",
+        active
+          ? "text-fg border-b-2 border-accent -mb-px"
+          : "text-fg-subtle hover:text-fg-muted",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+interface Props {
+  events: TranscriptEvent[];
+}
+
+export function Transcript({ events }: Props) {
+  const [tab, setTab] = useState<TranscriptTab>("transcript");
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex border-b border-border bg-bg-soft px-2">
+        <TabButton active={tab === "transcript"} onClick={() => setTab("transcript")}>
+          Transcript
+        </TabButton>
+        <TabButton active={tab === "timeline"} onClick={() => setTab("timeline")}>
+          Timeline
+        </TabButton>
+      </div>
+      {tab === "transcript" ? <TranscriptView events={events} /> : <Timeline events={events} />}
     </div>
   );
 }
