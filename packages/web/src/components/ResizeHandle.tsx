@@ -10,43 +10,43 @@ interface ResizeHandleProps {
 }
 
 export function ResizeHandle({ direction = "horizontal", onDrag, className }: ResizeHandleProps): ReactElement {
-  const dragging = useRef(false);
   const lastPos = useRef(0);
+  const onDragRef = useRef(onDrag);
+  onDragRef.current = onDrag;
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    const target = e.currentTarget;
-    target.setPointerCapture(e.pointerId);
-    dragging.current = true;
     lastPos.current = direction === "horizontal" ? e.clientX : e.clientY;
     document.body.style.cursor = direction === "horizontal" ? "col-resize" : "row-resize";
     document.body.style.userSelect = "none";
+
+    const onMove = (ev: PointerEvent) => {
+      ev.preventDefault();
+      const pos = direction === "horizontal" ? ev.clientX : ev.clientY;
+      const delta = pos - lastPos.current;
+      lastPos.current = pos;
+      if (delta !== 0) onDragRef.current(delta);
+    };
+
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.addEventListener("pointermove", onMove, { passive: false });
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
   }, [direction]);
-
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return;
-    const pos = direction === "horizontal" ? e.clientX : e.clientY;
-    const delta = pos - lastPos.current;
-    lastPos.current = pos;
-    if (delta !== 0) onDrag(delta);
-  }, [direction, onDrag]);
-
-  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    dragging.current = false;
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-  }, []);
 
   return (
     <div
       role="separator"
       aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
       onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
       className={cx(
         "group flex-shrink-0 select-none touch-none relative z-10",
         direction === "horizontal"
