@@ -577,11 +577,16 @@ export class SessionRegistry {
 
     const status = row.status as SessionStatus;
     const handle = this.handles.get(slug);
+    const injected = status === "running" || status === "waiting_input";
 
     const now = nowIso();
     const seq = (db.prepare(
       `SELECT COALESCE(MAX(seq), -1) AS last_seq FROM transcript_events WHERE session_slug = ?`,
     ).get(slug) as { last_seq: number }).last_seq + 1;
+
+    const body: Record<string, unknown> = { text, source: "operator" };
+    if (injected) body["injected"] = true;
+    const bodyJson = JSON.stringify(body);
 
     const eventId = newEventId();
     db.prepare(
@@ -590,7 +595,7 @@ export class SessionRegistry {
     ).run(
       eventId, slug, seq,
       (db.prepare(`SELECT stats_turns FROM sessions WHERE slug = ?`).get(slug) as { stats_turns: number } | undefined)?.stats_turns ?? 0,
-      JSON.stringify({ text, source: "operator" }),
+      bodyJson,
       now,
     );
 
@@ -601,13 +606,41 @@ export class SessionRegistry {
       id: eventId, session_slug: slug, seq,
       turn: (session.stats.turns ?? 0),
       kind: "user_message",
-      body: JSON.stringify({ text, source: "operator" }),
+      body: bodyJson,
       timestamp: now,
     });
     this.deps.bus.emit({ kind: "transcript_event", sessionSlug: slug, event: transcriptEv });
 
-    if (handle && (status === "running" || status === "waiting_input")) {
-      handle.write(text);
+    if (handle && injected) {
+      try {
+        handle.write(text);
+        ctx.audit.record("operator", "session.reply.injected", { kind: "session", id: slug });
+      } catch (err) {
+        ctx.audit.record("operator", "session.reply.failed", { kind: "session", id: slug }, { error: String(err) });
+        const failSeq = (db.prepare(
+          `SELECT COALESCE(MAX(seq), -1) AS last_seq FROM transcript_events WHERE session_slug = ?`,
+        ).get(slug) as { last_seq: number }).last_seq + 1;
+        const failId = newEventId();
+        const failNow = nowIso();
+        const failBody = JSON.stringify({
+          level: "error",
+          text: "reply injection failed",
+          data: { error: String(err) },
+        });
+        db.prepare(
+          `INSERT OR IGNORE INTO transcript_events(id, session_slug, seq, turn, kind, body, timestamp)
+           VALUES (?, ?, ?, ?, 'status', ?, ?)`,
+        ).run(failId, slug, failSeq, session.stats.turns ?? 0, failBody, failNow);
+        const failEv = rowToTranscriptEvent({
+          id: failId, session_slug: slug, seq: failSeq,
+          turn: session.stats.turns ?? 0,
+          kind: "status",
+          body: failBody,
+          timestamp: failNow,
+        });
+        this.deps.bus.emit({ kind: "transcript_event", sessionSlug: slug, event: failEv });
+        throw err;
+      }
     } else {
       this.replyQueue.enqueue(slug, text);
       ctx.audit.record("operator", "session.reply.queued", { kind: "session", id: slug });

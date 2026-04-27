@@ -201,6 +201,7 @@ export function rowToTranscriptEvent(row: TranscriptRow): TranscriptEvent {
         text: body["text"] as string,
         attachments: body["attachments"] as UserMessageEvent["attachments"],
         source: body["source"] as UserMessageEvent["source"],
+        injected: body["injected"] as boolean | undefined,
       } satisfies UserMessageEvent;
     case "turn_started":
       return {

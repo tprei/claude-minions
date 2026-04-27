@@ -28,6 +28,7 @@ export interface UserMessageEvent extends BaseEvent {
   text: string;
   attachments?: { name: string; mimeType: string; url?: string }[];
   source?: "operator" | "external" | "loop" | "completion";
+  injected?: boolean;
 }
 
 export interface TurnStartedEvent extends BaseEvent {
