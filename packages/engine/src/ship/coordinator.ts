@@ -11,7 +11,10 @@ import {
   VERIFY_DIRECTIVE,
   DONE_DIRECTIVE,
 } from "./stages.js";
+import { parseDagFromTranscript } from "../dag/parser.js";
 import { EngineError } from "../errors.js";
+
+const THINK_MIN_ASSISTANT_TEXT_LENGTH = 200;
 
 const STAGE_ORDER: ShipStage[] = ["think", "plan", "dag", "verify", "done"];
 
@@ -76,63 +79,129 @@ export class ShipCoordinator {
 
   async advance(slug: string, toStage?: ShipStage, note?: string): Promise<void> {
     await this.ctx.mutex.run(slug, async () => {
-      const session = this.ctx.sessions.get(slug);
-      if (!session) throw new EngineError("not_found", `session not found: ${slug}`);
-      if (session.mode !== "ship") {
-        throw new EngineError("bad_request", `session ${slug} is not a ship session`);
-      }
-
-      const currentStage = this.getStage(slug) ?? "think";
-
-      let target: ShipStage;
-      if (toStage) {
-        target = toStage;
-      } else {
-        const next = nextStage(currentStage);
-        if (!next) {
-          this.log.info("ship session already at done stage", { slug });
-          return;
-        }
-        target = next;
-      }
-
-      const notes: string[] = JSON.parse(
-        (this.stmtGetState.get(slug) as ShipStateRow | undefined)?.notes ?? "[]",
-      ) as string[];
-      if (note) notes.push(note);
-
-      this.stmtUpsertState.run(slug, target, JSON.stringify(notes), nowIso());
-
-      this.db.prepare(
-        `UPDATE sessions SET ship_stage = ?, updated_at = ? WHERE slug = ?`,
-      ).run(target, nowIso(), slug);
-
-      this.emitStatusEvent(slug, target, currentStage);
-
-      const updatedSession = this.ctx.sessions.get(slug);
-      if (updatedSession) {
-        this.ctx.bus.emit({ kind: "session_updated", session: updatedSession });
-      }
-
-      const directive = stageDirective(target);
-      await this.ctx.sessions.reply(
-        slug,
-        `[Ship stage: ${target}]\n\n${directive}`,
-      );
-
-      this.log.info("ship stage advanced", { slug, from: currentStage, to: target });
+      await this.advanceLocked(slug, toStage, note);
     });
   }
 
-  async onTurnCompleted(slug: string): Promise<void> {
+  private async advanceLocked(
+    slug: string,
+    toStage?: ShipStage,
+    note?: string,
+  ): Promise<void> {
     const session = this.ctx.sessions.get(slug);
-    if (!session) return;
-    if (session.mode !== "ship") return;
+    if (!session) throw new EngineError("not_found", `session not found: ${slug}`);
+    if (session.mode !== "ship") {
+      throw new EngineError("bad_request", `session ${slug} is not a ship session`);
+    }
 
-    const stage = this.getStage(slug);
-    if (!stage) return;
+    const currentStage = this.getStage(slug) ?? "think";
 
-    if (stage === "done") return;
+    let target: ShipStage;
+    if (toStage) {
+      target = toStage;
+    } else {
+      const next = nextStage(currentStage);
+      if (!next) {
+        this.log.info("ship session already at done stage", { slug });
+        return;
+      }
+      target = next;
+    }
+
+    const notes: string[] = JSON.parse(
+      (this.stmtGetState.get(slug) as ShipStateRow | undefined)?.notes ?? "[]",
+    ) as string[];
+    if (note) notes.push(note);
+
+    this.stmtUpsertState.run(slug, target, JSON.stringify(notes), nowIso());
+
+    this.db.prepare(
+      `UPDATE sessions SET ship_stage = ?, updated_at = ? WHERE slug = ?`,
+    ).run(target, nowIso(), slug);
+
+    this.emitStatusEvent(slug, target, currentStage);
+
+    const updatedSession = this.ctx.sessions.get(slug);
+    if (updatedSession) {
+      this.ctx.bus.emit({ kind: "session_updated", session: updatedSession });
+    }
+
+    const directive = stageDirective(target);
+    await this.ctx.sessions.reply(
+      slug,
+      `[Ship stage: ${target}]\n\n${directive}`,
+    );
+
+    this.log.info("ship stage advanced", { slug, from: currentStage, to: target });
+  }
+
+  async onTurnCompleted(slug: string): Promise<void> {
+    await this.ctx.mutex.run(slug, async () => {
+      const session = this.ctx.sessions.get(slug);
+      if (!session) return;
+      if (session.mode !== "ship") return;
+
+      const stage = this.getStage(slug);
+      if (!stage) return;
+      if (stage === "done") return;
+
+      const shouldAdvance = await this.checkExitCondition(slug, stage);
+      if (!shouldAdvance) {
+        this.log.debug("ship stage exit condition not met", { slug, stage });
+        return;
+      }
+
+      await this.advanceLocked(slug);
+    });
+  }
+
+  private async checkExitCondition(slug: string, stage: ShipStage): Promise<boolean> {
+    switch (stage) {
+      case "think":
+        return this.hasSubstantialAssistantText(slug);
+      case "plan":
+        return this.hasParseableDagBlock(slug);
+      case "dag":
+        return this.allDagNodesLanded(slug);
+      case "verify":
+        return await this.readinessReady(slug);
+      case "done":
+        return false;
+    }
+  }
+
+  private hasSubstantialAssistantText(slug: string): boolean {
+    const events = this.ctx.sessions.transcript(slug);
+    return events.some(
+      (e) => e.kind === "assistant_text" && e.text.length > THINK_MIN_ASSISTANT_TEXT_LENGTH,
+    );
+  }
+
+  private hasParseableDagBlock(slug: string): boolean {
+    const events = this.ctx.sessions.transcript(slug);
+    return parseDagFromTranscript(events) !== null;
+  }
+
+  private allDagNodesLanded(slug: string): boolean {
+    const dag = this.ctx.dags.list().find((d) => d.rootSessionSlug === slug);
+    if (!dag) return false;
+    if (dag.nodes.length === 0) return false;
+    return dag.nodes.every((n) => n.status === "landed");
+  }
+
+  private async readinessReady(slug: string): Promise<boolean> {
+    let readiness: import("@minions/shared").MergeReadiness | null;
+    try {
+      readiness = await this.ctx.readiness.compute(slug);
+    } catch (err) {
+      this.log.debug("readiness compute failed during ship advance", {
+        slug,
+        err: (err as Error).message,
+      });
+      return false;
+    }
+    if (!readiness) return false;
+    return readiness.status === "ready";
   }
 
   private emitStatusEvent(slug: string, toStage: ShipStage, fromStage: ShipStage): void {
