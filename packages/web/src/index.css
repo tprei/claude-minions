@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a2f40; border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  :focus-visible { outline: 2px solid #7c5cff; outline-offset: 2px; border-radius: 4px; }
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-elev border border-border rounded-xl;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs;
+  }
+  .btn {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-bg-soft hover:bg-bg-elev transition-colors text-sm;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white border-accent hover:bg-accent-soft;
+  }
+  .input {
+    @apply bg-bg-soft border border-border rounded-lg px-3 py-1.5 text-sm placeholder:text-zinc-500 focus:outline-none focus:border-accent;
+  }
+  .kbd {
+    @apply font-mono text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-soft text-zinc-400;
+  }
+}

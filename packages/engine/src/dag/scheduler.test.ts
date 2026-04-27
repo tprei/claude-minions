@@ -1,0 +1,269 @@
+import { test, describe, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import type { DAG, DAGNode, Session } from "@minions/shared";
+import type { EngineContext } from "../context.js";
+import type { EventBus } from "../bus/eventBus.js";
+import { DagScheduler } from "./scheduler.js";
+import { DagRepo } from "./model.js";
+import { createLogger } from "../logger.js";
+
+function makeNode(
+  id: string,
+  status: DAGNode["status"],
+  dependsOn: string[] = [],
+): DAGNode {
+  return {
+    id,
+    title: id,
+    prompt: `do ${id}`,
+    status,
+    dependsOn,
+    metadata: {},
+  };
+}
+
+function makeDag(id: string, nodes: DAGNode[]): DAG {
+  const now = new Date().toISOString();
+  return {
+    id,
+    title: "test dag",
+    goal: "test goal",
+    nodes,
+    createdAt: now,
+    updatedAt: now,
+    status: "active",
+    metadata: {},
+  };
+}
+
+interface MockDagRepo {
+  dags: Map<string, DAG>;
+  nodes: Map<string, DAGNode>;
+  get: (id: string) => DAG | null;
+  list: () => DAG[];
+  update: (id: string, patch: Partial<DAG>) => DAG;
+  getNode: (id: string) => DAGNode | null;
+  getNodeBySession: (slug: string) => DAGNode | null;
+  updateNode: (id: string, patch: Partial<DAGNode>) => DAGNode;
+  byNodeSession: (slug: string) => DAG | null;
+  listNodes: (dagId: string) => DAGNode[];
+}
+
+function makeMockRepo(dag: DAG): MockDagRepo {
+  const dags = new Map<string, DAG>([[dag.id, dag]]);
+  const nodes = new Map<string, DAGNode>(dag.nodes.map((n) => [n.id, n]));
+
+  const repo: MockDagRepo = {
+    dags,
+    nodes,
+    get(id: string): DAG | null {
+      const d = dags.get(id);
+      if (!d) return null;
+      return { ...d, nodes: Array.from(nodes.values()).filter((n) => d.nodes.some((dn) => dn.id === n.id)) };
+    },
+    list(): DAG[] {
+      return Array.from(dags.values()).map((d) => ({
+        ...d,
+        nodes: Array.from(nodes.values()).filter((n) => d.nodes.some((dn) => dn.id === n.id)),
+      }));
+    },
+    update(id: string, patch: Partial<DAG>): DAG {
+      const current = dags.get(id);
+      if (!current) throw new Error(`not found: ${id}`);
+      const updated = { ...current, ...patch };
+      dags.set(id, updated);
+      return updated;
+    },
+    getNode(id: string): DAGNode | null {
+      return nodes.get(id) ?? null;
+    },
+    getNodeBySession(slug: string): DAGNode | null {
+      for (const n of nodes.values()) {
+        if (n.sessionSlug === slug) return n;
+      }
+      return null;
+    },
+    updateNode(id: string, patch: Partial<DAGNode>): DAGNode {
+      const current = nodes.get(id);
+      if (!current) throw new Error(`node not found: ${id}`);
+      const updated = { ...current, ...patch };
+      nodes.set(id, updated);
+      const dag = Array.from(dags.values()).find((d) => d.nodes.some((n) => n.id === id));
+      if (dag) {
+        dags.set(dag.id, { ...dag, nodes: Array.from(nodes.values()).filter((n) => dag.nodes.some((dn) => dn.id === n.id)) });
+      }
+      return updated;
+    },
+    byNodeSession(slug: string): DAG | null {
+      for (const n of nodes.values()) {
+        if (n.sessionSlug === slug) {
+          const d = Array.from(dags.values()).find((d) => d.nodes.some((dn) => dn.id === n.id));
+          return d ?? null;
+        }
+      }
+      return null;
+    },
+    listNodes(dagId: string): DAGNode[] {
+      const d = dags.get(dagId);
+      if (!d) return [];
+      return d.nodes.map((dn) => nodes.get(dn.id) ?? dn);
+    },
+  };
+
+  return repo;
+}
+
+function makeMockCtx(spawnedSessions: Session[]): EngineContext {
+  let sessionCounter = 0;
+
+  return {
+    sessions: {
+      create: async (req) => {
+        const slug = `mock-session-${++sessionCounter}`;
+        const session: Session = {
+          slug,
+          title: req.title ?? slug,
+          prompt: req.prompt,
+          mode: req.mode ?? "task",
+          status: "running",
+          attention: [],
+          quickActions: [],
+          stats: {
+            turns: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            costUsd: 0,
+            durationMs: 0,
+            toolCalls: 0,
+          },
+          provider: "mock",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          childSlugs: [],
+          metadata: (req.metadata ?? {}) as Record<string, unknown>,
+        };
+        spawnedSessions.push(session);
+        return session;
+      },
+      get: () => null,
+      list: () => [],
+      listWithTranscript: () => [],
+      transcript: () => [],
+      stop: async () => {},
+      close: async () => {},
+      reply: async () => {},
+      resumeAllActive: async () => {},
+      diff: async (slug) => ({ sessionSlug: slug, patch: "", stats: [], truncated: false, byteSize: 0, generatedAt: new Date().toISOString() }),
+      screenshots: async () => [],
+      screenshotPath: () => "",
+      checkpoints: () => [],
+      restoreCheckpoint: async () => {},
+    },
+    runtime: {
+      schema: () => ({ groups: [], fields: [] }),
+      values: () => ({}),
+      effective: () => ({}),
+      update: async () => {},
+    },
+    dags: {} as EngineContext["dags"],
+    ship: {} as EngineContext["ship"],
+    landing: {} as EngineContext["landing"],
+    loops: {} as EngineContext["loops"],
+    variants: {} as EngineContext["variants"],
+    ci: {} as EngineContext["ci"],
+    quality: {} as EngineContext["quality"],
+    readiness: {} as EngineContext["readiness"],
+    intake: {} as EngineContext["intake"],
+    memory: {} as EngineContext["memory"],
+    audit: {} as EngineContext["audit"],
+    resource: {} as EngineContext["resource"],
+    push: {} as EngineContext["push"],
+    digest: {} as EngineContext["digest"],
+    github: {} as EngineContext["github"],
+    stats: {} as EngineContext["stats"],
+    bus: {} as EventBus,
+    mutex: {} as EngineContext["mutex"],
+    env: {} as EngineContext["env"],
+    log: createLogger("error"),
+    db: {} as EngineContext["db"],
+    workspaceDir: "/tmp",
+    features: () => [],
+    repos: () => [],
+    shutdown: async () => {},
+  };
+}
+
+describe("DagScheduler", () => {
+  test("tick spawns B when A is done", async () => {
+    const nodeA = makeNode("A", "done");
+    const nodeB = makeNode("B", "pending", ["A"]);
+    const nodeC = makeNode("C", "pending", ["B"]);
+
+    const dag = makeDag("dag1", [nodeA, nodeB, nodeC]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 1, "exactly one session spawned (for B)");
+    assert.equal(spawnedSessions[0]?.mode, "dag-task");
+
+    const bNode = repo.getNode("B");
+    assert.equal(bNode?.status, "running", "B should be running");
+    assert.ok(bNode?.sessionSlug, "B should have a session slug");
+
+    const cNode = repo.getNode("C");
+    assert.equal(cNode?.status, "pending", "C should still be pending");
+  });
+
+  test("tick spawns C when B is marked done", async () => {
+    const nodeA = makeNode("A", "done");
+    const nodeB = makeNode("B", "pending", ["A"]);
+    const nodeC = makeNode("C", "pending", ["B"]);
+
+    const dag = makeDag("dag1", [nodeA, nodeB, nodeC]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 1, "B spawned after first tick");
+
+    repo.updateNode("B", { status: "done" });
+
+    spawnedSessions.length = 0;
+
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 1, "C spawned after second tick");
+    const cNode = repo.getNode("C");
+    assert.equal(cNode?.status, "running", "C should be running");
+  });
+
+  test("tick respects concurrency cap", async () => {
+    const nodeA = makeNode("A", "done");
+    const nodeB = makeNode("B", "pending");
+    const nodeC = makeNode("C", "pending");
+    const nodeD = makeNode("D", "pending");
+    const nodeE = makeNode("E", "pending");
+
+    const dag = makeDag("dag1", [nodeA, nodeB, nodeC, nodeD, nodeE]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 3, "at most 3 sessions spawned (default cap)");
+  });
+});

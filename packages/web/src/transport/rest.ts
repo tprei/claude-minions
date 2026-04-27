@@ -1,0 +1,225 @@
+import type { Connection } from "../connections/store.js";
+import type {
+  Session,
+  CreateSessionRequest,
+  CreateVariantsRequest,
+  TranscriptEvent,
+  WorkspaceDiff,
+  Screenshot,
+  PullRequestPreview,
+  MergeReadiness,
+  Checkpoint,
+  DAG,
+  Command,
+  CommandResult,
+  Memory,
+  CreateMemoryRequest,
+  ReviewMemoryRequest,
+  RuntimeConfigResponse,
+  RuntimeOverrides,
+  VapidPublicKeyResponse,
+  PushSubscriptionInfo,
+  GlobalStats,
+  ModeStats,
+  RecentStats,
+  ReadinessSummary,
+  AuditEvent,
+  VersionInfo,
+  ListEnvelope,
+  OkEnvelope,
+  Entrypoint,
+  RegisterEntrypointRequest,
+  LoopDefinition,
+} from "../types.js";
+
+export class ApiError extends Error {
+  readonly error: string;
+  readonly detail: Record<string, unknown> | undefined;
+  readonly status: number;
+
+  constructor(status: number, body: { error: string; message: string; detail?: Record<string, unknown> }) {
+    super(body.message);
+    this.name = "ApiError";
+    this.error = body.error;
+    this.detail = body.detail;
+    this.status = status;
+  }
+}
+
+export async function apiFetch<T>(
+  conn: Connection,
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const url = `${conn.baseUrl.replace(/\/$/, "")}${path}`;
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      "Authorization": `Bearer ${conn.token}`,
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  if (!res.ok) {
+    let body: { error: string; message: string; detail?: Record<string, unknown> };
+    try {
+      body = await res.json() as typeof body;
+    } catch {
+      body = { error: "unknown", message: res.statusText };
+    }
+    throw new ApiError(res.status, body);
+  }
+
+  if (res.status === 204) return undefined as T;
+
+  return res.json() as Promise<T>;
+}
+
+export function getSessions(conn: Connection): Promise<ListEnvelope<Session>> {
+  return apiFetch(conn, "/api/sessions");
+}
+
+export function getSession(conn: Connection, slug: string): Promise<Session> {
+  return apiFetch(conn, `/api/sessions/${slug}`);
+}
+
+export function getTranscript(conn: Connection, slug: string): Promise<ListEnvelope<TranscriptEvent>> {
+  return apiFetch(conn, `/api/sessions/${slug}/transcript`);
+}
+
+export function getDiff(conn: Connection, slug: string): Promise<WorkspaceDiff> {
+  return apiFetch(conn, `/api/sessions/${slug}/diff`);
+}
+
+export function getScreenshots(conn: Connection, slug: string): Promise<ListEnvelope<Screenshot>> {
+  return apiFetch(conn, `/api/sessions/${slug}/screenshots`);
+}
+
+export function getPR(conn: Connection, slug: string): Promise<PullRequestPreview> {
+  return apiFetch(conn, `/api/sessions/${slug}/pr`);
+}
+
+export function getReadiness(conn: Connection, slug: string): Promise<MergeReadiness> {
+  return apiFetch(conn, `/api/sessions/${slug}/readiness`);
+}
+
+export function getCheckpoints(conn: Connection, slug: string): Promise<ListEnvelope<Checkpoint>> {
+  return apiFetch(conn, `/api/sessions/${slug}/checkpoints`);
+}
+
+export function restoreCheckpoint(conn: Connection, slug: string, id: string): Promise<OkEnvelope> {
+  return apiFetch(conn, `/api/sessions/${slug}/checkpoints/${id}/restore`, { method: "POST" });
+}
+
+export function getDags(conn: Connection): Promise<ListEnvelope<DAG>> {
+  return apiFetch(conn, "/api/dags");
+}
+
+export function getDag(conn: Connection, id: string): Promise<DAG> {
+  return apiFetch(conn, `/api/dags/${id}`);
+}
+
+export function postCommand(conn: Connection, cmd: Command): Promise<CommandResult> {
+  return apiFetch(conn, "/api/commands", { method: "POST", body: JSON.stringify(cmd) });
+}
+
+export function postMessage(
+  conn: Connection,
+  payload: { sessionSlug?: string; prompt: string; [k: string]: unknown },
+): Promise<CommandResult> {
+  return apiFetch(conn, "/api/messages", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function createSession(conn: Connection, req: CreateSessionRequest): Promise<Session> {
+  return apiFetch(conn, "/api/sessions", { method: "POST", body: JSON.stringify(req) });
+}
+
+export function deleteSession(conn: Connection, slug: string): Promise<OkEnvelope> {
+  return apiFetch(conn, `/api/sessions/${slug}`, { method: "DELETE" });
+}
+
+export function listMemories(conn: Connection): Promise<ListEnvelope<Memory>> {
+  return apiFetch(conn, "/api/memories");
+}
+
+export function createMemory(conn: Connection, req: CreateMemoryRequest): Promise<Memory> {
+  return apiFetch(conn, "/api/memories", { method: "POST", body: JSON.stringify(req) });
+}
+
+export function updateMemory(conn: Connection, id: string, patch: Partial<CreateMemoryRequest>): Promise<Memory> {
+  return apiFetch(conn, `/api/memories/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function reviewMemory(conn: Connection, id: string, req: ReviewMemoryRequest): Promise<Memory> {
+  return apiFetch(conn, `/api/memories/${id}/review`, { method: "PATCH", body: JSON.stringify(req) });
+}
+
+export function deleteMemory(conn: Connection, id: string): Promise<OkEnvelope> {
+  return apiFetch(conn, `/api/memories/${id}`, { method: "DELETE" });
+}
+
+export function getRuntimeConfig(conn: Connection): Promise<RuntimeConfigResponse> {
+  return apiFetch(conn, "/api/config/runtime");
+}
+
+export function patchRuntimeConfig(conn: Connection, overrides: RuntimeOverrides): Promise<RuntimeConfigResponse> {
+  return apiFetch(conn, "/api/config/runtime", { method: "PATCH", body: JSON.stringify(overrides) });
+}
+
+export function getVapidPublicKey(conn: Connection): Promise<VapidPublicKeyResponse> {
+  return apiFetch(conn, "/api/push/vapid-public-key");
+}
+
+export function subscribePush(conn: Connection, sub: PushSubscriptionInfo): Promise<OkEnvelope> {
+  return apiFetch(conn, "/api/push-subscribe", { method: "POST", body: JSON.stringify(sub) });
+}
+
+export function unsubscribePush(conn: Connection, endpoint: string): Promise<OkEnvelope> {
+  return apiFetch(conn, "/api/push-subscribe", { method: "DELETE", body: JSON.stringify({ endpoint }) });
+}
+
+export function getStats(conn: Connection): Promise<GlobalStats> {
+  return apiFetch(conn, "/api/stats");
+}
+
+export function getStatsModes(conn: Connection): Promise<ModeStats> {
+  return apiFetch(conn, "/api/stats/modes");
+}
+
+export function getStatsRecent(conn: Connection): Promise<RecentStats> {
+  return apiFetch(conn, "/api/stats/recent");
+}
+
+export function getReadinessSummary(conn: Connection): Promise<ReadinessSummary> {
+  return apiFetch(conn, "/api/readiness/summary");
+}
+
+export function getAuditEvents(conn: Connection, cursor?: string): Promise<ListEnvelope<AuditEvent>> {
+  const q = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return apiFetch(conn, `/api/audit/events${q}`);
+}
+
+export function getVersion(conn: Connection): Promise<VersionInfo> {
+  return apiFetch(conn, "/api/version");
+}
+
+export function getHealth(conn: Connection): Promise<{ ok: true }> {
+  return apiFetch(conn, "/api/health");
+}
+
+export function postVariants(conn: Connection, req: CreateVariantsRequest): Promise<ListEnvelope<Session>> {
+  return apiFetch(conn, "/api/sessions/variants", { method: "POST", body: JSON.stringify(req) });
+}
+
+export function postEntrypoint(conn: Connection, req: RegisterEntrypointRequest): Promise<Entrypoint> {
+  return apiFetch(conn, "/api/entrypoints", { method: "POST", body: JSON.stringify(req) });
+}
+
+export function listLoops(conn: Connection): Promise<ListEnvelope<LoopDefinition>> {
+  return apiFetch(conn, "/api/loops");
+}
+
+export function upsertLoop(conn: Connection, loop: Omit<LoopDefinition, "id" | "createdAt" | "updatedAt" | "consecutiveFailures">): Promise<LoopDefinition> {
+  return apiFetch(conn, "/api/loops", { method: "POST", body: JSON.stringify(loop) });
+}

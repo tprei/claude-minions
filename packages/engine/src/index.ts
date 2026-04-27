@@ -1,0 +1,152 @@
+import path from "node:path";
+import type { EngineContext } from "./context.js";
+import type { EngineEnv } from "./env.js";
+import type { Logger } from "./logger.js";
+import { createLogger } from "./logger.js";
+import { openStore } from "./store/sqlite.js";
+import { EventBus } from "./bus/eventBus.js";
+import { KeyedMutex } from "./util/mutex.js";
+import { RepoRepo } from "./store/repos/repoRepo.js";
+import { buildHttpServer } from "./http/server.js";
+import { registerRoutes } from "./http/routes/index.js";
+import { attachSseRoute } from "./http/sse.js";
+import type { FeatureFlag } from "@minions/shared";
+import type { SubsystemDeps } from "./wiring.js";
+
+import { createAuditSubsystem } from "./audit/index.js";
+import { createRuntimeSubsystem } from "./runtime/index.js";
+import { createMemorySubsystem } from "./memory/index.js";
+import { createResourceSubsystem } from "./resource/index.js";
+import { createPushSubsystem } from "./push/index.js";
+import { createDigestSubsystem } from "./digest/index.js";
+import { createGithubSubsystem, type GithubSubsystemDeps } from "./github/index.js";
+import { createQualitySubsystem } from "./quality/index.js";
+import { createReadinessSubsystem } from "./readiness/index.js";
+import { createIntakeSubsystem } from "./intake/index.js";
+import { createSessionsSubsystem } from "./sessions/index.js";
+import { createDagSubsystem } from "./dag/index.js";
+import { DagRepo } from "./dag/model.js";
+import { createShipSubsystem } from "./ship/index.js";
+import { createLandingSubsystem } from "./landing/index.js";
+import { createLoopsSubsystem } from "./loops/index.js";
+import { createVariantsSubsystem } from "./variants/index.js";
+import { createCiSubsystem } from "./ci/index.js";
+import { createStatsSubsystem } from "./stats/index.js";
+
+const ALL_FEATURES: FeatureFlag[] = [
+  "sessions",
+  "dags",
+  "ship",
+  "loops",
+  "variants",
+  "judge",
+  "checkpoints",
+  "memory",
+  "memory-mcp",
+  "audit",
+  "resources",
+  "push",
+  "external-tasks",
+  "runtime-overrides",
+  "github",
+  "quality-gates",
+  "readiness",
+  "ci-babysit",
+  "screenshots",
+  "diff",
+  "pr-preview",
+  "stack",
+  "split",
+  "voice-input",
+];
+
+export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
+  const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
+  const db = openStore({ path: path.join(env.workspace, "engine.db"), log: engineLog });
+  const bus = new EventBus();
+  const mutex = new KeyedMutex();
+
+  const repoRepo = new RepoRepo(db);
+  repoRepo.loadFromEnv(process.env["MINIONS_REPOS"]);
+
+  const ctx = {} as EngineContext;
+  ctx.env = env;
+  ctx.log = engineLog;
+  ctx.db = db;
+  ctx.bus = bus;
+  ctx.mutex = mutex;
+  ctx.workspaceDir = env.workspace;
+
+  const deps: SubsystemDeps = {
+    ctx,
+    log: engineLog,
+    env,
+    db,
+    bus,
+    mutex,
+    workspaceDir: env.workspace,
+  };
+
+  const shutdownHooks: Array<() => Promise<void> | void> = [];
+
+  function wire<T>(result: { api: T; onShutdown?: () => Promise<void> | void }): T {
+    if (result.onShutdown) shutdownHooks.push(result.onShutdown);
+    return result.api;
+  }
+
+  ctx.audit = wire(createAuditSubsystem(deps));
+  ctx.runtime = wire(createRuntimeSubsystem(deps));
+  ctx.memory = wire(createMemorySubsystem(deps));
+  ctx.resource = wire(createResourceSubsystem(deps));
+  ctx.push = wire(createPushSubsystem(deps));
+  ctx.digest = wire(createDigestSubsystem(deps));
+  const githubDeps: GithubSubsystemDeps = {
+    db,
+    log: engineLog,
+    githubToken: process.env["GITHUB_TOKEN"] ?? null,
+  };
+  ctx.github = createGithubSubsystem(githubDeps);
+  ctx.quality = wire(createQualitySubsystem(deps));
+  ctx.readiness = wire(createReadinessSubsystem(deps));
+  ctx.intake = wire(createIntakeSubsystem(deps));
+  ctx.sessions = wire(createSessionsSubsystem(deps));
+  ctx.dags = wire(createDagSubsystem(deps));
+  ctx.ship = wire(createShipSubsystem(deps));
+  ctx.landing = wire(createLandingSubsystem({ ...deps, dagRepo: new DagRepo(db, bus) }));
+  ctx.loops = wire(createLoopsSubsystem(deps));
+  ctx.variants = wire(createVariantsSubsystem(deps));
+  ctx.ci = wire(createCiSubsystem(deps));
+  ctx.stats = wire(createStatsSubsystem(deps));
+
+  ctx.features = () => [...ALL_FEATURES];
+  ctx.repos = () => repoRepo.list();
+
+  ctx.shutdown = async () => {
+    for (const hook of shutdownHooks.slice().reverse()) {
+      try {
+        await hook();
+      } catch (e) {
+        engineLog.error("shutdown hook error", { message: (e as Error).message });
+      }
+    }
+    db.close();
+  };
+
+  const app = await buildHttpServer(ctx);
+  await registerRoutes(app, ctx);
+  attachSseRoute(app, ctx);
+
+  await app.listen({ port: env.port, host: env.host });
+  engineLog.info("engine listening", { port: env.port, host: env.host });
+
+  ctx.resource.start();
+  await ctx.sessions.resumeAllActive();
+  await ctx.loops.tick();
+  setInterval(() => {
+    ctx.loops.tick().catch((e: unknown) => {
+      engineLog.error("loop tick error", { message: (e as Error).message });
+    });
+  }, env.loopTickSec * 1000);
+
+  return ctx;
+}

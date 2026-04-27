@@ -1,0 +1,69 @@
+import path from "node:path";
+import os from "node:os";
+
+export interface EngineEnv {
+  port: number;
+  host: string;
+  token: string;
+  corsOrigins: string[];
+  workspace: string;
+  provider: string;
+  logLevel: "debug" | "info" | "warn" | "error";
+  vapid: { publicKey: string; privateKey: string; subject: string } | null;
+  resourceSampleSec: number;
+  loopTickSec: number;
+  loopReservedInteractive: number;
+  ssePingSec: number;
+  apiVersion: string;
+  libraryVersion: string;
+}
+
+function parseList(v: string | undefined): string[] {
+  if (!v) return [];
+  return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function asInt(v: string | undefined, fallback: number): number {
+  if (!v) return fallback;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function level(v: string | undefined): "debug" | "info" | "warn" | "error" {
+  switch (v) {
+    case "debug":
+    case "info":
+    case "warn":
+    case "error":
+      return v;
+    default:
+      return "info";
+  }
+}
+
+export function loadEnv(env: NodeJS.ProcessEnv = process.env): EngineEnv {
+  const workspace = env.MINIONS_WORKSPACE
+    ? path.resolve(env.MINIONS_WORKSPACE)
+    : path.resolve(process.cwd(), "workspace");
+
+  const vapidPub = env.MINIONS_VAPID_PUBLIC ?? "";
+  const vapidPriv = env.MINIONS_VAPID_PRIVATE ?? "";
+  const vapidSubject = env.MINIONS_VAPID_SUBJECT ?? `mailto:ops@${os.hostname()}`;
+
+  return {
+    port: asInt(env.MINIONS_PORT, 8787),
+    host: env.MINIONS_HOST ?? "0.0.0.0",
+    token: env.MINIONS_TOKEN ?? "changeme",
+    corsOrigins: parseList(env.MINIONS_CORS_ORIGINS) || ["http://localhost:5173"],
+    workspace,
+    provider: env.MINIONS_PROVIDER ?? "mock",
+    logLevel: level(env.MINIONS_LOG_LEVEL),
+    vapid: vapidPub && vapidPriv ? { publicKey: vapidPub, privateKey: vapidPriv, subject: vapidSubject } : null,
+    resourceSampleSec: asInt(env.MINIONS_RESOURCE_SAMPLE_SEC, 2),
+    loopTickSec: asInt(env.MINIONS_LOOP_TICK_SEC, 5),
+    loopReservedInteractive: asInt(env.MINIONS_LOOP_RESERVED_INTERACTIVE, 4),
+    ssePingSec: asInt(env.MINIONS_SSE_PING_SEC, 25),
+    apiVersion: "1",
+    libraryVersion: "0.1.0",
+  };
+}

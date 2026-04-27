@@ -1,0 +1,39 @@
+import type { FastifyInstance } from "fastify";
+import type { EngineContext } from "../../context.js";
+import { registerHealthRoutes } from "./health.js";
+import { registerVersionRoutes } from "./version.js";
+import { registerStatsRoutes } from "./stats.js";
+import { registerMetricsRoutes } from "./metrics.js";
+import { registerCommandRoutes } from "./commands.js";
+import { registerMessageRoutes } from "./messages.js";
+import { registerEntrypointRoutes } from "./entrypoints.js";
+import { registerSessionRoutes } from "./sessions.js";
+import { registerDagRoutes } from "./dags.js";
+import { registerMemoryRoutes } from "./memories.js";
+import { registerAuditRoutes } from "./audit.js";
+import { registerPushRoutes } from "./push.js";
+import { registerRuntimeRoutes } from "./runtime.js";
+import { registerReadinessRoutes } from "./readiness.js";
+import { registerIntakeRoutes } from "./intake.js";
+import { registerLoopRoutes } from "./loops.js";
+import { registerVariantRoutes } from "./variants.js";
+
+export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): Promise<void> {
+  registerHealthRoutes(app);
+  registerVersionRoutes(app, ctx);
+  registerStatsRoutes(app, ctx);
+  registerMetricsRoutes(app, ctx);
+  registerCommandRoutes(app, ctx);
+  registerMessageRoutes(app, ctx);
+  registerEntrypointRoutes(app, ctx);
+  registerSessionRoutes(app, ctx);
+  registerDagRoutes(app, ctx);
+  registerMemoryRoutes(app, ctx);
+  registerAuditRoutes(app, ctx);
+  registerPushRoutes(app, ctx);
+  registerRuntimeRoutes(app, ctx);
+  registerReadinessRoutes(app, ctx);
+  registerIntakeRoutes(app, ctx);
+  registerLoopRoutes(app, ctx);
+  registerVariantRoutes(app, ctx);
+}

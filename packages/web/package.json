@@ -1,0 +1,40 @@
+{
+  "name": "@minions/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo skip",
+    "lint": "echo skip"
+  },
+  "dependencies": {
+    "@minions/shared": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.1",
+    "reactflow": "^11.11.4",
+    "dagre": "^0.8.5",
+    "marked": "^15.0.3",
+    "dompurify": "^3.2.1",
+    "idb-keyval": "^6.2.1",
+    "qr-scanner": "^1.4.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/dagre": "^0.7.52",
+    "@types/dompurify": "^3.2.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vite-plugin-pwa": "^0.21.1",
+    "workbox-window": "^7.3.0"
+  }
+}
