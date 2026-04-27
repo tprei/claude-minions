@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useMemo, useRef } from "react";
 import type { Session, SessionMode, SessionStatus } from "@minions/shared";
-import { useSessionStore } from "../store/sessionStore.js";
+import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
@@ -41,8 +41,10 @@ interface Props {
 }
 
 export function SessionNav({ activeSlug, onClose }: Props) {
-  const sessionsMap = useSessionStore((s) => s.sessions);
   const activeId = useConnectionStore((s) => s.activeId);
+  const sessionsMap = useSessionStore(
+    (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
+  );
   const activeRef = useRef<HTMLButtonElement | null>(null);
 
   const sessions = useMemo(() => {

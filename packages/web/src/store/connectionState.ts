@@ -15,8 +15,8 @@ async function refetch(conn: Connection): Promise<void> {
   ]);
   const sessions = sessionsEnv.items;
   const dags = dagsEnv.items;
-  useSessionStore.getState().replaceAll(sessions);
-  useDagStore.getState().replaceAll(dags);
+  useSessionStore.getState().replaceAll(conn.id, sessions);
+  useDagStore.getState().replaceAll(conn.id, dags);
   await saveSnapshot(conn.id, { sessions, dags });
 }
 
@@ -37,8 +37,8 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
   async function init(): Promise<void> {
     const snapshot = await loadSnapshot(conn.id);
     if (snapshot && !disposed) {
-      useSessionStore.getState().replaceAll(snapshot.sessions);
-      useDagStore.getState().replaceAll(snapshot.dags);
+      useSessionStore.getState().replaceAll(conn.id, snapshot.sessions);
+      useDagStore.getState().replaceAll(conn.id, snapshot.dags);
     }
 
     await fetchVersion(conn);
@@ -46,20 +46,20 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
     if (disposed) return;
 
     sseConn = connectSse(conn, {
-      onSessionCreated(e) { useSessionStore.getState().upsertSession(e.session); },
-      onSessionUpdated(e) { useSessionStore.getState().upsertSession(e.session); },
-      onSessionDeleted(e) { useSessionStore.getState().removeSession(e.slug); },
-      onDagCreated(e) { useDagStore.getState().upsert(e.dag); },
-      onDagUpdated(e) { useDagStore.getState().upsert(e.dag); },
-      onDagDeleted(e) { useDagStore.getState().remove(e.id); },
+      onSessionCreated(e) { useSessionStore.getState().upsertSession(conn.id, e.session); },
+      onSessionUpdated(e) { useSessionStore.getState().upsertSession(conn.id, e.session); },
+      onSessionDeleted(e) { useSessionStore.getState().removeSession(conn.id, e.slug); },
+      onDagCreated(e) { useDagStore.getState().upsert(conn.id, e.dag); },
+      onDagUpdated(e) { useDagStore.getState().upsert(conn.id, e.dag); },
+      onDagDeleted(e) { useDagStore.getState().remove(conn.id, e.id); },
       onTranscriptEvent(e) {
-        useSessionStore.getState().appendTranscriptEvent(e.sessionSlug, e.event);
+        useSessionStore.getState().appendTranscriptEvent(conn.id, e.sessionSlug, e.event);
       },
-      onResource(e) { useResourceStore.getState().push(e.snapshot); },
-      onMemoryProposed(e) { useMemoryStore.getState().upsert(e.memory); },
-      onMemoryUpdated(e) { useMemoryStore.getState().upsert(e.memory); },
-      onMemoryReviewed(e) { useMemoryStore.getState().upsert(e.memory); },
-      onMemoryDeleted(e) { useMemoryStore.getState().remove(e.id); },
+      onResource(e) { useResourceStore.getState().push(conn.id, e.snapshot); },
+      onMemoryProposed(e) { useMemoryStore.getState().upsert(conn.id, e.memory); },
+      onMemoryUpdated(e) { useMemoryStore.getState().upsert(conn.id, e.memory); },
+      onMemoryReviewed(e) { useMemoryStore.getState().upsert(conn.id, e.memory); },
+      onMemoryDeleted(e) { useMemoryStore.getState().remove(conn.id, e.id); },
       async onReconnect() {
         if (!disposed) {
           await refetch(conn);

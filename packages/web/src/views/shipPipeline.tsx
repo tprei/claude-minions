@@ -1,5 +1,5 @@
 import type { Session, ShipStage } from "@minions/shared";
-import { useSessionStore } from "../store/sessionStore.js";
+import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore } from "../connections/store.js";
 import { useRootStore } from "../store/root.js";
 import { postCommand } from "../transport/rest.js";
@@ -111,7 +111,10 @@ interface Props {
 
 export function ShipPipelineView({ sessionSlug }: Props) {
   const enabled = useFeature("ship");
-  const sessionsMap = useSessionStore((s) => s.sessions);
+  const activeId = useConnectionStore((s) => s.activeId);
+  const sessionsMap = useSessionStore(
+    (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
+  );
   const sessions = Array.from(sessionsMap.values());
 
   if (!enabled) return <UpgradeNotice feature="ship" />;

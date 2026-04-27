@@ -2,34 +2,52 @@ import { create } from "zustand";
 import type { Memory } from "../types.js";
 
 interface MemoryStore {
-  memories: Map<string, Memory>;
-  replaceAll: (memories: Memory[]) => void;
-  upsert: (memory: Memory) => void;
-  remove: (id: string) => void;
+  byConnection: Map<string, Map<string, Memory>>;
+  replaceAll: (connId: string, memories: Memory[]) => void;
+  upsert: (connId: string, memory: Memory) => void;
+  remove: (connId: string, id: string) => void;
+}
+
+export const EMPTY_MEMORIES: Map<string, Memory> = new Map();
+
+function withSlice(
+  byConnection: Map<string, Map<string, Memory>>,
+  connId: string,
+  mutator: (slice: Map<string, Memory>) => void,
+): Map<string, Map<string, Memory>> {
+  const next = new Map(byConnection);
+  const existing = next.get(connId);
+  const slice = existing ? new Map(existing) : new Map<string, Memory>();
+  mutator(slice);
+  next.set(connId, slice);
+  return next;
 }
 
 export const useMemoryStore = create<MemoryStore>((set) => ({
-  memories: new Map(),
+  byConnection: new Map(),
 
-  replaceAll(memories) {
-    const map = new Map<string, Memory>();
-    for (const m of memories) map.set(m.id, m);
-    set({ memories: map });
+  replaceAll(connId, memories) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.clear();
+        for (const m of memories) slice.set(m.id, m);
+      }),
+    }));
   },
 
-  upsert(memory) {
-    set(s => {
-      const memories = new Map(s.memories);
-      memories.set(memory.id, memory);
-      return { memories };
-    });
+  upsert(connId, memory) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.set(memory.id, memory);
+      }),
+    }));
   },
 
-  remove(id) {
-    set(s => {
-      const memories = new Map(s.memories);
-      memories.delete(id);
-      return { memories };
-    });
+  remove(connId, id) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.delete(id);
+      }),
+    }));
   },
 }));

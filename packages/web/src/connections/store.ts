@@ -78,3 +78,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     set({ connections, activeId, _hydrated: true });
   },
 }));
+
+export function useActiveConnectionId(): string | null {
+  return useConnectionStore(s => s.activeId);
+}

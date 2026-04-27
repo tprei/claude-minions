@@ -1,74 +1,101 @@
+// T32 will close the multi-connection isolation regression — see docs/dogfood-tasks.md
 import { create } from "zustand";
 import type { Session, TranscriptEvent } from "../types.js";
 
-interface SessionStore {
+export interface SessionSlice {
   sessions: Map<string, Session>;
   transcripts: Map<string, TranscriptEvent[]>;
-  replaceAll: (sessions: Session[]) => void;
-  upsertSession: (session: Session) => void;
-  removeSession: (slug: string) => void;
-  appendTranscriptEvent: (slug: string, event: TranscriptEvent) => void;
-  setTranscript: (slug: string, events: TranscriptEvent[]) => void;
+}
+
+interface SessionStore {
+  byConnection: Map<string, SessionSlice>;
+  replaceAll: (connId: string, sessions: Session[]) => void;
+  upsertSession: (connId: string, session: Session) => void;
+  removeSession: (connId: string, slug: string) => void;
+  appendTranscriptEvent: (connId: string, slug: string, event: TranscriptEvent) => void;
+  setTranscript: (connId: string, slug: string, events: TranscriptEvent[]) => void;
+}
+
+export const EMPTY_SESSIONS: Map<string, Session> = new Map();
+export const EMPTY_TRANSCRIPTS: Map<string, TranscriptEvent[]> = new Map();
+
+function withSlice(
+  byConnection: Map<string, SessionSlice>,
+  connId: string,
+  mutator: (slice: SessionSlice) => void,
+): Map<string, SessionSlice> {
+  const next = new Map(byConnection);
+  const existing = next.get(connId);
+  const slice: SessionSlice = {
+    sessions: existing ? new Map(existing.sessions) : new Map(),
+    transcripts: existing ? new Map(existing.transcripts) : new Map(),
+  };
+  mutator(slice);
+  next.set(connId, slice);
+  return next;
 }
 
 export const useSessionStore = create<SessionStore>((set) => ({
-  sessions: new Map(),
-  transcripts: new Map(),
+  byConnection: new Map(),
 
-  replaceAll(sessions) {
-    const map = new Map<string, Session>();
-    for (const s of sessions) map.set(s.slug, s);
-    set({ sessions: map });
+  replaceAll(connId, sessions) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.sessions = new Map();
+        for (const sess of sessions) slice.sessions.set(sess.slug, sess);
+      }),
+    }));
   },
 
-  upsertSession(session) {
-    set(s => {
-      const sessions = new Map(s.sessions);
-      sessions.set(session.slug, session);
-      return { sessions };
-    });
+  upsertSession(connId, session) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.sessions.set(session.slug, session);
+      }),
+    }));
   },
 
-  removeSession(slug) {
-    set(s => {
-      const sessions = new Map(s.sessions);
-      sessions.delete(slug);
-      const transcripts = new Map(s.transcripts);
-      transcripts.delete(slug);
-      return { sessions, transcripts };
-    });
+  removeSession(connId, slug) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.sessions.delete(slug);
+        slice.transcripts.delete(slug);
+      }),
+    }));
   },
 
-  appendTranscriptEvent(slug, event) {
+  appendTranscriptEvent(connId, slug, event) {
     set(s => {
-      const existing = s.transcripts.get(slug) ?? [];
+      const existing = s.byConnection.get(connId)?.transcripts.get(slug) ?? [];
       const last = existing.length > 0 ? existing[existing.length - 1] : undefined;
       if (last && event.seq > last.seq) {
-        const transcripts = new Map(s.transcripts);
-        transcripts.set(slug, [...existing, event]);
-        return { transcripts };
+        return {
+          byConnection: withSlice(s.byConnection, connId, (slice) => {
+            slice.transcripts.set(slug, [...existing, event]);
+          }),
+        };
       }
-      if (existing.some((e) => e.seq === event.seq)) {
-        return { transcripts: s.transcripts };
-      }
+      if (existing.some((e) => e.seq === event.seq)) return s;
       const merged = [...existing, event].sort((a, b) => a.seq - b.seq);
-      const transcripts = new Map(s.transcripts);
-      transcripts.set(slug, merged);
-      return { transcripts };
+      return {
+        byConnection: withSlice(s.byConnection, connId, (slice) => {
+          slice.transcripts.set(slug, merged);
+        }),
+      };
     });
   },
 
-  setTranscript(slug, events) {
-    set(s => {
-      const transcripts = new Map(s.transcripts);
-      const seen = new Set<number>();
-      const deduped = events.filter((e) => {
-        if (seen.has(e.seq)) return false;
-        seen.add(e.seq);
-        return true;
-      });
-      transcripts.set(slug, deduped.sort((a, b) => a.seq - b.seq));
-      return { transcripts };
-    });
+  setTranscript(connId, slug, events) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        const seen = new Set<number>();
+        const deduped = events.filter((e) => {
+          if (seen.has(e.seq)) return false;
+          seen.add(e.seq);
+          return true;
+        });
+        slice.transcripts.set(slug, deduped.sort((a, b) => a.seq - b.seq));
+      }),
+    }));
   },
 }));

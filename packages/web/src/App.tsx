@@ -56,7 +56,9 @@ export function App(): ReactElement {
 
   const hydrated = useConnectionStore(s => s._hydrated);
   const activeConn = useRootStore(s => s.getActiveConnection());
-  const resourceSnapshot = useResourceStore(s => s.snapshot);
+  const resourceSnapshot = useResourceStore(
+    s => (activeConn ? s.byConnection.get(activeConn.id) ?? null : null),
+  );
 
   useEffect(() => {
     const unsub = subscribeUrlChanges(() => {
