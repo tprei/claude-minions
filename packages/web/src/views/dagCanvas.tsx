@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -22,9 +22,16 @@ import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { UpgradeNotice } from "../components/UpgradeNotice.js";
+import { ResizeHandle } from "../components/ResizeHandle.js";
+import { Sheet } from "../components/Sheet.js";
 import { cx } from "../util/classnames.js";
+import { PANEL_DAG_CANVAS, usePanelLayout } from "../util/panelLayout.js";
 import { getViewport, setViewport, type Viewport } from "./dagViewport.js";
 import "reactflow/dist/style.css";
+
+const DAG_DEFAULT_WIDTH = 720;
+const DAG_MIN_WIDTH = 320;
+const DAG_MAX_WIDTH = 1600;
 
 const STATUS_COLOR: Record<DAGNodeStatus, string> = {
   pending: "border-border bg-bg-soft text-fg-muted",
@@ -329,6 +336,68 @@ interface Props {
   dagId?: string;
 }
 
+function DagCanvasChrome({ children }: { children: ReactNode }) {
+  const { size, collapsed, breakpoint, setSize, toggleCollapsed, setCollapsed } = usePanelLayout(
+    PANEL_DAG_CANVAS,
+    {
+      defaultSize: DAG_DEFAULT_WIDTH,
+      minSize: DAG_MIN_WIDTH,
+      maxSize: DAG_MAX_WIDTH,
+    },
+  );
+  const isMobile = breakpoint === "mobile";
+  const showInline = !collapsed && !isMobile;
+  const showSheet = !collapsed && isMobile;
+
+  return (
+    <div data-testid="panel-dag-canvas" className="flex flex-col h-full">
+      <div
+        data-testid="panel-dag-canvas-header"
+        className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border bg-bg-soft text-xs"
+      >
+        <span className="text-fg-subtle font-medium">DAG canvas</span>
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          data-testid="panel-dag-canvas-toggle"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand DAG canvas" : "Collapse DAG canvas"}
+          className="text-fg-subtle hover:text-fg transition-colors"
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
+      </div>
+      {showInline && (
+        <div className="flex flex-1 min-h-0">
+          <div
+            data-testid="panel-dag-canvas-body"
+            className="flex flex-col min-w-0 overflow-hidden"
+            style={{ width: size }}
+          >
+            {children}
+          </div>
+          <ResizeHandle
+            direction="horizontal"
+            onDrag={(delta) => setSize((s) => s + delta)}
+          />
+        </div>
+      )}
+      {showSheet && (
+        <Sheet
+          open
+          onClose={() => setCollapsed(true)}
+          title="DAG canvas"
+          side="bottom"
+        >
+          <div data-testid="panel-dag-canvas-body" className="h-[70dvh]">
+            {children}
+          </div>
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
 export function DagCanvasView({ dagId }: Props) {
   const enabled = useFeature("dags");
   const activeId = useConnectionStore((s) => s.activeId);
@@ -360,51 +429,55 @@ export function DagCanvasView({ dagId }: Props) {
 
   if (!selected) {
     return (
-      <div className="p-6">
-        <h2 className="text-sm font-medium text-fg-muted mb-4">Select a DAG</h2>
-        {dags.length === 0 && (
-          <p className="text-sm text-fg-subtle">No DAGs available.</p>
-        )}
-        <div className="space-y-2">
-          {dags.map((dag) => (
-            <button
-              key={dag.id}
-              type="button"
-              onClick={() => selectDag(dag.id)}
-              className="w-full text-left card px-4 py-3 hover:border-border transition-colors"
-            >
-              <div className="text-sm font-medium text-fg">{dag.title}</div>
-              <div className="text-xs text-fg-subtle mt-0.5">
-                {dag.id} · {dag.status} · {dag.nodes.length} nodes
-              </div>
-            </button>
-          ))}
+      <DagCanvasChrome>
+        <div className="p-6 overflow-y-auto">
+          <h2 className="text-sm font-medium text-fg-muted mb-4">Select a DAG</h2>
+          {dags.length === 0 && (
+            <p className="text-sm text-fg-subtle">No DAGs available.</p>
+          )}
+          <div className="space-y-2">
+            {dags.map((dag) => (
+              <button
+                key={dag.id}
+                type="button"
+                onClick={() => selectDag(dag.id)}
+                className="w-full text-left card px-4 py-3 hover:border-border transition-colors"
+              >
+                <div className="text-sm font-medium text-fg">{dag.title}</div>
+                <div className="text-xs text-fg-subtle mt-0.5">
+                  {dag.id} · {dag.status} · {dag.nodes.length} nodes
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      </DagCanvasChrome>
     );
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 border-b border-border bg-bg-soft text-sm">
-        <button
-          type="button"
-          onClick={clearDag}
-          className="text-fg-subtle hover:text-fg-muted"
-        >
-          ← all DAGs
-        </button>
-        <span className="text-fg font-medium truncate max-w-full">{selected.title}</span>
-        <span className="pill bg-bg-elev text-fg-muted text-[10px]">{selected.status}</span>
-        <span className="text-fg-subtle text-xs">{selected.nodes.length} nodes</span>
+    <DagCanvasChrome>
+      <div className="flex flex-col h-full">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 border-b border-border bg-bg-soft text-sm">
+          <button
+            type="button"
+            onClick={clearDag}
+            className="text-fg-subtle hover:text-fg-muted"
+          >
+            ← all DAGs
+          </button>
+          <span className="text-fg font-medium truncate max-w-full">{selected.title}</span>
+          <span className="pill bg-bg-elev text-fg-muted text-[10px]">{selected.status}</span>
+          <span className="text-fg-subtle text-xs">{selected.nodes.length} nodes</span>
+        </div>
+        <div className="flex-1">
+          <DagCanvasInner
+            dag={selected}
+            connectionId={activeId}
+            onSelectDag={selectDag}
+          />
+        </div>
       </div>
-      <div className="flex-1">
-        <DagCanvasInner
-          dag={selected}
-          connectionId={activeId}
-          onSelectDag={selectDag}
-        />
-      </div>
-    </div>
+    </DagCanvasChrome>
   );
 }
