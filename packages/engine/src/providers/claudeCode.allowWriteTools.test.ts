@@ -3,6 +3,14 @@ import assert from "node:assert/strict";
 import { buildSpawnArgs, buildResumeArgs } from "./claudeCode.js";
 
 const DANGEROUS = "--dangerously-skip-permissions";
+const PLAN_MODE_FLAGS = ["--permission-mode", "plan"];
+
+function hasSequentialFlags(args: string[], flags: string[]): boolean {
+  for (let i = 0; i <= args.length - flags.length; i++) {
+    if (flags.every((f, j) => args[i + j] === f)) return true;
+  }
+  return false;
+}
 
 const baseSpawn = {
   sessionSlug: "s1",
@@ -29,9 +37,10 @@ describe("claudeCode argv :: allowWriteTools", () => {
       assert.ok(args.includes(DANGEROUS), "expected dangerous flag when allowWriteTools=true");
     });
 
-    test("allowWriteTools=false drops --dangerously-skip-permissions", () => {
+    test("allowWriteTools=false drops dangerous flag and adds --permission-mode plan", () => {
       const args = buildSpawnArgs({ ...baseSpawn, allowWriteTools: false });
       assert.ok(!args.includes(DANGEROUS), "expected no dangerous flag when allowWriteTools=false");
+      assert.ok(hasSequentialFlags(args, PLAN_MODE_FLAGS), "expected --permission-mode plan when allowWriteTools=false");
     });
 
     test("preserves model, mcp, prompt regardless of allowWriteTools", () => {
