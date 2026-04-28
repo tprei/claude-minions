@@ -1,33 +1,78 @@
-import { useState, type ReactElement } from "react";
+import { useState, useSyncExternalStore, type ReactElement } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useConnectionStore, type Connection } from "./store.js";
 import { AddDialog } from "./addDialog.js";
 import { cx } from "../util/classnames.js";
+import { sseStatusStore, type SseStatus } from "../transport/sseStatus.js";
 
 interface PickerProps {
   onClose: () => void;
 }
 
+const HEALTH_DOT: Record<SseStatus, string> = {
+  open: "bg-emerald-500",
+  connecting: "bg-amber-400 animate-pulse",
+  reconnecting: "bg-amber-500 animate-pulse",
+  down: "bg-red-500",
+};
+
+const HEALTH_LABEL: Record<SseStatus, string> = {
+  open: "live",
+  connecting: "connecting",
+  reconnecting: "reconnecting",
+  down: "down",
+};
+
+function useSseStatus(connectionId: string): SseStatus | undefined {
+  return useSyncExternalStore(
+    sseStatusStore.subscribe,
+    () => sseStatusStore.get(connectionId),
+    () => undefined,
+  );
+}
+
 function ConnectionRow({ conn, active, onSelect }: { conn: Connection; active: boolean; onSelect: () => void }): ReactElement {
+  const status = useSseStatus(conn.id);
+  const dot = status ? HEALTH_DOT[status] : "bg-fg-subtle/40";
+  const label = status ? HEALTH_LABEL[status] : "idle";
+  const showReconnect = status === "down" || status === "reconnecting";
+
   return (
-    <button
-      onClick={onSelect}
+    <div
       className={cx(
-        "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors text-left",
-        active
-          ? "bg-accent/20 text-fg"
-          : "hover:bg-bg-elev text-fg-muted",
+        "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
+        active ? "bg-accent/20 text-fg" : "hover:bg-bg-elev text-fg-muted",
       )}
     >
+      <button onClick={onSelect} className="flex-1 flex items-center gap-2 min-w-0 text-left">
+        <span
+          className="w-2 h-2 rounded-full flex-shrink-0"
+          style={{ background: conn.color }}
+          aria-hidden="true"
+        />
+        <span className="flex-1 truncate">{conn.label}</span>
+        <span className="text-xs text-fg-subtle truncate max-w-[110px]">{conn.baseUrl}</span>
+      </button>
       <span
-        className="w-2 h-2 rounded-full flex-shrink-0"
-        style={{ background: conn.color }}
-        aria-hidden="true"
+        className={cx("w-1.5 h-1.5 rounded-full flex-shrink-0", dot)}
+        aria-label={`SSE ${label}`}
+        title={`SSE ${label}`}
       />
-      <span className="flex-1 truncate">{conn.label}</span>
-      <span className="text-xs text-fg-subtle truncate max-w-[120px]">{conn.baseUrl}</span>
+      {showReconnect && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            sseStatusStore.forceReconnect(conn.id);
+          }}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-bg-elev text-fg-muted hover:text-fg hover:bg-bg-soft border border-border"
+          title="Force reconnect"
+        >
+          ↻
+        </button>
+      )}
       {active && <span className="text-accent text-xs">●</span>}
-    </button>
+    </div>
   );
 }
 
