@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore, type ReactElement, type ReactNode } from "react";
+import { useState, useEffect, useSyncExternalStore, type ReactElement, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useConnectionStore } from "../connections/store.js";
 import { ConnectionPicker } from "../connections/picker.js";
@@ -7,6 +7,66 @@ import { useFeature } from "../hooks/useFeature.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { cx } from "../util/classnames.js";
 import { sseStatusStore, type SseStatus } from "../transport/sseStatus.js";
+import { registerPush, unregisterPush, usePushPermission } from "../pwa/push.js";
+
+interface PushApi {
+  get: (path: string) => Promise<unknown>;
+  post: (path: string, body: unknown) => Promise<unknown>;
+  del: (path: string) => Promise<unknown>;
+}
+
+function PushToggle({ api }: { api: PushApi }): ReactElement | null {
+  const permission = usePushPermission();
+  const [subscribed, setSubscribed] = useState<boolean>(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (permission !== "granted") {
+      setSubscribed(false);
+      return;
+    }
+    let cancelled = false;
+    void navigator.serviceWorker?.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => { if (!cancelled) setSubscribed(sub !== null); })
+      .catch(() => { if (!cancelled) setSubscribed(false); });
+    return () => { cancelled = true; };
+  }, [permission]);
+
+  if (permission === "unsupported") return null;
+  const isSubscribed = permission === "granted" && subscribed;
+
+  async function toggle(): Promise<void> {
+    setBusy(true);
+    try {
+      if (isSubscribed) {
+        await unregisterPush(api);
+        setSubscribed(false);
+      } else {
+        const ok = await registerPush(api);
+        setSubscribed(ok);
+      }
+    } catch (err) {
+      console.error("push toggle failed", err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void toggle()}
+      disabled={busy}
+      className="w-8 h-8 flex items-center justify-center rounded-lg text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors disabled:opacity-50"
+      aria-label={isSubscribed ? "Disable push notifications" : "Enable push notifications"}
+      aria-pressed={isSubscribed}
+      title={isSubscribed ? "Push notifications on" : "Push notifications off"}
+    >
+      {isSubscribed ? "🔔" : "🔕"}
+    </button>
+  );
+}
 
 function SseStatusPill({ connId }: { connId: string }): ReactElement | null {
   const status = useSyncExternalStore<SseStatus | undefined>(
@@ -33,6 +93,7 @@ function SseStatusPill({ connId }: { connId: string }): ReactElement | null {
 interface HeaderProps {
   resourceIndicator?: ReactNode;
   installPrompt?: ReactNode;
+  api?: PushApi | null;
 }
 
 function ThemeToggle(): ReactElement {
@@ -104,7 +165,7 @@ function VersionPopover({ connId }: { connId: string }): ReactElement | null {
   );
 }
 
-export function Header({ resourceIndicator, installPrompt }: HeaderProps): ReactElement {
+export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): ReactElement {
   const { connections, activeId } = useConnectionStore(useShallow(s => ({
     connections: s.connections,
     activeId: s.activeId,
@@ -163,6 +224,8 @@ export function Header({ resourceIndicator, installPrompt }: HeaderProps): React
       {installPrompt && (
         <div className="flex-shrink-0">{installPrompt}</div>
       )}
+
+      {api && <PushToggle api={api} />}
 
       <ThemeToggle />
     </div>
