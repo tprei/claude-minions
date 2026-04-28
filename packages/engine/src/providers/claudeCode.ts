@@ -10,7 +10,7 @@ import type {
   ProviderEvent,
   ParseStreamState,
 } from "./provider.js";
-import { mockProvider } from "./mock.js";
+import { EngineError } from "../errors.js";
 
 type NdjsonLine = Record<string, unknown>;
 
@@ -235,7 +235,7 @@ function buildSpawnHandle(
   return handle;
 }
 
-export async function findClaudeBinary(): Promise<string | null> {
+async function defaultFindClaudeBinary(): Promise<string | null> {
   const { exec } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execAsync = promisify(exec);
@@ -304,14 +304,39 @@ export function buildResumeArgs(opts: ProviderResumeOpts): string[] {
   return args;
 }
 
+let findClaudeBinaryImpl: () => Promise<string | null> = defaultFindClaudeBinary;
+let buildSpawnHandleImpl: typeof buildSpawnHandle = buildSpawnHandle;
+
+export function findClaudeBinary(): Promise<string | null> {
+  return findClaudeBinaryImpl();
+}
+
+export function __setFindClaudeBinaryForTests(
+  fn: (() => Promise<string | null>) | null,
+): void {
+  findClaudeBinaryImpl = fn ?? defaultFindClaudeBinary;
+}
+
+export function __setBuildSpawnHandleForTests(
+  fn: typeof buildSpawnHandle | null,
+): void {
+  buildSpawnHandleImpl = fn ?? buildSpawnHandle;
+}
+
+const CLAUDE_BINARY_MISSING_MESSAGE =
+  "claude CLI not found in $PATH; install Anthropic's claude binary or set MINIONS_PROVIDER=mock for offline mode";
+
 export const claudeCodeProvider: AgentProvider = {
   name: "claude-code",
 
   async spawn(opts: ProviderSpawnOpts): Promise<ProviderHandle> {
     const claudeBin = await findClaudeBinary();
     if (!claudeBin) {
-      process.stderr.write("[claude-code] claude binary not found, falling back to mock\n");
-      return mockProvider.spawn(opts);
+      throw new EngineError("upstream", CLAUDE_BINARY_MISSING_MESSAGE, {
+        provider: "claude-code",
+        op: "spawn",
+        sessionSlug: opts.sessionSlug,
+      });
     }
 
     const args = buildSpawnArgs(opts);
@@ -330,14 +355,17 @@ export const claudeCodeProvider: AgentProvider = {
       }
     }
 
-    return buildSpawnHandle(claudeBin, args, { cwd: opts.worktree, env });
+    return buildSpawnHandleImpl(claudeBin, args, { cwd: opts.worktree, env });
   },
 
   async resume(opts: ProviderResumeOpts): Promise<ProviderHandle> {
     const claudeBin = await findClaudeBinary();
     if (!claudeBin) {
-      process.stderr.write("[claude-code] claude binary not found, falling back to mock for resume\n");
-      return mockProvider.resume(opts);
+      throw new EngineError("upstream", CLAUDE_BINARY_MISSING_MESSAGE, {
+        provider: "claude-code",
+        op: "resume",
+        sessionSlug: opts.sessionSlug,
+      });
     }
 
     const args = buildResumeArgs(opts);
@@ -347,7 +375,7 @@ export const claudeCodeProvider: AgentProvider = {
       ...opts.env,
     };
 
-    return buildSpawnHandle(claudeBin, args, { cwd: opts.worktree, env });
+    return buildSpawnHandleImpl(claudeBin, args, { cwd: opts.worktree, env });
   },
 
   parseStreamChunk(buf: string, state: ParseStreamState): { events: ProviderEvent[]; state: ParseStreamState } {
