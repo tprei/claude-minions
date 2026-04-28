@@ -262,9 +262,10 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
 
 interface Props {
   sessionSlug?: string | null;
+  primary?: boolean;
 }
 
-export function ChatSurface({ sessionSlug }: Props) {
+export function ChatSurface({ sessionSlug, primary = false }: Props) {
   const [open, setOpen] = useState<boolean>(() => {
     const stored = getLayout(CHAT_PANEL);
     return stored ? !stored.collapsed : true;
@@ -309,6 +310,19 @@ export function ChatSurface({ sessionSlug }: Props) {
   }, []);
 
   if (!session) return null;
+
+  if (primary) {
+    return (
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-bg-soft">
+        <SurfacePanel
+          session={session}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          onClose={() => setOpen(false)}
+        />
+      </div>
+    );
+  }
 
   if (!open) {
     return (
