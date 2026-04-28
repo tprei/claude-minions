@@ -35,6 +35,12 @@ const MODE_COLOR: Record<SessionMode, string> = {
   loop: "bg-green-900 text-green-300",
 };
 
+const PR_STATE_PILL: Record<"open" | "closed" | "merged", string> = {
+  open: "bg-emerald-900/40 text-emerald-300",
+  merged: "bg-purple-900/40 text-purple-300",
+  closed: "bg-bg-elev text-fg-muted",
+};
+
 const COL_HEADER_BG: Partial<Record<SessionStatus, string>> = {
   running: "bg-green-950/40 border-green-800/40",
   waiting_input: "bg-amber-950/40 border-amber-800/40",
@@ -76,10 +82,33 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
     return map;
   }, [sessions]);
 
+  const childrenBySlug = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const s of sessionsMap.values()) {
+      if (!s.parentSlug) continue;
+      const arr = map.get(s.parentSlug);
+      if (arr) arr.push(s.slug);
+      else map.set(s.parentSlug, [s.slug]);
+    }
+    return map;
+  }, [sessionsMap]);
+
   const navigate = (slug: string) => {
     const { view, query } = parseUrl();
     if (!activeId) return;
     setUrlState({ connectionId: activeId, view, sessionSlug: slug, query });
+  };
+
+  const navigateToDag = (dagId: string) => {
+    if (!activeId) return;
+    const { query, sessionSlug } = parseUrl();
+    setUrlState({ connectionId: activeId, view: "dag", sessionSlug, query: { ...query, dag: dagId } });
+  };
+
+  const navigateToParent = (parentSlug: string) => {
+    if (!activeId) return;
+    const { query } = parseUrl();
+    setUrlState({ connectionId: activeId, view: "list", sessionSlug: parentSlug, query });
   };
 
   return (
@@ -97,7 +126,14 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
             </div>
             <div className="flex-1 overflow-y-auto space-y-2">
               {limited.map((s) => (
-                <KanbanCard key={s.slug} session={s} onClick={() => navigate(s.slug)} />
+                <KanbanCard
+                  key={s.slug}
+                  session={s}
+                  childSlugs={childrenBySlug.get(s.slug) ?? []}
+                  onClick={() => navigate(s.slug)}
+                  onOpenDag={navigateToDag}
+                  onOpenParent={navigateToParent}
+                />
               ))}
               {col.limit && items.length > col.limit && (
                 <div className="text-xs text-fg-subtle text-center py-1">
@@ -115,7 +151,25 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
   );
 }
 
-function KanbanCard({ session, onClick }: { session: Session; onClick: () => void }) {
+interface KanbanCardProps {
+  session: Session;
+  childSlugs: string[];
+  onClick: () => void;
+  onOpenDag: (dagId: string) => void;
+  onOpenParent: (parentSlug: string) => void;
+}
+
+function KanbanCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: KanbanCardProps) {
+  const hasOps =
+    Boolean(session.shipStage) ||
+    Boolean(session.pr) ||
+    Boolean(session.dagId) ||
+    Boolean(session.parentSlug) ||
+    childSlugs.length > 0;
+  const childrenTitle =
+    childSlugs.length > 0
+      ? `Children: ${childSlugs.slice(0, 3).join(", ")}${childSlugs.length > 3 ? ` (+${childSlugs.length - 3} more)` : ""}`
+      : undefined;
   return (
     <div
       onClick={onClick}
@@ -139,6 +193,60 @@ function KanbanCard({ session, onClick }: { session: Session; onClick: () => voi
           </span>
         )}
       </div>
+      {hasOps && (
+        <div className="flex items-center gap-1 flex-wrap text-[10px]">
+          {session.shipStage && (
+            <span className="pill bg-purple-900/40 text-purple-300">stage:{session.shipStage}</span>
+          )}
+          {session.pr && (
+            <a
+              href={session.pr.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title={session.pr.title}
+              className={cx("pill font-mono hover:underline", PR_STATE_PILL[session.pr.state])}
+            >
+              PR #{session.pr.number} · {session.pr.state}{session.pr.draft ? " (draft)" : ""}
+            </a>
+          )}
+          {session.dagId && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (session.dagId) onOpenDag(session.dagId);
+              }}
+              title={`DAG ${session.dagId}`}
+              className="pill bg-indigo-900/40 text-indigo-300 hover:underline font-mono cursor-pointer"
+            >
+              DAG
+            </button>
+          )}
+          {session.parentSlug && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (session.parentSlug) onOpenParent(session.parentSlug);
+              }}
+              title={`Parent: ${session.parentSlug}`}
+              className="pill bg-bg-elev text-fg-muted hover:text-fg font-mono cursor-pointer"
+            >
+              ↑ {session.parentSlug.slice(0, 8)}
+            </button>
+          )}
+          {childSlugs.length > 0 && (
+            <span
+              onClick={(e) => e.stopPropagation()}
+              title={childrenTitle}
+              className="pill bg-bg-elev text-fg-muted font-mono"
+            >
+              ↓ {childSlugs.length} {childSlugs.length === 1 ? "child" : "children"}
+            </span>
+          )}
+        </div>
+      )}
       <div className="text-[10px] text-fg-muted">{relTime(session.updatedAt)}</div>
     </div>
   );
