@@ -60,6 +60,17 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
 
   const sessions = useMemo(() => Array.from(sessionsMap.values()), [sessionsMap]);
 
+  const childrenBySlug = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const s of sessions) {
+      if (!s.parentSlug) continue;
+      const arr = map.get(s.parentSlug);
+      if (arr) arr.push(s.slug);
+      else map.set(s.parentSlug, [s.slug]);
+    }
+    return map;
+  }, [sessions]);
+
   const filtered = useMemo(() => {
     let list = [...sessions].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
@@ -92,6 +103,18 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
     const { query } = parseUrl();
     if (!activeId) return;
     setUrlState({ connectionId: activeId, view: "list", sessionSlug: slug, query });
+  };
+
+  const navigateToDag = (dagId: string) => {
+    if (!activeId) return;
+    const { query, sessionSlug } = parseUrl();
+    setUrlState({ connectionId: activeId, view: "dag", sessionSlug, query: { ...query, dag: dagId } });
+  };
+
+  const navigateToParent = (parentSlug: string) => {
+    if (!activeId) return;
+    const { query } = parseUrl();
+    setUrlState({ connectionId: activeId, view: "list", sessionSlug: parentSlug, query });
   };
 
   return (
@@ -141,38 +164,135 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {filtered.length === 0 && (
-          <div className="text-sm text-fg-subtle text-center mt-16">No sessions match.</div>
+        {filtered.length === 0 ? (
+          <EmptyState filterMode={filterMode} />
+        ) : (
+          <>
+            <table className="w-full text-sm hidden sm:table">
+              <thead className="sticky top-0 bg-bg-soft border-b border-border text-xs text-fg-subtle">
+                <tr>
+                  <th className="text-left px-4 py-2 font-normal">title</th>
+                  <th className="text-left px-4 py-2 font-normal">mode</th>
+                  <th className="text-left px-4 py-2 font-normal">status</th>
+                  <th className="text-left px-4 py-2 font-normal hidden md:table-cell">repo</th>
+                  <th className="text-left px-4 py-2 font-normal hidden md:table-cell">branch</th>
+                  <th className="text-left px-4 py-2 font-normal hidden sm:table-cell">attention</th>
+                  <th className="text-left px-4 py-2 font-normal">updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((session) => (
+                  <SessionRow
+                    key={session.slug}
+                    session={session}
+                    childSlugs={childrenBySlug.get(session.slug) ?? []}
+                    onClick={() => navigate(session.slug)}
+                    onOpenDag={navigateToDag}
+                    onOpenParent={navigateToParent}
+                  />
+                ))}
+              </tbody>
+            </table>
+            <div className="block sm:hidden p-2 space-y-2">
+              {filtered.map((session) => (
+                <SessionCard
+                  key={session.slug}
+                  session={session}
+                  childSlugs={childrenBySlug.get(session.slug) ?? []}
+                  onClick={() => navigate(session.slug)}
+                  onOpenDag={navigateToDag}
+                  onOpenParent={navigateToParent}
+                />
+              ))}
+            </div>
+          </>
         )}
-        <table className="w-full text-sm hidden sm:table">
-          <thead className="sticky top-0 bg-bg-soft border-b border-border text-xs text-fg-subtle">
-            <tr>
-              <th className="text-left px-4 py-2 font-normal">title</th>
-              <th className="text-left px-4 py-2 font-normal">mode</th>
-              <th className="text-left px-4 py-2 font-normal">status</th>
-              <th className="text-left px-4 py-2 font-normal hidden md:table-cell">repo</th>
-              <th className="text-left px-4 py-2 font-normal hidden md:table-cell">branch</th>
-              <th className="text-left px-4 py-2 font-normal hidden sm:table-cell">attention</th>
-              <th className="text-left px-4 py-2 font-normal">updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((session) => (
-              <SessionRow key={session.slug} session={session} onClick={() => navigate(session.slug)} />
-            ))}
-          </tbody>
-        </table>
-        <div className="block sm:hidden p-2 space-y-2">
-          {filtered.map((session) => (
-            <SessionCard key={session.slug} session={session} onClick={() => navigate(session.slug)} />
-          ))}
-        </div>
       </div>
     </div>
   );
 }
 
-function SessionCard({ session, onClick }: { session: Session; onClick: () => void }) {
+interface RowCardProps {
+  session: Session;
+  childSlugs: string[];
+  onClick: () => void;
+  onOpenDag: (dagId: string) => void;
+  onOpenParent: (parentSlug: string) => void;
+}
+
+function shortSlug(slug: string): string {
+  return slug.length > 14 ? `${slug.slice(0, 13)}…` : slug;
+}
+
+function DagPill({ dagId, onOpen }: { dagId: string; onOpen: (dagId: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(dagId);
+      }}
+      title={`Open DAG ${dagId}`}
+      className="pill bg-indigo-900/40 text-indigo-300 text-[10px] cursor-pointer hover:bg-indigo-900/60 transition-colors"
+    >
+      DAG
+    </button>
+  );
+}
+
+function ParentChip({ parentSlug, onOpen }: { parentSlug: string; onOpen: (slug: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(parentSlug);
+      }}
+      title={`Parent: ${parentSlug}`}
+      className="pill bg-bg-elev text-fg-muted text-[10px] cursor-pointer hover:text-fg transition-colors font-mono"
+    >
+      ↑ {shortSlug(parentSlug)}
+    </button>
+  );
+}
+
+function ChildrenChip({ slugs }: { slugs: string[] }) {
+  if (slugs.length === 0) return null;
+  const preview = slugs.slice(0, 3).join(", ");
+  const more = slugs.length > 3 ? ` (+${slugs.length - 3} more)` : "";
+  return (
+    <span
+      onClick={(e) => e.stopPropagation()}
+      title={`Children: ${preview}${more}`}
+      className="pill bg-bg-elev text-fg-muted text-[10px] font-mono"
+    >
+      ↓ {slugs.length} {slugs.length === 1 ? "child" : "children"}
+    </span>
+  );
+}
+
+function EmptyState({ filterMode }: { filterMode: FilterMode }) {
+  if (filterMode === "dag-task") {
+    return (
+      <div className="flex flex-col items-center justify-center text-center px-4 mt-16 gap-3">
+        <p className="text-sm text-fg-muted max-w-md">
+          No DAG-task sessions yet. DAG-task sessions are children of a DAG plan;
+          spawn one from a ship-mode session or via <code className="font-mono text-fg-subtle">/api/sessions</code> with a parent dag.
+        </p>
+        <p className="text-xs text-fg-subtle">
+          Use the <span className="text-fg-muted">All modes</span> filter in the sidebar to reset.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="text-sm text-fg-subtle text-center mt-16">
+      No sessions match these filters.
+    </div>
+  );
+}
+
+function SessionCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: RowCardProps) {
   return (
     <div
       onClick={onClick}
@@ -190,6 +310,9 @@ function SessionCard({ session, onClick }: { session: Session; onClick: () => vo
         <span className={cx("pill text-[10px]", MODE_COLOR[session.mode])}>
           {session.mode}
         </span>
+        {session.dagId && <DagPill dagId={session.dagId} onOpen={onOpenDag} />}
+        {session.parentSlug && <ParentChip parentSlug={session.parentSlug} onOpen={onOpenParent} />}
+        <ChildrenChip slugs={childSlugs} />
         <span className="inline-flex items-center gap-1.5 pill bg-bg-elev text-fg-muted text-[10px]">
           <span className={cx("w-2 h-2 rounded-full", STATUS_DOT[session.status])} />
           {session.status}
@@ -205,7 +328,7 @@ function SessionCard({ session, onClick }: { session: Session; onClick: () => vo
   );
 }
 
-function SessionRow({ session, onClick }: { session: Session; onClick: () => void }) {
+function SessionRow({ session, childSlugs, onClick, onOpenDag, onOpenParent }: RowCardProps) {
   return (
     <tr
       onClick={onClick}
@@ -213,9 +336,14 @@ function SessionRow({ session, onClick }: { session: Session; onClick: () => voi
     >
       <td className="px-4 py-2 max-w-xs truncate text-fg">{session.title}</td>
       <td className="px-4 py-2">
-        <span className={cx("pill text-[11px]", MODE_COLOR[session.mode])}>
-          {session.mode}
-        </span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={cx("pill text-[11px]", MODE_COLOR[session.mode])}>
+            {session.mode}
+          </span>
+          {session.dagId && <DagPill dagId={session.dagId} onOpen={onOpenDag} />}
+          {session.parentSlug && <ParentChip parentSlug={session.parentSlug} onOpen={onOpenParent} />}
+          <ChildrenChip slugs={childSlugs} />
+        </div>
       </td>
       <td className="px-4 py-2">
         <div className="flex items-center gap-1.5">
