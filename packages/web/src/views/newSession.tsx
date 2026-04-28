@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { CreateSessionRequest, Session, SessionMode } from "@minions/shared";
 import { useConnectionStore } from "../connections/store.js";
+import { useSessionStore } from "../store/sessionStore.js";
 import { useVersionStore } from "../store/version.js";
 import { setUrlState } from "../routing/urlState.js";
 import { AttachmentBar, useAttachments } from "../chat/attachments.js";
@@ -81,6 +82,7 @@ export function NewSessionView({ api }: Props) {
       }
       const session = (await api.post("/api/sessions", body)) as Session;
       clear();
+      useSessionStore.getState().upsertSession(activeId, session);
       setUrlState({ connectionId: activeId, view: "list", sessionSlug: session.slug });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create session");
