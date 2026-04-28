@@ -2,11 +2,12 @@ import { useMemo, type ReactElement } from "react";
 import { useConnectionStore } from "../connections/store.js";
 import { useVersionStore } from "../store/version.js";
 import { useMemoryStore, EMPTY_MEMORIES } from "../store/memoryStore.js";
+import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl, type ViewKind } from "../routing/parseUrl.js";
 import { cx } from "../util/classnames.js";
 
-type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed";
+type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
 
 interface SidebarProps {
@@ -38,6 +39,7 @@ const VIEW_OPTIONS: ViewOption[] = [
 
 const STATUS_FILTERS: { value: FilterStatus; label: string }[] = [
   { value: "all", label: "All" },
+  { value: "attention", label: "Needs attention" },
   { value: "running", label: "Running" },
   { value: "waiting_input", label: "Waiting" },
   { value: "completed", label: "Done" },
@@ -73,6 +75,12 @@ export function Sidebar({
     for (const m of memoriesMap.values()) if (m.status === "pending") n++;
     return n;
   }, [memoriesMap]);
+  const sessionsMap = useSessionStore(s => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS));
+  const attentionCount = useMemo(() => {
+    let n = 0;
+    for (const s of sessionsMap.values()) if (s.attention && s.attention.length > 0) n++;
+    return n;
+  }, [sessionsMap]);
 
   function navigate(view: ViewKind): void {
     if (!activeId) return;
@@ -131,13 +139,16 @@ export function Sidebar({
             key={f.value}
             onClick={() => onFilterStatus(f.value)}
             className={cx(
-              "w-full text-left px-2 py-1 rounded text-xs transition-colors",
+              "w-full flex items-center justify-between gap-2 text-left px-2 py-1 rounded text-xs transition-colors",
               filterStatus === f.value
                 ? "text-fg bg-bg-elev"
                 : "text-fg-subtle hover:text-fg-muted",
             )}
           >
-            {f.label}
+            <span>{f.label}</span>
+            {f.value === "attention" && attentionCount > 0 && (
+              <span className="pill text-[10px] bg-amber-900/40 text-amber-300">{attentionCount}</span>
+            )}
           </button>
         ))}
       </div>

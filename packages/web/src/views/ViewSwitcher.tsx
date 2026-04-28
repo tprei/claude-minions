@@ -6,7 +6,7 @@ import { DagCanvasView } from "./dagCanvas.js";
 import { ShipPipelineView } from "./shipPipeline.js";
 import { NewSessionView } from "./newSession.js";
 
-type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed";
+type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
 
 interface ApiClient {

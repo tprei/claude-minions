@@ -325,13 +325,19 @@ export function ChatSurface({ sessionSlug, primary = false }: Props) {
   if (!session) return null;
 
   if (primary) {
+    const closeToList = () => {
+      const activeIdNow = useConnectionStore.getState().activeId;
+      if (!activeIdNow) return;
+      const { view, query } = parseUrl();
+      setUrlState({ connectionId: activeIdNow, view, sessionSlug: null, query });
+    };
     return (
       <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-bg-soft">
         <SurfacePanel
           session={session}
           activeTab={activeTab}
           onTabChange={setActiveTab}
-          onClose={() => setOpen(false)}
+          onClose={closeToList}
         />
       </div>
     );

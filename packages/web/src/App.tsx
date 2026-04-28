@@ -21,7 +21,7 @@ import { initOfflineDetection } from "./pwa/offline.js";
 import { OfflineBanner } from "./pwa/OfflineBanner.js";
 import { InstallButton } from "./pwa/InstallButton.js";
 
-type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed";
+type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
 
 function makeApi(conn: Connection) {
