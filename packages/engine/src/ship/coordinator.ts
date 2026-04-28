@@ -133,6 +133,76 @@ export class ShipCoordinator {
     );
 
     this.log.info("ship stage advanced", { slug, from: currentStage, to: target });
+
+    if (target === "verify") {
+      try {
+        await this.emitVerifySummary(slug);
+      } catch (e) {
+        this.log.error("emitVerifySummary failed during advance", {
+          slug,
+          message: (e as Error).message,
+        });
+      }
+    }
+  }
+
+  async emitVerifySummary(slug: string): Promise<void> {
+    const dag = this.ctx.dags.list().find((d) => d.rootSessionSlug === slug) ?? null;
+    let text: string;
+    const data: Record<string, unknown> = { kind: "verify_summary" };
+
+    if (!dag) {
+      text = "Verify summary: no DAG bound to this ship session.";
+    } else {
+      data["dagId"] = dag.id;
+      const landed = dag.nodes.filter((n) => n.status === "landed");
+      const lines: string[] = [
+        `Verify summary for DAG "${dag.title}" (${landed.length}/${dag.nodes.length} nodes landed):`,
+      ];
+      if (landed.length === 0) {
+        lines.push("- no landed nodes yet");
+      } else {
+        const prs: { number: number; url: string; node: string }[] = [];
+        const readinessRows: { slug: string; status: string }[] = [];
+        for (const node of landed) {
+          const prText = node.pr ? `PR #${node.pr.number} ${node.pr.url}` : "no PR";
+          if (node.pr) prs.push({ number: node.pr.number, url: node.pr.url, node: node.id });
+          let readinessText = "readiness unknown";
+          let ciText = "ci unknown";
+          if (node.sessionSlug) {
+            const r = await this.computeReadinessSafe(node.sessionSlug);
+            if (r) {
+              readinessText = `readiness ${r.status}`;
+              readinessRows.push({ slug: node.sessionSlug, status: r.status });
+              const ciCheck = r.checks.find((c) => c.id === "ci");
+              if (ciCheck) {
+                ciText = `ci ${ciCheck.status}${ciCheck.detail ? ` (${ciCheck.detail})` : ""}`;
+              }
+            }
+          }
+          lines.push(`- ${node.title}: ${prText} — ${readinessText}, ${ciText}`);
+        }
+        data["prs"] = prs;
+        data["readiness"] = readinessRows;
+      }
+      text = lines.join("\n");
+    }
+
+    this.insertStatusEvent(slug, text, data);
+  }
+
+  private async computeReadinessSafe(
+    sessionSlug: string,
+  ): Promise<import("@minions/shared").MergeReadiness | null> {
+    try {
+      return await this.ctx.readiness.compute(sessionSlug);
+    } catch (e) {
+      this.log.warn("verify summary: readiness compute failed", {
+        slug: sessionSlug,
+        message: (e as Error).message,
+      });
+      return null;
+    }
   }
 
   async onTurnCompleted(slug: string): Promise<void> {
@@ -205,6 +275,18 @@ export class ShipCoordinator {
   }
 
   private emitStatusEvent(slug: string, toStage: ShipStage, fromStage: ShipStage): void {
+    this.insertStatusEvent(
+      slug,
+      `Ship stage transition: ${fromStage} → ${toStage}`,
+      { fromStage, toStage },
+    );
+  }
+
+  private insertStatusEvent(
+    slug: string,
+    text: string,
+    data: Record<string, unknown>,
+  ): void {
     const seqRow = this.stmtMaxSeq.get(slug) as { max_seq: number } | undefined;
     const seq = (seqRow?.max_seq ?? -1) + 1;
 
@@ -219,8 +301,8 @@ export class ShipCoordinator {
       timestamp: nowIso(),
       kind: "status" as const,
       level: "info" as const,
-      text: `Ship stage transition: ${fromStage} → ${toStage}`,
-      data: { fromStage, toStage },
+      text,
+      data,
     };
 
     this.db.prepare(
