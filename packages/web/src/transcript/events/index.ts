@@ -22,6 +22,10 @@ const EVENT_MAP: Partial<Record<TranscriptEvent["kind"], EventComponent>> = {
   thinking: wrap(Thinking),
   user_message: wrap(UserMessage),
   status: wrap(StatusBanner),
+  tool_call: wrap(ToolCall),
+  tool_result: wrap(ToolResult),
+  turn_started: wrap(TurnStarted),
+  turn_completed: wrap(TurnCompleted),
 };
 
 export function pickComponent(event: TranscriptEvent): EventComponent | null {

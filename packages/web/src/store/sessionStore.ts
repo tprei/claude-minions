@@ -86,16 +86,26 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
 
   setTranscript(connId, slug, events) {
-    set(s => ({
-      byConnection: withSlice(s.byConnection, connId, (slice) => {
-        const seen = new Set<number>();
-        const deduped = events.filter((e) => {
-          if (seen.has(e.seq)) return false;
-          seen.add(e.seq);
-          return true;
-        });
-        slice.transcripts.set(slug, deduped.sort((a, b) => a.seq - b.seq));
-      }),
-    }));
+    set(s => {
+      const existing = s.byConnection.get(connId)?.transcripts.get(slug) ?? [];
+      const seen = new Set<number>();
+      const merged: TranscriptEvent[] = [];
+      for (const e of existing) {
+        if (seen.has(e.seq)) continue;
+        seen.add(e.seq);
+        merged.push(e);
+      }
+      for (const e of events) {
+        if (seen.has(e.seq)) continue;
+        seen.add(e.seq);
+        merged.push(e);
+      }
+      merged.sort((a, b) => a.seq - b.seq);
+      return {
+        byConnection: withSlice(s.byConnection, connId, (slice) => {
+          slice.transcripts.set(slug, merged);
+        }),
+      };
+    });
   },
 }));
