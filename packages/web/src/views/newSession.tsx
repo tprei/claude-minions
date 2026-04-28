@@ -21,6 +21,8 @@ const MODE_OPTIONS: { value: SessionMode; label: string }[] = [
   { value: "task", label: "Task" },
   { value: "ship", label: "Ship" },
   { value: "loop", label: "Loop" },
+  { value: "think", label: "Think" },
+  { value: "plan", label: "Plan" },
 ];
 
 const NONE_REPO = "__none__";

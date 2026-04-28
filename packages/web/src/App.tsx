@@ -110,9 +110,10 @@ export function App(): ReactElement {
         }
         chatSurface={
           activeConn ? (
-            <ChatSurface sessionSlug={sessionSlug ?? null} />
+            <ChatSurface sessionSlug={sessionSlug ?? null} primary={Boolean(sessionSlug)} />
           ) : undefined
         }
+        isSessionOpen={Boolean(sessionSlug)}
       />
 
       {memoryOpen && api && (
