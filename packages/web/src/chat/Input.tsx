@@ -15,6 +15,8 @@ interface Props {
   disabled?: boolean;
   placeholder?: string;
   hint?: string;
+  running?: boolean;
+  onStop?: () => void | Promise<void>;
 }
 
 function matchSlash(value: string) {
@@ -39,7 +41,7 @@ function parseSlashCommand(value: string): { cmd: SlashCommand; args: string[] }
   return { cmd, args: parts.slice(1) };
 }
 
-export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hint }: Props) {
+export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hint, running, onStop }: Props) {
   const [value, setValue] = useState("");
   const [autocompleteIdx, setAutocompleteIdx] = useState(0);
   const [uploading, setUploading] = useState(false);
@@ -205,6 +207,16 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
             🎤
           </button>
         )}
+        {running && onStop && (
+          <button
+            type="button"
+            onClick={() => void onStop()}
+            className="shrink-0 text-xs px-2 py-1 rounded-lg bg-red-900/40 text-red-300 hover:bg-red-900/60 border border-red-700/40"
+            title="Stop the agent (sends stop command)"
+          >
+            ■ Stop
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void submit()}
@@ -214,7 +226,7 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
             (disabled || uploading || (!value.trim() && attachments.length === 0)) && "opacity-50 cursor-not-allowed",
           )}
         >
-          {uploading ? "Uploading…" : "Send"}
+          {uploading ? "Uploading…" : running ? "Queue" : "Send"}
         </button>
       </div>
       {hint && (
