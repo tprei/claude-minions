@@ -9,6 +9,7 @@ import { Tabs, type Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
 import { QuickActions } from "./quickActions.js";
 import { RecoveryFooter } from "./RecoveryFooter.js";
+import { PRPanel } from "./PRPanel.js";
 import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
@@ -24,6 +25,7 @@ import { getLayout, setLayout, subscribe as subscribePanelLayout } from "../util
 const SURFACE_TABS: Tab[] = [
   { id: "transcript", label: "Transcript" },
   { id: "diff", label: "Diff" },
+  { id: "pr", label: "PR" },
   { id: "checkpoints", label: "Checkpoints" },
   { id: "screenshots", label: "Screenshots" },
   { id: "dag", label: "DAG status" },
@@ -357,6 +359,7 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {activeTab === "transcript" && <Transcript events={events} />}
         {activeTab === "diff" && <DiffPanel session={session} />}
+        {activeTab === "pr" && <PRPanel session={session} />}
         {activeTab === "checkpoints" && <CheckpointsPanel session={session} />}
         {activeTab === "screenshots" && <ScreenshotsPanel session={session} />}
         {activeTab === "dag" && <DagStatusPanel session={session} />}
