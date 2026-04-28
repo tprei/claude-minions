@@ -9,13 +9,14 @@ export class KeyedMutex {
     const next = new Promise<void>((r) => {
       release = r;
     });
-    this.chains.set(key, prev.then(() => next));
+    const chained = prev.then(() => next);
+    this.chains.set(key, chained);
     try {
       await prev;
       return await fn();
     } finally {
       release();
-      if (this.chains.get(key) === prev.then(() => next)) {
+      if (this.chains.get(key) === chained) {
         this.chains.delete(key);
       }
     }

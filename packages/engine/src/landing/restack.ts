@@ -46,7 +46,9 @@ export class RestackManager {
     this.log.info("restacking session", { slug, newBase });
 
     try {
-      await this.ctx.landing.retryRebase(slug);
+      await this.runUnderSlugMutex(slug, "restack:session", { newBase }, () =>
+        this.ctx.landing.retryRebase(slug),
+      );
     } catch (err) {
       const message = (err as Error).message;
       this.log.error("restack failed for session", { slug, err: message });
@@ -80,7 +82,12 @@ export class RestackManager {
     this.log.info("restacking dag node session", { dagId, nodeId, sessionSlug, newBase });
 
     try {
-      await this.ctx.landing.retryRebase(sessionSlug);
+      await this.runUnderSlugMutex(
+        sessionSlug,
+        "restack:dag-node",
+        { dagId, nodeId, newBase },
+        () => this.ctx.landing.retryRebase(sessionSlug),
+      );
     } catch (err) {
       const message = (err as Error).message;
       this.log.error("restack failed for dag node", { dagId, nodeId, sessionSlug, err: message });
@@ -104,6 +111,20 @@ export class RestackManager {
       this.ctx.bus.emit({ kind: "session_updated", session: { ...current, attention: flags } });
 
       await this.spawnRebaseResolverForDagNode(dagId, nodeId, sessionSlug, message);
+    }
+  }
+
+  private async runUnderSlugMutex<T>(
+    slug: string,
+    action: string,
+    detail: Record<string, unknown>,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    this.ctx.audit.record("restack", `${action}:mutex-acquire`, { kind: "session", id: slug }, detail);
+    try {
+      return await this.ctx.mutex.run(slug, fn);
+    } finally {
+      this.ctx.audit.record("restack", `${action}:mutex-release`, { kind: "session", id: slug }, detail);
     }
   }
 

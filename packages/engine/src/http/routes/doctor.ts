@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { EngineContext } from "../../context.js";
 import type { ResourceSnapshot, VersionInfo } from "@minions/shared";
+import { runDoctorChecks } from "../../version/probes.js";
 
 export function registerDoctorRoutes(app: FastifyInstance, ctx: EngineContext): void {
   app.get("/api/doctor", async (_req, reply) => {
@@ -16,6 +17,7 @@ export function registerDoctorRoutes(app: FastifyInstance, ctx: EngineContext): 
       startedAt: new Date().toISOString(),
     };
     const resource: ResourceSnapshot | null = ctx.resource.latest();
+    const checks = await runDoctorChecks(ctx);
     await reply.send({
       health: { ok: true, time: new Date().toISOString() },
       version,
@@ -28,6 +30,7 @@ export function registerDoctorRoutes(app: FastifyInstance, ctx: EngineContext): 
       },
       memoryPending: ctx.memory.list({ status: "pending" }).length,
       resource,
+      checks,
     });
   });
 }

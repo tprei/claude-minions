@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
+import type { DoctorCheck } from "@minions/shared";
 
 interface ApiClient {
   get: (path: string) => Promise<unknown>;
@@ -34,6 +35,7 @@ interface DoctorPayload {
   sessions?: DoctorSessions;
   memoryPending?: number;
   resource?: Record<string, unknown> | null;
+  checks?: DoctorCheck[];
 }
 
 interface Props {
@@ -175,12 +177,59 @@ export function DoctorView({ api }: Props): ReactElement {
           </div>
         </div>
 
+        {data?.checks && data.checks.length > 0 && (
+          <div className="card p-4 flex flex-col gap-2">
+            <div className="text-xs uppercase tracking-wider text-fg-subtle">Per-check status</div>
+            <div className="flex flex-col divide-y divide-border-soft">
+              {data.checks.map((check) => (
+                <CheckRow key={check.name} check={check} />
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="text-xs text-fg-subtle">
           last refresh: {lastRefresh ? formatTime(lastRefresh.toISOString()) : "—"}
         </div>
       </div>
     </div>
   );
+}
+
+function CheckRow({ check }: { check: DoctorCheck }): ReactElement {
+  const pillClass = STATUS_PILL[check.status] ?? STATUS_PILL.error;
+  return (
+    <div className="py-2 flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-3">
+      <div className="flex items-center gap-2 sm:w-48 shrink-0">
+        <span className={`pill text-[11px] ${pillClass}`}>{check.status}</span>
+        <span className="text-sm font-mono text-fg">{check.name}</span>
+      </div>
+      <div className="text-xs text-fg-muted flex-1 break-words">
+        {check.detail ?? "—"}
+      </div>
+      <div className="text-[11px] text-fg-subtle font-mono shrink-0">
+        {formatRelative(check.checkedAt)}
+      </div>
+    </div>
+  );
+}
+
+const STATUS_PILL: Record<DoctorCheck["status"], string> = {
+  ok: "bg-ok/10 border border-ok/30 text-ok",
+  degraded: "bg-warn/10 border border-warn/30 text-warn",
+  error: "bg-err/10 border border-err/30 text-err",
+};
+
+function formatRelative(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return iso;
+  const deltaSec = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (deltaSec < 5) return "just now";
+  if (deltaSec < 60) return `${deltaSec}s ago`;
+  const min = Math.round(deltaSec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  return `${hr}h ago`;
 }
 
 function formatTime(iso: string): string {
