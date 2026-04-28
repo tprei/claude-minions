@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { registerIntent, getIntent, clear } from "../optimistic.js";
+import { registerIntent, getIntent, clear, setActiveConnIdResolver, type IntentSpec } from "../optimistic.js";
+
+const CONN = "conn-test";
+
+function spec(rollback: () => void = () => {}): IntentSpec {
+  return { connId: CONN, description: "do thing", rollback };
+}
 
 describe("optimistic intent registry", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    setActiveConnIdResolver(() => CONN);
     clear();
   });
   afterEach(() => {
@@ -12,16 +19,17 @@ describe("optimistic intent registry", () => {
   });
 
   it("registerIntent records an intent retrievable by requestId", () => {
-    const handle = registerIntent(() => {}, 5000);
+    const handle = registerIntent(spec(), { timeoutMs: 5000 });
     const intent = getIntent(handle.requestId);
     expect(intent).toBeDefined();
     expect(intent?.requestId).toBe(handle.requestId);
+    expect(intent?.connId).toBe(CONN);
     expect(typeof intent?.appliedAt).toBe("number");
   });
 
-  it("cancel() removes the intent and prevents the rollback timer from firing", () => {
+  it("cancel() removes the intent and prevents the rollback from firing", () => {
     const rollback = vi.fn();
-    const handle = registerIntent(rollback, 1000);
+    const handle = registerIntent(spec(rollback), { timeoutMs: 1000 });
     handle.cancel();
     expect(getIntent(handle.requestId)).toBeUndefined();
     vi.advanceTimersByTime(2000);
@@ -30,7 +38,7 @@ describe("optimistic intent registry", () => {
 
   it("rollback fires once after the timeout if not cancelled, and the intent is dropped", () => {
     const rollback = vi.fn();
-    const handle = registerIntent(rollback, 1000);
+    const handle = registerIntent(spec(rollback), { timeoutMs: 1000 });
     expect(getIntent(handle.requestId)).toBeDefined();
 
     vi.advanceTimersByTime(999);
@@ -43,7 +51,7 @@ describe("optimistic intent registry", () => {
 
   it("duplicate cancel is a no-op", () => {
     const rollback = vi.fn();
-    const handle = registerIntent(rollback, 1000);
+    const handle = registerIntent(spec(rollback), { timeoutMs: 1000 });
     handle.cancel();
     expect(() => handle.cancel()).not.toThrow();
     vi.advanceTimersByTime(2000);
@@ -53,8 +61,8 @@ describe("optimistic intent registry", () => {
   it("clear() drops every pending intent without firing rollbacks", () => {
     const rollbackA = vi.fn();
     const rollbackB = vi.fn();
-    const a = registerIntent(rollbackA, 1000);
-    const b = registerIntent(rollbackB, 1000);
+    const a = registerIntent(spec(rollbackA), { timeoutMs: 1000 });
+    const b = registerIntent(spec(rollbackB), { timeoutMs: 1000 });
     clear();
     expect(getIntent(a.requestId)).toBeUndefined();
     expect(getIntent(b.requestId)).toBeUndefined();
@@ -66,9 +74,17 @@ describe("optimistic intent registry", () => {
   it("each registered intent gets a distinct requestId", () => {
     const ids = new Set<string>();
     for (let i = 0; i < 8; i++) {
-      const h = registerIntent(() => {}, 5000);
+      const h = registerIntent(spec(), { timeoutMs: 5000 });
       ids.add(h.requestId);
     }
     expect(ids.size).toBe(8);
+  });
+
+  it("rollback does NOT fire when activeConnId switched away from the intent's connId", () => {
+    const rollback = vi.fn();
+    registerIntent(spec(rollback), { timeoutMs: 1000 });
+    setActiveConnIdResolver(() => "other-conn");
+    vi.advanceTimersByTime(2000);
+    expect(rollback).not.toHaveBeenCalled();
   });
 });

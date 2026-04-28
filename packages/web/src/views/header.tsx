@@ -217,21 +217,74 @@ export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): 
 
       <div className="flex-1 min-w-0" />
 
-      {resourceIndicator && (
-        <div className="flex-shrink-0">{resourceIndicator}</div>
+      <div className="hidden sm:flex items-center gap-2 flex-shrink-0">
+        {resourceIndicator && <div className="flex-shrink-0">{resourceIndicator}</div>}
+        {installPrompt && <div className="flex-shrink-0">{installPrompt}</div>}
+        {(resourceIndicator || installPrompt) && (
+          <div className="h-5 w-px bg-border mx-1 flex-shrink-0" aria-hidden="true" />
+        )}
+        {api && <PushToggle api={api} />}
+        <ThemeToggle />
+      </div>
+
+      <MobileActions
+        resourceIndicator={resourceIndicator}
+        installPrompt={installPrompt}
+        api={api ?? null}
+      />
+    </div>
+  );
+}
+
+interface MobileActionsProps {
+  resourceIndicator?: ReactNode;
+  installPrompt?: ReactNode;
+  api: PushApi | null;
+}
+
+function MobileActions({ resourceIndicator, installPrompt, api }: MobileActionsProps): ReactElement {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="sm:hidden relative flex-shrink-0">
+      <button
+        type="button"
+        data-testid="header-more"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="More actions"
+        className="w-8 h-8 flex items-center justify-center rounded-lg text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h.01M12 12h.01M19 12h.01" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div
+            data-testid="header-mobile-actions"
+            className="absolute right-0 top-9 z-40 card p-2 flex flex-col items-stretch gap-1 shadow-2xl min-w-[180px]"
+          >
+            {resourceIndicator && (
+              <div className="flex items-center gap-2 px-2 py-1">
+                {resourceIndicator}
+                <span className="text-xs text-fg-muted">Resources</span>
+              </div>
+            )}
+            {installPrompt && <div className="px-2 py-1">{installPrompt}</div>}
+            {api && (
+              <div className="flex items-center gap-2 px-2 py-1">
+                <PushToggle api={api} />
+                <span className="text-xs text-fg-muted">Push</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2 px-2 py-1">
+              <ThemeToggle />
+              <span className="text-xs text-fg-muted">Theme</span>
+            </div>
+          </div>
+        </>
       )}
-
-      {installPrompt && (
-        <div className="flex-shrink-0">{installPrompt}</div>
-      )}
-
-      {(resourceIndicator || installPrompt) && (
-        <div className="h-5 w-px bg-border mx-1 flex-shrink-0" aria-hidden="true" />
-      )}
-
-      {api && <PushToggle api={api} />}
-
-      <ThemeToggle />
     </div>
   );
 }

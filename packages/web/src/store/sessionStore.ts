@@ -14,6 +14,16 @@ interface SessionStore {
   removeSession: (connId: string, slug: string) => void;
   appendTranscriptEvent: (connId: string, slug: string, event: TranscriptEvent) => void;
   setTranscript: (connId: string, slug: string, events: TranscriptEvent[]) => void;
+  /**
+   * Apply an optimistic mutation to a session. Returns a rollback closure that
+   * restores the prior state when invoked. If the session is missing the
+   * mutation no-ops and the rollback is a no-op.
+   */
+  applyOptimisticSession: (
+    connId: string,
+    slug: string,
+    mutator: (prev: Session) => Session,
+  ) => () => void;
 }
 
 export const EMPTY_SESSIONS: Map<string, Session> = new Map();
@@ -107,5 +117,23 @@ export const useSessionStore = create<SessionStore>((set) => ({
         }),
       };
     });
+  },
+
+  applyOptimisticSession(connId, slug, mutator) {
+    const prev = useSessionStore.getState().byConnection.get(connId)?.sessions.get(slug);
+    if (!prev) return () => {};
+    const next = mutator(prev);
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.sessions.set(slug, next);
+      }),
+    }));
+    return () => {
+      set(s => ({
+        byConnection: withSlice(s.byConnection, connId, (slice) => {
+          slice.sessions.set(slug, prev);
+        }),
+      }));
+    };
   },
 }));

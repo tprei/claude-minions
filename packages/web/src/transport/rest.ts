@@ -1,4 +1,5 @@
 import type { Connection } from "../connections/store.js";
+import { dispatchCommand, type DispatchOptions } from "../store/optimistic.js";
 import type {
   Session,
   SessionStatus,
@@ -158,24 +159,24 @@ export function postCommand(conn: Connection, cmd: Command): Promise<CommandResu
   return apiFetch(conn, "/api/commands", { method: "POST", body: JSON.stringify(cmd) });
 }
 
-export interface CommandIntent {
-  onApply: () => void;
-  onReconcile: () => void;
-  onTimeout: () => void;
-}
+export type OptimisticCommandSpec = Pick<
+  DispatchOptions<CommandResult>,
+  "description" | "apply" | "rollback" | "awaitCommit"
+>;
 
-export async function postCommandWithIntent(
+export function postCommandOptimistic(
   conn: Connection,
   cmd: Command,
-  intent: CommandIntent,
+  optimistic: OptimisticCommandSpec,
 ): Promise<CommandResult> {
-  intent.onApply();
-  try {
-    return await postCommand(conn, cmd);
-  } catch (err) {
-    intent.onTimeout();
-    throw err;
-  }
+  return dispatchCommand({
+    connId: conn.id,
+    description: optimistic.description,
+    apply: optimistic.apply,
+    rollback: optimistic.rollback,
+    awaitCommit: optimistic.awaitCommit,
+    request: () => postCommand(conn, cmd),
+  });
 }
 
 export function postMessage(
