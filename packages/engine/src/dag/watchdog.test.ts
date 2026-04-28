@@ -1,0 +1,455 @@
+import { test, describe } from "node:test";
+import assert from "node:assert/strict";
+import Database from "better-sqlite3";
+import path from "node:path";
+import os from "node:os";
+import fs from "node:fs";
+import type { AuditEvent, DAG, DAGNode, Session, SessionStatus } from "@minions/shared";
+import type { EngineContext } from "../context.js";
+import { EventBus } from "../bus/eventBus.js";
+import { KeyedMutex } from "../util/mutex.js";
+import { DagScheduler } from "./scheduler.js";
+import { DagRepo } from "./model.js";
+import { createDagSubsystem } from "./index.js";
+import { createLogger } from "../logger.js";
+import { openStore } from "../store/sqlite.js";
+
+interface AuditCall {
+  actor: string;
+  action: string;
+  target?: { kind: string; id: string };
+  detail?: Record<string, unknown>;
+}
+
+function makeNode(
+  id: string,
+  status: DAGNode["status"],
+  opts: { dependsOn?: string[]; sessionSlug?: string } = {},
+): DAGNode {
+  return {
+    id,
+    title: id,
+    prompt: `do ${id}`,
+    status,
+    dependsOn: opts.dependsOn ?? [],
+    sessionSlug: opts.sessionSlug,
+    metadata: {},
+  };
+}
+
+function makeDag(id: string, nodes: DAGNode[]): DAG {
+  const now = new Date().toISOString();
+  return {
+    id,
+    title: "watchdog dag",
+    goal: "test goal",
+    nodes,
+    createdAt: now,
+    updatedAt: now,
+    status: "active",
+    metadata: {},
+  };
+}
+
+interface MockDagRepo {
+  dags: Map<string, DAG>;
+  nodes: Map<string, DAGNode>;
+  get: (id: string) => DAG | null;
+  list: () => DAG[];
+  update: (id: string, patch: Partial<DAG>) => DAG;
+  getNode: (id: string) => DAGNode | null;
+  getNodeBySession: (slug: string) => DAGNode | null;
+  updateNode: (id: string, patch: Partial<DAGNode>) => DAGNode;
+  byNodeSession: (slug: string) => DAG | null;
+  listNodes: (dagId: string) => DAGNode[];
+}
+
+function makeMockRepo(dag: DAG): MockDagRepo {
+  const dags = new Map<string, DAG>([[dag.id, dag]]);
+  const nodes = new Map<string, DAGNode>(dag.nodes.map((n) => [n.id, n]));
+
+  function dagWithLatestNodes(d: DAG): DAG {
+    return { ...d, nodes: d.nodes.map((dn) => nodes.get(dn.id) ?? dn) };
+  }
+
+  return {
+    dags,
+    nodes,
+    get(id) {
+      const d = dags.get(id);
+      return d ? dagWithLatestNodes(d) : null;
+    },
+    list() {
+      return Array.from(dags.values()).map(dagWithLatestNodes);
+    },
+    update(id, patch) {
+      const current = dags.get(id);
+      if (!current) throw new Error(`not found: ${id}`);
+      const updated = { ...current, ...patch };
+      dags.set(id, updated);
+      return dagWithLatestNodes(updated);
+    },
+    getNode(id) {
+      return nodes.get(id) ?? null;
+    },
+    getNodeBySession(slug) {
+      for (const n of nodes.values()) {
+        if (n.sessionSlug === slug) return n;
+      }
+      return null;
+    },
+    updateNode(id, patch) {
+      const current = nodes.get(id);
+      if (!current) throw new Error(`node not found: ${id}`);
+      const updated: DAGNode = { ...current, ...patch };
+      nodes.set(id, updated);
+      return updated;
+    },
+    byNodeSession(slug) {
+      for (const n of nodes.values()) {
+        if (n.sessionSlug === slug) {
+          const d = Array.from(dags.values()).find((dd) => dd.nodes.some((dn) => dn.id === n.id));
+          return d ? dagWithLatestNodes(d) : null;
+        }
+      }
+      return null;
+    },
+    listNodes(dagId) {
+      const d = dags.get(dagId);
+      if (!d) return [];
+      return d.nodes.map((dn) => nodes.get(dn.id) ?? dn);
+    },
+  };
+}
+
+function makeSession(slug: string, status: SessionStatus): Session {
+  const now = new Date().toISOString();
+  return {
+    slug,
+    title: slug,
+    prompt: "",
+    mode: "dag-task",
+    status,
+    attention: [],
+    quickActions: [],
+    stats: {
+      turns: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      costUsd: 0,
+      durationMs: 0,
+      toolCalls: 0,
+    },
+    provider: "mock",
+    createdAt: now,
+    updatedAt: now,
+    childSlugs: [],
+    metadata: {},
+  };
+}
+
+function makeMockCtx(
+  sessionsBySlug: Map<string, Session>,
+  audit: AuditCall[],
+): EngineContext {
+  let counter = 0;
+  return {
+    sessions: {
+      create: async (req) => {
+        const slug = `spawn-${++counter}`;
+        const session = makeSession(slug, "running");
+        session.title = req.title ?? slug;
+        session.prompt = req.prompt;
+        session.mode = req.mode ?? "task";
+        session.metadata = (req.metadata ?? {}) as Record<string, unknown>;
+        sessionsBySlug.set(slug, session);
+        return session;
+      },
+      get: (slug: string) => sessionsBySlug.get(slug) ?? null,
+      list: () => Array.from(sessionsBySlug.values()),
+      listPaged: () => ({ items: [] }),
+      listWithTranscript: () => [],
+      transcript: () => [],
+      stop: async () => {},
+      close: async () => {},
+      reply: async () => {},
+      resumeAllActive: async () => {},
+      diff: async (slug) => ({
+        sessionSlug: slug,
+        patch: "",
+        stats: [],
+        truncated: false,
+        byteSize: 0,
+        generatedAt: new Date().toISOString(),
+      }),
+      screenshots: async () => [],
+      screenshotPath: () => "",
+      checkpoints: () => [],
+      restoreCheckpoint: async () => {},
+    },
+    runtime: {
+      schema: () => ({ groups: [], fields: [] }),
+      values: () => ({}),
+      effective: () => ({}),
+      update: async () => {},
+    },
+    audit: {
+      record: (actor, action, target, detail) => {
+        audit.push({ actor, action, target, detail });
+      },
+      list: (): AuditEvent[] => [],
+    },
+    dags: {} as EngineContext["dags"],
+    ship: {} as EngineContext["ship"],
+    landing: {} as EngineContext["landing"],
+    loops: {} as EngineContext["loops"],
+    variants: {} as EngineContext["variants"],
+    ci: {} as EngineContext["ci"],
+    quality: {} as EngineContext["quality"],
+    readiness: {} as EngineContext["readiness"],
+    intake: {} as EngineContext["intake"],
+    memory: {} as EngineContext["memory"],
+    resource: {} as EngineContext["resource"],
+    push: {} as EngineContext["push"],
+    digest: {} as EngineContext["digest"],
+    github: {} as EngineContext["github"],
+    stats: {} as EngineContext["stats"],
+    bus: new EventBus(),
+    mutex: new KeyedMutex(),
+    env: {} as EngineContext["env"],
+    log: createLogger("error"),
+    db: {} as EngineContext["db"],
+    workspaceDir: "/tmp",
+    features: () => [],
+    featuresPending: () => [],
+    repos: () => [],
+    shutdown: async () => {},
+  };
+}
+
+function makeTempDb(): Database.Database {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "minions-watchdog-"));
+  return openStore({ path: path.join(dir, "engine.db"), log: createLogger("error") });
+}
+
+function seedDag(db: Database.Database, bus: EventBus, dag: DAG): DagRepo {
+  const repo = new DagRepo(db, bus);
+  repo.insert({
+    id: dag.id,
+    title: dag.title,
+    goal: dag.goal,
+    repoId: dag.repoId,
+    baseBranch: dag.baseBranch,
+    rootSessionSlug: dag.rootSessionSlug,
+    status: dag.status,
+    metadata: dag.metadata,
+    createdAt: dag.createdAt,
+    updatedAt: dag.updatedAt,
+  });
+  let ord = 0;
+  for (const node of dag.nodes) {
+    const inserted = repo.insertNode(
+      dag.id,
+      {
+        title: node.title,
+        prompt: node.prompt,
+        status: node.status,
+        dependsOn: node.dependsOn,
+        sessionSlug: node.sessionSlug,
+        metadata: node.metadata,
+      },
+      ord++,
+    );
+    // Preserve the originally-requested id by patching after insert. The repo
+    // generates a slug, so for tests that need stable ids we rename via a direct
+    // update statement below.
+    db.prepare(`UPDATE dag_nodes SET id = ? WHERE id = ?`).run(node.id, inserted.id);
+  }
+  return repo;
+}
+
+describe("DagScheduler.watchdogTick", () => {
+  test("flips running node to failed when its session is in failed state", async () => {
+    const node = makeNode("A", "running", { sessionSlug: "sess-A" });
+    const dag = makeDag("dag1", [node]);
+    const repo = makeMockRepo(dag);
+    const sessions = new Map<string, Session>([["sess-A", makeSession("sess-A", "failed")]]);
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"));
+
+    await scheduler.watchdogTick();
+
+    const after = repo.getNode("A");
+    assert.equal(after?.status, "failed", "A should be failed");
+    assert.match(after?.failedReason ?? "", /watchdog/);
+
+    const auditRow = audit.find((a) => a.action === "dag.watchdog");
+    assert.ok(auditRow, "watchdog audit row written");
+    assert.equal(auditRow?.target?.kind, "dag");
+    assert.equal(auditRow?.target?.id, "dag1");
+    assert.equal(auditRow?.detail?.["nodeId"], "A");
+    assert.equal(auditRow?.detail?.["from"], "running");
+    assert.equal(auditRow?.detail?.["to"], "failed");
+  });
+
+  test("running node with still-running session is left alone", async () => {
+    const node = makeNode("A", "running", { sessionSlug: "sess-A" });
+    const dag = makeDag("dag1", [node]);
+    const repo = makeMockRepo(dag);
+    const sessions = new Map<string, Session>([["sess-A", makeSession("sess-A", "running")]]);
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"));
+
+    await scheduler.watchdogTick();
+
+    assert.equal(repo.getNode("A")?.status, "running");
+    assert.equal(audit.filter((a) => a.action === "dag.watchdog").length, 0);
+  });
+
+  test("ready and pending nodes are no-op for watchdog", async () => {
+    const ready = makeNode("R", "ready", { sessionSlug: "sess-R" });
+    const pending = makeNode("P", "pending");
+    const dag = makeDag("dag1", [ready, pending]);
+    const repo = makeMockRepo(dag);
+    const sessions = new Map<string, Session>([["sess-R", makeSession("sess-R", "failed")]]);
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"));
+
+    await scheduler.watchdogTick();
+
+    assert.equal(repo.getNode("R")?.status, "ready");
+    assert.equal(repo.getNode("P")?.status, "pending");
+    assert.equal(audit.filter((a) => a.action === "dag.watchdog").length, 0);
+  });
+});
+
+describe("Dag api operator commands", () => {
+  test("retry resets a failed node to pending and triggers a tick that respawns", async () => {
+    const db = makeTempDb();
+    const bus = new EventBus();
+    const sessions = new Map<string, Session>();
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    ctx.bus = bus;
+    ctx.db = db;
+
+    const dag = makeDag("dag-r1", [makeNode("A", "failed", { sessionSlug: "old-A" })]);
+    seedDag(db, bus, dag);
+
+    const subsystem = createDagSubsystem({
+      ctx,
+      log: createLogger("error"),
+      env: {} as EngineContext["env"],
+      db,
+      bus,
+      mutex: ctx.mutex,
+      workspaceDir: "/tmp",
+    });
+    ctx.dags = subsystem.api;
+
+    try {
+      await subsystem.api.retry("dag-r1", "A");
+
+      const repo = new DagRepo(db, bus);
+      const after = repo.getNode("A");
+      assert.equal(after?.status, "running", "scheduler.tick promoted A from pending to running");
+      assert.notEqual(after?.sessionSlug, "old-A", "old session slug cleared and replaced by new spawn");
+      assert.ok(sessions.size >= 1, "ctx.sessions.create was called");
+      const retryAudit = audit.find((a) => a.action === "dag.retry");
+      assert.ok(retryAudit, "dag.retry audit row written");
+      assert.equal(retryAudit?.detail?.["from"], "failed");
+      assert.equal(retryAudit?.detail?.["to"], "pending");
+    } finally {
+      await subsystem.onShutdown?.();
+      db.close();
+    }
+  });
+
+  test("cancel flips all non-landed nodes to cancelled and dag to cancelled", async () => {
+    const db = makeTempDb();
+    const bus = new EventBus();
+    const sessions = new Map<string, Session>();
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    ctx.bus = bus;
+    ctx.db = db;
+
+    const dag = makeDag("dag-c1", [
+      makeNode("A", "landed"),
+      makeNode("B", "running", { sessionSlug: "sess-B" }),
+      makeNode("C", "pending", { dependsOn: ["B"] }),
+    ]);
+    seedDag(db, bus, dag);
+
+    const subsystem = createDagSubsystem({
+      ctx,
+      log: createLogger("error"),
+      env: {} as EngineContext["env"],
+      db,
+      bus,
+      mutex: ctx.mutex,
+      workspaceDir: "/tmp",
+    });
+    ctx.dags = subsystem.api;
+
+    try {
+      await subsystem.api.cancel("dag-c1");
+
+      const repo = new DagRepo(db, bus);
+      assert.equal(repo.getNode("A")?.status, "landed", "landed node preserved");
+      assert.equal(repo.getNode("B")?.status, "cancelled");
+      assert.equal(repo.getNode("C")?.status, "cancelled");
+      assert.equal(repo.get("dag-c1")?.status, "cancelled");
+      assert.ok(audit.find((a) => a.action === "dag.cancel"));
+    } finally {
+      await subsystem.onShutdown?.();
+      db.close();
+    }
+  });
+
+  test("force-land marks a running node as landed without checks", async () => {
+    const db = makeTempDb();
+    const bus = new EventBus();
+    const sessions = new Map<string, Session>();
+    sessions.set("sess-A", makeSession("sess-A", "running"));
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    ctx.bus = bus;
+    ctx.db = db;
+
+    const dag = makeDag("dag-f1", [
+      makeNode("A", "running", { sessionSlug: "sess-A" }),
+    ]);
+    seedDag(db, bus, dag);
+
+    const subsystem = createDagSubsystem({
+      ctx,
+      log: createLogger("error"),
+      env: {} as EngineContext["env"],
+      db,
+      bus,
+      mutex: ctx.mutex,
+      workspaceDir: "/tmp",
+    });
+    ctx.dags = subsystem.api;
+
+    try {
+      await subsystem.api.forceLand("dag-f1", "A");
+
+      const repo = new DagRepo(db, bus);
+      assert.equal(repo.getNode("A")?.status, "landed");
+      const forceAudit = audit.find((a) => a.action === "dag.force-land");
+      assert.ok(forceAudit);
+      assert.equal(forceAudit?.detail?.["from"], "running");
+      assert.equal(forceAudit?.detail?.["to"], "landed");
+    } finally {
+      await subsystem.onShutdown?.();
+      db.close();
+    }
+  });
+});

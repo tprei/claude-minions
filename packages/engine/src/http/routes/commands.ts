@@ -215,6 +215,23 @@ function validateCommand(body: unknown): Command {
         kind: "done",
         sessionSlug: assertString(b["sessionSlug"], "sessionSlug"),
       };
+    case "dag.retry":
+      return {
+        kind: "dag.retry",
+        dagId: assertString(b["dagId"], "dagId"),
+        nodeId: assertString(b["nodeId"], "nodeId"),
+      };
+    case "dag.cancel":
+      return {
+        kind: "dag.cancel",
+        dagId: assertString(b["dagId"], "dagId"),
+      };
+    case "dag.force-land":
+      return {
+        kind: "dag.force-land",
+        dagId: assertString(b["dagId"], "dagId"),
+        nodeId: assertString(b["nodeId"], "nodeId"),
+      };
     default:
       throw new EngineError("bad_request", `Unknown command kind: ${String(kind)}`);
   }
@@ -316,6 +333,18 @@ async function dispatchCommand(cmd: Command, ctx: EngineContext): Promise<Comman
     case "done":
       await ctx.sessions.stop(cmd.sessionSlug);
       await ctx.landing.land(cmd.sessionSlug);
+      return { ok: true };
+
+    case "dag.retry":
+      await ctx.dags.retry(cmd.dagId, cmd.nodeId);
+      return { ok: true };
+
+    case "dag.cancel":
+      await ctx.dags.cancel(cmd.dagId);
+      return { ok: true };
+
+    case "dag.force-land":
+      await ctx.dags.forceLand(cmd.dagId, cmd.nodeId);
       return { ok: true };
   }
 }

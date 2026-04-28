@@ -1,9 +1,15 @@
-import type { DAGNode } from "@minions/shared";
+import type { DAGNode, SessionStatus } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { DagRepo } from "./model.js";
 import type { Logger } from "../logger.js";
 
 const DEFAULT_MAX_CONCURRENT = 3;
+
+const TERMINAL_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
 export class DagScheduler {
   constructor(
@@ -111,5 +117,37 @@ export class DagScheduler {
     const override = overrides["dagMaxConcurrent"];
     if (typeof override === "number" && override > 0) return override;
     return DEFAULT_MAX_CONCURRENT;
+  }
+
+  // TODO: extract to sidecar
+  async watchdogTick(): Promise<void> {
+    const dags = this.repo.list().filter((d) => d.status === "active");
+    for (const dag of dags) {
+      for (const node of dag.nodes) {
+        if (node.status !== "running") continue;
+        if (!node.sessionSlug) continue;
+        const session = this.ctx.sessions.get(node.sessionSlug);
+        if (!session) continue;
+        if (!TERMINAL_SESSION_STATUSES.has(session.status)) continue;
+        const from = node.status;
+        this.repo.updateNode(node.id, {
+          status: "failed",
+          failedReason: `watchdog: session ${node.sessionSlug} terminated as ${session.status}`,
+          completedAt: new Date().toISOString(),
+        });
+        this.ctx.audit.record(
+          "system",
+          "dag.watchdog",
+          { kind: "dag", id: dag.id },
+          { nodeId: node.id, from, to: "failed", sessionStatus: session.status },
+        );
+        this.log.warn("dag watchdog flipped node to failed", {
+          dagId: dag.id,
+          nodeId: node.id,
+          sessionSlug: node.sessionSlug,
+          sessionStatus: session.status,
+        });
+      }
+    }
   }
 }

@@ -1,4 +1,4 @@
-import type { DAG, DAGSplitRequest, StatusEvent } from "@minions/shared";
+import type { DAG, DAGNodeStatus, DAGSplitRequest, StatusEvent } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { Logger } from "../logger.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
@@ -97,10 +97,10 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
     log.child({ subsystem: "dag-terminal" }),
   );
 
-  const reconciledDagIds = reconcileStaleRunningNodes(db, repo, ctx, log);
-  dispatchAfterBootReconcile(scheduler, reconciledDagIds, ctx, log).catch((err) => {
-    log.error("dag boot reconcile dispatch error", { err: (err as Error).message });
-  });
+  reconcileStaleRunningNodes(db, repo, ctx, log);
+  // T25 watchdog now owns re-dispatch; the prior fire-and-forget dispatch raced
+  // with operator commands like cancel/forceLand. Operator triggers via
+  // dags.retry / dags.cancel.
 
   const subLog = log.child({ subsystem: "dag-parser-sub" });
   const warnedBlocksBySlug = new Map<string, Set<string>>();
@@ -280,7 +280,83 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
       if (!session) return;
       await terminalHandler.handle(session);
     },
+
+    async retry(dagId: string, nodeId: string): Promise<void> {
+      const dag = repo.get(dagId);
+      if (!dag) throw new EngineError("not_found", `dag not found: ${dagId}`);
+      const node = repo.getNode(nodeId);
+      if (!node) throw new EngineError("not_found", `dag node not found: ${nodeId}`);
+      const from = node.status;
+      repo.updateNode(nodeId, {
+        status: "pending",
+        sessionSlug: undefined,
+        startedAt: undefined,
+        completedAt: undefined,
+        failedReason: undefined,
+      });
+      if (dag.status !== "active") {
+        repo.update(dagId, { status: "active" });
+      }
+      ctx.audit.record(
+        "operator",
+        "dag.retry",
+        { kind: "dag", id: dagId },
+        { nodeId, from, to: "pending" },
+      );
+      await scheduler.tick(dagId);
+    },
+
+    async cancel(dagId: string): Promise<void> {
+      const dag = repo.get(dagId);
+      if (!dag) throw new EngineError("not_found", `dag not found: ${dagId}`);
+      const cancelledNodeIds: string[] = [];
+      for (const node of dag.nodes) {
+        if (node.status === "landed") continue;
+        const from: DAGNodeStatus = node.status;
+        repo.updateNode(node.id, {
+          status: "cancelled",
+          completedAt: node.completedAt ?? new Date().toISOString(),
+        });
+        cancelledNodeIds.push(node.id);
+        ctx.audit.record(
+          "operator",
+          "dag.cancel.node",
+          { kind: "dag", id: dagId },
+          { nodeId: node.id, from, to: "cancelled" },
+        );
+      }
+      repo.update(dagId, { status: "cancelled" });
+      ctx.audit.record("operator", "dag.cancel", { kind: "dag", id: dagId }, { cancelledNodeIds });
+    },
+
+    async forceLand(dagId: string, nodeId: string): Promise<void> {
+      const dag = repo.get(dagId);
+      if (!dag) throw new EngineError("not_found", `dag not found: ${dagId}`);
+      const node = repo.getNode(nodeId);
+      if (!node) throw new EngineError("not_found", `dag node not found: ${nodeId}`);
+      const from = node.status;
+      repo.updateNode(nodeId, {
+        status: "landed",
+        completedAt: node.completedAt ?? new Date().toISOString(),
+      });
+      ctx.audit.record(
+        "operator",
+        "dag.force-land",
+        { kind: "dag", id: dagId },
+        { nodeId, from, to: "landed" },
+      );
+      await scheduler.tick(dagId);
+    },
   };
+
+  // TODO: extract to sidecar (T25)
+  const WATCHDOG_INTERVAL_MS = 30_000;
+  const watchdogHandle = setInterval(() => {
+    scheduler.watchdogTick().catch((err: unknown) => {
+      log.error("dag watchdog tick error", { err: (err as Error).message });
+    });
+  }, WATCHDOG_INTERVAL_MS);
+  if (typeof watchdogHandle.unref === "function") watchdogHandle.unref();
 
   return {
     api,
@@ -289,6 +365,7 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
     },
     onShutdown() {
       unsubscribe();
+      clearInterval(watchdogHandle);
     },
   };
 }

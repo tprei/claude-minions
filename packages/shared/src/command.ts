@@ -94,6 +94,23 @@ export interface DoneCommand {
   sessionSlug: string;
 }
 
+export interface DagRetryCommand {
+  kind: "dag.retry";
+  dagId: string;
+  nodeId: string;
+}
+
+export interface DagCancelCommand {
+  kind: "dag.cancel";
+  dagId: string;
+}
+
+export interface DagForceLandCommand {
+  kind: "dag.force-land";
+  dagId: string;
+  nodeId: string;
+}
+
 export type Command =
   | ReplyCommand
   | StopCommand
@@ -109,7 +126,10 @@ export type Command =
   | SplitCommand
   | StackCommand
   | CleanCommand
-  | DoneCommand;
+  | DoneCommand
+  | DagRetryCommand
+  | DagCancelCommand
+  | DagForceLandCommand;
 
 export type CommandKind = Command["kind"];
 

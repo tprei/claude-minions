@@ -34,6 +34,7 @@ const STATUS_COLOR: Record<DAGNodeStatus, string> = {
   landed: "border-purple-600 bg-purple-950 text-purple-300",
   rebasing: "border-yellow-500 bg-yellow-950 text-yellow-300",
   "rebase-conflict": "border-red-700 bg-red-950 text-red-400",
+  cancelled: "border-zinc-600 bg-zinc-900 text-zinc-400",
 };
 
 const NODE_W = 180;
