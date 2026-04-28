@@ -19,6 +19,7 @@ import { parseUrl } from "../routing/parseUrl.js";
 import { useConnectionStore } from "../connections/store.js";
 import type { Attachment } from "./attachments.js";
 import type { Command, WorkspaceDiff, Checkpoint, Screenshot } from "@minions/shared";
+import { getLayout, setLayout, subscribe as subscribePanelLayout } from "../util/panelLayout.js";
 
 const SURFACE_TABS: Tab[] = [
   { id: "transcript", label: "Transcript" },
@@ -29,7 +30,13 @@ const SURFACE_TABS: Tab[] = [
 ];
 
 const MIN_WIDTH = 280;
+const MAX_WIDTH = 720;
 const DEFAULT_WIDTH = 380;
+const CHAT_PANEL = "chat";
+
+function clampWidth(n: number): number {
+  return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, n));
+}
 
 function useSessionTranscript(session: Session) {
   const conn = useRootStore((s) => s.getActiveConnection());
@@ -258,15 +265,34 @@ interface Props {
 }
 
 export function ChatSurface({ sessionSlug }: Props) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState<boolean>(() => {
+    const stored = getLayout(CHAT_PANEL);
+    return stored ? !stored.collapsed : true;
+  });
   const [activeTab, setActiveTab] = useState("transcript");
-  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [width, setWidth] = useState<number>(() => {
+    const stored = getLayout(CHAT_PANEL);
+    return stored ? clampWidth(stored.size) : DEFAULT_WIDTH;
+  });
   const activeId = useConnectionStore((s) => s.activeId);
   const sessionsMap = useSessionStore(
     (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
   );
 
   const session = sessionSlug ? sessionsMap.get(sessionSlug) : undefined;
+
+  useEffect(() => {
+    setLayout(CHAT_PANEL, { size: width, collapsed: !open });
+  }, [width, open]);
+
+  useEffect(() => {
+    return subscribePanelLayout(() => {
+      const stored = getLayout(CHAT_PANEL);
+      if (!stored) return;
+      setWidth(clampWidth(stored.size));
+      setOpen(!stored.collapsed);
+    });
+  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -279,7 +305,7 @@ export function ChatSurface({ sessionSlug }: Props) {
   }, []);
 
   const handleDrag = useCallback((delta: number) => {
-    setWidth((w) => Math.max(MIN_WIDTH, w - delta));
+    setWidth((w) => clampWidth(w - delta));
   }, []);
 
   if (!session) return null;
