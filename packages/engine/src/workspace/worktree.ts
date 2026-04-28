@@ -20,6 +20,16 @@ export async function addWorktree(
   const branch = `minions/${slug}`;
 
   const resolvedBase = base ?? (await getDefaultBranch(bareGit));
+
+  // Force-fetch the base branch from origin into the local ref so worktrees always
+  // start from the current remote tip, not whatever main was at engine boot. Best
+  // effort — if there's no remote (offline/local-only) we fall through to the cached sha.
+  try {
+    await bareGit.raw(["fetch", "origin", `${resolvedBase}:${resolvedBase}`, "--force"]);
+  } catch (err) {
+    log.warn("fetch base branch failed, using cached ref", { repoId, base: resolvedBase, err: String(err) });
+  }
+
   const baseSha = (await bareGit.revparse([resolvedBase])).trim();
 
   const worktreePath = path.join(worktreeRoot, slug);
