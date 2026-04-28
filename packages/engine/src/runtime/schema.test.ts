@@ -65,4 +65,25 @@ describe("runtimeConfigSchema", () => {
   it("groups list is non-empty", () => {
     assert.ok(runtimeConfigSchema.groups.length > 0);
   });
+
+  it("every field declares an applies tag (live or restart)", () => {
+    for (const field of runtimeConfigSchema.fields) {
+      assert.ok(
+        field.applies === "live" || field.applies === "restart",
+        `Field ${field.key} must declare applies: 'live' | 'restart'`,
+      );
+    }
+  });
+
+  it("sseHeartbeatSec is tagged as restart", () => {
+    const field = runtimeConfigSchema.fields.find((f) => f.key === "sseHeartbeatSec");
+    assert.ok(field);
+    assert.equal(field.applies, "restart");
+  });
+
+  it("ciAutoFix is tagged as live", () => {
+    const field = runtimeConfigSchema.fields.find((f) => f.key === "ciAutoFix");
+    assert.ok(field);
+    assert.equal(field.applies, "live");
+  });
 });

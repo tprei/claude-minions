@@ -78,8 +78,20 @@ export function createRuntimeSubsystem(deps: SubsystemDeps): SubsystemResult<Run
   async function update(patch: RuntimeOverrides): Promise<void> {
     validatePatch(patch);
     const current = repo.read();
+    const effectiveBefore = { ...defaults, ...current };
     const next = { ...current, ...patch };
     repo.write(next);
+
+    for (const [key, value] of Object.entries(patch)) {
+      const before = effectiveBefore[key];
+      if (JSON.stringify(before) === JSON.stringify(value)) continue;
+      ctx.audit.record(
+        "operator",
+        "runtime.update",
+        { kind: "runtime-field", id: key },
+        { field: key, before, after: value },
+      );
+    }
 
     const sessions = ctx.sessions.list();
     if (sessions.length > 0) {

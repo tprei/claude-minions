@@ -5,6 +5,8 @@ export type RuntimeFieldType =
   | "enum"
   | "string-list";
 
+export type RuntimeFieldApplies = "live" | "restart";
+
 export interface RuntimeField {
   key: string;
   label: string;
@@ -16,6 +18,7 @@ export interface RuntimeField {
   max?: number;
   step?: number;
   group?: string;
+  applies?: RuntimeFieldApplies;
   requiresRestart?: boolean;
 }
 

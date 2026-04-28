@@ -33,8 +33,10 @@ export function AutoFormField({ field, value, onChange, onReset }: Props) {
     <div className="flex flex-col gap-1.5 py-3 border-b border-border last:border-0">
       <div className="flex items-center gap-2">
         <label className="text-sm font-medium text-fg-muted flex-1">{field.label}</label>
-        {field.requiresRestart && (
-          <span className="pill bg-orange-900/40 text-orange-300 text-[10px]">restart</span>
+        {(field.applies ?? "live") === "restart" ? (
+          <span className="pill bg-amber-900/40 text-amber-300 text-[10px]">restart</span>
+        ) : (
+          <span className="pill bg-emerald-900/40 text-emerald-300 text-[10px]">live</span>
         )}
         <button
           type="button"
