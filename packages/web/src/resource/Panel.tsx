@@ -2,6 +2,9 @@ import type { ReactElement } from "react";
 import type { ResourceSnapshot } from "../types.js";
 import { useResourceStore } from "../store/resourceStore.js";
 import { severity, SEVERITY_STROKES, type Severity } from "./severity.js";
+import { ResizeHandle } from "../components/ResizeHandle.js";
+import { Sheet } from "../components/Sheet.js";
+import { PANEL_RESOURCE, usePanelLayout } from "../util/panelLayout.js";
 
 interface Props {
   connId: string;
@@ -9,6 +12,10 @@ interface Props {
 
 const SPARK_WIDTH = 256;
 const SPARK_HEIGHT = 36;
+
+const RESOURCE_DEFAULT_WIDTH = 320;
+const RESOURCE_MIN_WIDTH = 200;
+const RESOURCE_MAX_WIDTH = 720;
 
 function bytes(n: number): string {
   if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
@@ -115,7 +122,7 @@ function diskFreePct(snap: ResourceSnapshot): number {
   return Math.round(((snap.disk.totalBytes - snap.disk.usedBytes) / snap.disk.totalBytes) * 100);
 }
 
-export function ResourcePanel({ connId }: Props): ReactElement {
+function ResourceBody({ connId }: Props): ReactElement {
   const history = useResourceStore(s => s.byConnection.get(connId)) ?? [];
   const latest = history.length > 0 ? history[history.length - 1] : null;
 
@@ -195,6 +202,68 @@ export function ResourcePanel({ connId }: Props): ReactElement {
       <p className="text-[10px] text-fg-subtle truncate" title={latest.disk.workspacePath}>
         {latest.disk.workspacePath}
       </p>
+    </div>
+  );
+}
+
+export function ResourcePanel({ connId }: Props): ReactElement {
+  const { size, collapsed, breakpoint, setSize, toggleCollapsed, setCollapsed } = usePanelLayout(
+    PANEL_RESOURCE,
+    {
+      defaultSize: RESOURCE_DEFAULT_WIDTH,
+      minSize: RESOURCE_MIN_WIDTH,
+      maxSize: RESOURCE_MAX_WIDTH,
+    },
+  );
+  const isMobile = breakpoint === "mobile";
+  const showInline = !collapsed && !isMobile;
+  const showSheet = !collapsed && isMobile;
+
+  return (
+    <div data-testid="panel-resource" className="flex flex-col">
+      <div
+        data-testid="panel-resource-header"
+        className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border bg-bg-soft text-xs"
+      >
+        <span className="text-fg-subtle font-medium">Resources</span>
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          data-testid="panel-resource-toggle"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand resources" : "Collapse resources"}
+          className="text-fg-subtle hover:text-fg transition-colors"
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
+      </div>
+      {showInline && (
+        <div className="flex flex-1 min-h-0">
+          <div
+            data-testid="panel-resource-body"
+            className="flex flex-col min-w-0 overflow-y-auto"
+            style={{ width: size }}
+          >
+            <ResourceBody connId={connId} />
+          </div>
+          <ResizeHandle
+            direction="horizontal"
+            onDrag={(delta) => setSize((s) => s + delta)}
+          />
+        </div>
+      )}
+      {showSheet && (
+        <Sheet
+          open
+          onClose={() => setCollapsed(true)}
+          title="Resources"
+          side="bottom"
+        >
+          <div data-testid="panel-resource-body">
+            <ResourceBody connId={connId} />
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }

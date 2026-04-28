@@ -1,4 +1,4 @@
-// TODO(T33): add unit tests once a web-side test runner is wired up.
+import { useCallback, useEffect, useState } from "react";
 
 export interface PanelLayout {
   size: number;
@@ -6,6 +6,10 @@ export interface PanelLayout {
 }
 
 export type Breakpoint = "desktop" | "mobile";
+
+export const PANEL_TRANSCRIPT = "transcript";
+export const PANEL_DAG_CANVAS = "dag-canvas";
+export const PANEL_RESOURCE = "resource";
 
 const DESKTOP_QUERY = "(min-width: 768px)";
 
@@ -80,4 +84,80 @@ export function subscribe(listener: (bp: Breakpoint) => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+export interface UsePanelLayoutOptions {
+  defaultSize: number;
+  minSize?: number;
+  maxSize?: number;
+}
+
+export interface UsePanelLayoutResult {
+  size: number;
+  collapsed: boolean;
+  breakpoint: Breakpoint;
+  setSize: (next: number | ((prev: number) => number)) => void;
+  setCollapsed: (next: boolean | ((prev: boolean) => boolean)) => void;
+  toggleCollapsed: () => void;
+}
+
+function clampSize(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+export function usePanelLayout(panel: string, opts: UsePanelLayoutOptions): UsePanelLayoutResult {
+  const min = opts.minSize ?? 120;
+  const max = opts.maxSize ?? 1200;
+
+  const [breakpoint, setBreakpoint] = useState<Breakpoint>(() => getBreakpoint());
+  const [size, setSizeState] = useState<number>(() => {
+    const stored = getLayout(panel);
+    return clampSize(stored?.size ?? opts.defaultSize, min, max);
+  });
+  const [collapsed, setCollapsedState] = useState<boolean>(() => {
+    const stored = getLayout(panel);
+    return stored?.collapsed ?? false;
+  });
+
+  useEffect(() => {
+    return subscribe((bp) => {
+      setBreakpoint(bp);
+      const stored = getLayout(panel);
+      setSizeState(clampSize(stored?.size ?? opts.defaultSize, min, max));
+      setCollapsedState(stored?.collapsed ?? false);
+    });
+  }, [panel, opts.defaultSize, min, max]);
+
+  const setSize = useCallback(
+    (next: number | ((prev: number) => number)) => {
+      setSizeState((prev) => {
+        const raw = typeof next === "function" ? next(prev) : next;
+        const value = clampSize(raw, min, max);
+        setLayout(panel, { size: value, collapsed: getLayout(panel)?.collapsed ?? false });
+        return value;
+      });
+    },
+    [panel, min, max],
+  );
+
+  const setCollapsed = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      setCollapsedState((prev) => {
+        const value = typeof next === "function" ? next(prev) : next;
+        const stored = getLayout(panel);
+        setLayout(panel, {
+          size: stored?.size ?? opts.defaultSize,
+          collapsed: value,
+        });
+        return value;
+      });
+    },
+    [panel, opts.defaultSize],
+  );
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => !prev);
+  }, [setCollapsed]);
+
+  return { size, collapsed, breakpoint, setSize, setCollapsed, toggleCollapsed };
 }
