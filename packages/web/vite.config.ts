@@ -8,6 +8,7 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: "auto",
+      devOptions: { enabled: true, type: "module" },
       includeAssets: ["icon.svg"],
       manifest: {
         name: "Minions Orchestrator",
