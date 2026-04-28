@@ -252,8 +252,11 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
     "--output-format", "stream-json",
     "--print",
     "--verbose",
-    "--dangerously-skip-permissions",
   ];
+
+  if (opts.allowWriteTools !== false) {
+    args.push("--dangerously-skip-permissions");
+  }
 
   if (opts.modelHint) {
     args.push("--model", opts.modelHint);
@@ -276,7 +279,11 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
 }
 
 export function buildResumeArgs(opts: ProviderResumeOpts): string[] {
-  const args = ["--output-format", "stream-json", "--print", "--verbose", "--dangerously-skip-permissions"];
+  const args = ["--output-format", "stream-json", "--print", "--verbose"];
+
+  if (opts.allowWriteTools !== false) {
+    args.push("--dangerously-skip-permissions");
+  }
 
   if (opts.mcpConfigPath) {
     args.push("--mcp-config", opts.mcpConfigPath);

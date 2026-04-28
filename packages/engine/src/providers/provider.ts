@@ -8,6 +8,7 @@ export interface ProviderSpawnOpts {
   attachments?: { name: string; mimeType: string; dataBase64: string }[];
   mcpConfigPath?: string;
   additionalPrompt?: string;
+  allowWriteTools?: boolean;
 }
 
 export interface ProviderResumeOpts {
@@ -17,6 +18,7 @@ export interface ProviderResumeOpts {
   env: Record<string, string>;
   mcpConfigPath?: string;
   additionalPrompt?: string;
+  allowWriteTools?: boolean;
 }
 
 export interface ProviderHandle {
