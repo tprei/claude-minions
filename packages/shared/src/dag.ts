@@ -9,7 +9,8 @@ export type DAGNodeStatus =
   | "ci-failed"
   | "landed"
   | "rebasing"
-  | "rebase-conflict";
+  | "rebase-conflict"
+  | "cancelled";
 
 export interface DAGNode {
   id: string;
