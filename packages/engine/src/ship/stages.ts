@@ -1,3 +1,7 @@
+import type { ShipStage } from "@minions/shared";
+
+export const READ_ONLY_STAGES: ReadonlySet<ShipStage> = new Set<ShipStage>(["think", "plan"]);
+
 export const THINK_DIRECTIVE = `You are entering the THINK stage. Your goal is to deeply understand the problem before proposing any solution. Review the provided context, codebase, and requirements. Identify ambiguities, risks, and constraints. Do not write code or make changes yet — only analyze and clarify. When you have a thorough understanding, summarize your findings and signal readiness to move to the plan stage.`;
 
 export const PLAN_DIRECTIVE = `You are entering the PLAN stage. Based on your analysis, produce a detailed implementation plan. Break the work into concrete, independently deliverable tasks. Each task should have a clear title, a specific prompt describing what to implement, and any dependencies on other tasks. Present the plan as a fenced \`\`\`dag block with JSON containing { title, goal, nodes: [{title, prompt, dependsOn?}] }. Review the plan for completeness before signaling readiness.`;

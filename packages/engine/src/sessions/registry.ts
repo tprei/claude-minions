@@ -23,6 +23,7 @@ import { nowIso } from "../util/time.js";
 import { ensureDir } from "../util/fs.js";
 import { getProvider } from "../providers/registry.js";
 import type { ProviderHandle } from "../providers/provider.js";
+import { READ_ONLY_STAGES } from "../ship/stages.js";
 import { TranscriptCollector } from "./transcriptCollector.js";
 import { ReplyQueue } from "./replyQueue.js";
 import { Screenshots, type ScreenshotSource } from "./screenshots.js";
@@ -47,6 +48,20 @@ interface RepoRow {
   label: string;
   remote: string | null;
   default_branch: string;
+}
+
+function deriveAllowWriteTools(
+  mode: SessionMode,
+  shipStage: import("@minions/shared").ShipStage | null,
+): boolean | undefined {
+  if (mode === "ship") {
+    const stage = shipStage ?? "think";
+    return !READ_ONLY_STAGES.has(stage);
+  }
+  if (mode === "think") {
+    return false;
+  }
+  return undefined;
 }
 
 function resolveBridgeScript(): string {
@@ -463,6 +478,10 @@ export class SessionRegistry {
 
     const mcpConfigPath = await this.writeMcpConfig(slug, worktreePath);
 
+    const mode: SessionMode = req.mode ?? "task";
+    const initialShipStage: import("@minions/shared").ShipStage = "think";
+    const allowWriteTools = deriveAllowWriteTools(mode, mode === "ship" ? initialShipStage : null);
+
     const handle = await provider.spawn({
       sessionSlug: slug,
       worktree: worktreePath,
@@ -471,6 +490,7 @@ export class SessionRegistry {
       env,
       preamble,
       mcpConfigPath,
+      allowWriteTools,
     });
 
     this.handles.set(slug, handle);
@@ -640,12 +660,18 @@ export class SessionRegistry {
           ? await this.writeMcpConfig(slug, worktreePath)
           : undefined;
 
+        const allowWriteTools = deriveAllowWriteTools(
+          row.mode as SessionMode,
+          row.ship_stage as import("@minions/shared").ShipStage | null,
+        );
+
         const handle = await provider.resume({
           sessionSlug: slug,
           worktree: worktreePath,
           externalId: providerState?.external_id ?? undefined,
           env,
           mcpConfigPath,
+          allowWriteTools,
         });
 
         this.handles.set(slug, handle);
