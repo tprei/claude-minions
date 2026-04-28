@@ -52,6 +52,7 @@ export interface EngineContext {
   ship: {
     advance: (slug: string, toStage?: import("@minions/shared").ShipStage, note?: string) => Promise<void>;
     onTurnCompleted: (slug: string) => Promise<void>;
+    reconcileOnBoot: () => Promise<void>;
   };
 
   landing: {

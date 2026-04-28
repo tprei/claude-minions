@@ -225,6 +225,41 @@ export class ShipCoordinator {
     });
   }
 
+  async reconcileOnBoot(): Promise<void> {
+    let rows: ShipStateRow[];
+    try {
+      rows = this.db
+        .prepare(
+          `SELECT s.*
+           FROM ship_state s
+           INNER JOIN sessions sess ON sess.slug = s.session_slug
+           WHERE sess.mode = 'ship'
+             AND s.stage != 'done'
+             AND sess.status NOT IN ('completed', 'failed', 'cancelled')`,
+        )
+        .all() as ShipStateRow[];
+    } catch (e) {
+      this.log.error("ship reconcileOnBoot query failed", { message: (e as Error).message });
+      return;
+    }
+
+    for (const row of rows) {
+      try {
+        await this.onTurnCompleted(row.session_slug);
+      } catch (e) {
+        this.log.error("ship reconcileOnBoot advance failed", {
+          slug: row.session_slug,
+          stage: row.stage,
+          message: (e as Error).message,
+        });
+      }
+    }
+
+    if (rows.length > 0) {
+      this.log.info("ship reconcileOnBoot evaluated sessions", { count: rows.length });
+    }
+  }
+
   private async checkExitCondition(slug: string, stage: ShipStage): Promise<boolean> {
     switch (stage) {
       case "think":
