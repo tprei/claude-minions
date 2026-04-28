@@ -14,7 +14,7 @@ interface Props {
 
 export function Tabs({ tabs, active, onChange, className }: Props) {
   return (
-    <div className={cx("flex border-b border-border", className)}>
+    <div className={cx("flex border-b border-border overflow-x-auto", className)}>
       {tabs.map((tab) => (
         <button
           key={tab.id}

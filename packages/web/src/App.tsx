@@ -16,6 +16,10 @@ import { MemoryDrawer } from "./memory/Drawer.js";
 import { RuntimeDrawer } from "./runtime/Drawer.js";
 import { ResourcePanel } from "./resource/Panel.js";
 import { useResourceStore } from "./store/resourceStore.js";
+import { initInstallPrompt } from "./pwa/install.js";
+import { initOfflineDetection } from "./pwa/offline.js";
+import { OfflineBanner } from "./pwa/OfflineBanner.js";
+import { InstallButton } from "./pwa/InstallButton.js";
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
@@ -75,10 +79,15 @@ export function App(): ReactElement {
 
   const api = activeConn ? makeApi(activeConn) : null;
 
+  useEffect(() => {
+    try { initInstallPrompt(); } catch (err) { console.error("initInstallPrompt failed", err); }
+    try { initOfflineDetection(); } catch (err) { console.error("initOfflineDetection failed", err); }
+  }, []);
+
   return (
     <>
       <AppLayout
-        header={<Header />}
+        header={<Header api={api} installPrompt={<InstallButton />} />}
         sidebar={({ closeMobile }) => (
           <Sidebar
             currentView={view as ViewKind}
@@ -131,6 +140,8 @@ export function App(): ReactElement {
           <div className="p-4 text-sm text-fg-muted">Audit drawer — provided by Web C</div>
         </Sheet>
       )}
+
+      <OfflineBanner />
     </>
   );
 }

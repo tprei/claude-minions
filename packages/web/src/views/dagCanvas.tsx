@@ -207,7 +207,7 @@ export function DagCanvasView({ dagId }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-bg-soft text-sm">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 border-b border-border bg-bg-soft text-sm">
         <button
           type="button"
           onClick={clearDag}
@@ -215,7 +215,7 @@ export function DagCanvasView({ dagId }: Props) {
         >
           ← all DAGs
         </button>
-        <span className="text-fg font-medium">{selected.title}</span>
+        <span className="text-fg font-medium truncate max-w-full">{selected.title}</span>
         <span className="pill bg-bg-elev text-fg-muted text-[10px]">{selected.status}</span>
         <span className="text-fg-subtle text-xs">{selected.nodes.length} nodes</span>
       </div>
