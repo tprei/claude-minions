@@ -10,7 +10,6 @@ import { createLogger } from "../logger.js";
 import { migrations } from "../store/migrations.js";
 import { EngineError } from "../errors.js";
 import type { EngineContext } from "../context.js";
-import type { ProviderHandle } from "../providers/provider.js";
 
 function makeInMemoryDb(): Database.Database {
   const db = new Database(":memory:");
@@ -38,30 +37,13 @@ function insertSession(db: Database.Database, slug: string, status: string): voi
   `).run(slug, "Test", "test prompt", status);
 }
 
-interface CapturingHandle {
-  handle: ProviderHandle;
-  writes: string[];
-}
-
-function captureHandle(): CapturingHandle {
-  const writes: string[] = [];
-  const handle: ProviderHandle = {
-    pid: undefined,
-    externalId: undefined,
-    kill() {},
-    write(text: string) {
-      writes.push(text);
-    },
-    async *[Symbol.asyncIterator]() {},
-    waitForExit() {
-      return new Promise(() => {});
-    },
-  };
-  return { handle, writes };
-}
-
-function injectHandle(registry: SessionRegistry, slug: string, handle: ProviderHandle): void {
-  (registry as unknown as { handles: Map<string, ProviderHandle> }).handles.set(slug, handle);
+function readQueuePayloads(db: Database.Database, slug: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT payload FROM reply_queue WHERE session_slug = ? AND delivered_at IS NULL ORDER BY queued_at ASC`,
+    )
+    .all(slug) as Array<{ payload: string }>;
+  return rows.map((r) => r.payload);
 }
 
 describe("SessionRegistry.reply with attachments", () => {
@@ -99,12 +81,9 @@ describe("SessionRegistry.reply with attachments", () => {
     await fs.rm(workspaceDir, { recursive: true, force: true });
   });
 
-  test("copies file from global uploads to session uploads dir, writes attached marker, persists attachments", async () => {
+  test("copies file from global uploads to session uploads dir, queues attached marker, persists attachments", async () => {
     const slug = "sess-aa";
     insertSession(db, slug, "running");
-
-    const { handle, writes } = captureHandle();
-    injectHandle(registry, slug, handle);
 
     const globalUploads = path.join(workspaceDir, "uploads");
     await fs.mkdir(globalUploads, { recursive: true });
@@ -119,7 +98,8 @@ describe("SessionRegistry.reply with attachments", () => {
     const copied = await fs.readFile(sessionUploadPath);
     assert.deepEqual(copied, fileBytes);
 
-    assert.deepEqual(writes, ["hi\n\n[Attached: a.png]\n"]);
+    assert.deepEqual(readQueuePayloads(db, slug), ["hi\n\n[Attached: a.png]\n"]);
+    assert.ok(auditActions.includes("session.reply.queued"));
 
     const row = db
       .prepare(`SELECT body FROM transcript_events WHERE session_slug = ? ORDER BY seq ASC`)
@@ -151,16 +131,13 @@ describe("SessionRegistry.reply with attachments", () => {
     assert.equal(count, 0);
   });
 
-  test("text-only reply behaves like before (no attachments key, plain payload)", async () => {
+  test("text-only reply enqueues plain payload (no attachments key)", async () => {
     const slug = "sess-plain";
     insertSession(db, slug, "running");
 
-    const { handle, writes } = captureHandle();
-    injectHandle(registry, slug, handle);
-
     await registry.reply(slug, "hello");
 
-    assert.deepEqual(writes, ["hello"]);
+    assert.deepEqual(readQueuePayloads(db, slug), ["hello"]);
 
     const row = db
       .prepare(`SELECT body FROM transcript_events WHERE session_slug = ? ORDER BY seq ASC`)

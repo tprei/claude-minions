@@ -7,6 +7,7 @@ export interface ProviderSpawnOpts {
   preamble?: string;
   attachments?: { name: string; mimeType: string; dataBase64: string }[];
   mcpConfigPath?: string;
+  additionalPrompt?: string;
 }
 
 export interface ProviderResumeOpts {
@@ -15,6 +16,7 @@ export interface ProviderResumeOpts {
   externalId?: string;
   env: Record<string, string>;
   mcpConfigPath?: string;
+  additionalPrompt?: string;
 }
 
 export interface ProviderHandle {

@@ -40,3 +40,25 @@ export interface MemoryReviewCommand {
   reason?: string;
   supersedesId?: string;
 }
+
+export const MEMORY_BODY_MAX_LEN = 2048;
+
+export type MemoryValidationCode = "memory_body_too_long";
+
+export class MemoryValidationError extends Error {
+  readonly code: MemoryValidationCode;
+  constructor(code: MemoryValidationCode, message: string) {
+    super(message);
+    this.name = "MemoryValidationError";
+    this.code = code;
+  }
+}
+
+export function validateMemoryBody(body: string): void {
+  if (body.length > MEMORY_BODY_MAX_LEN) {
+    throw new MemoryValidationError(
+      "memory_body_too_long",
+      `body exceeds ${MEMORY_BODY_MAX_LEN} characters (got ${body.length})`,
+    );
+  }
+}

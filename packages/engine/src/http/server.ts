@@ -32,12 +32,11 @@ export async function buildHttpServer(ctx: EngineContext): Promise<ReturnType<ty
     serve: false,
   });
 
+  const authPreHandler = buildAuthPreHandler(ctx.env.token);
   app.addHook("preHandler", async (req, reply) => {
     const url = req.url.split("?")[0] ?? "";
     if (!url.startsWith("/api/")) return;
-    if (url === "/api/health") return;
-    if (url === "/api/events") return;
-    await buildAuthPreHandler(ctx.env.token)(req, reply);
+    await authPreHandler(req, reply);
   });
 
   if (ctx.env.webDist) {

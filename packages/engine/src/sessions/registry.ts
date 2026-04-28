@@ -485,12 +485,6 @@ export class SessionRegistry {
     const updatedRow = this.getSessionRow(slug)!;
     this.emitUpdated(this.buildSession(updatedRow));
 
-    const pending = this.replyQueue.pendingAll(slug);
-    for (const item of pending) {
-      handle.write(item.payload);
-      this.replyQueue.markDelivered(item.id);
-    }
-
     this.pipeHandle(slug, handle, providerName);
   }
 
@@ -505,7 +499,7 @@ export class SessionRegistry {
       log.error("transcript collector error", { slug, err: String(err) });
     });
 
-    handle.waitForExit().then(({ code, signal }) => {
+    handle.waitForExit().then(async ({ code, signal: _signal }) => {
       this.handles.delete(slug);
 
       const row = this.getSessionRow(slug);
@@ -517,24 +511,92 @@ export class SessionRegistry {
       }
 
       const finalStatus: SessionStatus = code === 0 ? "completed" : "failed";
+
+      try {
+        await ctx.dags.onSessionTerminal(slug);
+      } catch (err) {
+        log.error("dags.onSessionTerminal error", { slug, err: String(err) });
+      }
+
+      if (finalStatus === "completed") {
+        try {
+          await ctx.ship.onTurnCompleted(slug);
+        } catch (err) {
+          log.error("ship.onTurnCompleted error", { slug, err: String(err) });
+        }
+      }
+
+      if (finalStatus === "completed") {
+        const continued = await this.continueWithQueuedReplies(slug, providerName).catch((err) => {
+          log.error("continueWithQueuedReplies failed", { slug, err: String(err) });
+          return false;
+        });
+        if (continued) return;
+      }
+
       const now = nowIso();
       this.updateSessionStatus.run(finalStatus, now, now, slug);
 
       const updatedRow = this.getSessionRow(slug)!;
       this.emitUpdated(this.buildSession(updatedRow));
-
-      ctx.dags.onSessionTerminal(slug).catch((err) => {
-        log.error("dags.onSessionTerminal error", { slug, err: String(err) });
-      });
-
-      if (finalStatus === "completed") {
-        ctx.ship.onTurnCompleted(slug).catch((err) => {
-          log.error("ship.onTurnCompleted error", { slug, err: String(err) });
-        });
-      }
     }).catch((err) => {
       log.error("handle waitForExit error", { slug, err: String(err) });
     });
+  }
+
+  private async continueWithQueuedReplies(slug: string, providerName: string): Promise<boolean> {
+    const pending = this.replyQueue.drain(slug);
+    if (pending.length === 0) return false;
+
+    const row = this.getSessionRow(slug);
+    if (!row || !row.worktree_path) return false;
+
+    const additionalPrompt = pending.map((p) => p.payload).join("\n\n");
+    const providerState = this.getProviderState.get(slug) as ProviderStateRow | undefined;
+
+    const provider = getProvider(providerName);
+    const homeDir = this.paths.home(providerName);
+
+    const env: Record<string, string> = {
+      MINIONS_SESSION_SLUG: slug,
+      MINIONS_WORKTREE: row.worktree_path,
+      MINIONS_UPLOADS_DIR: this.paths.uploads(slug),
+      MINIONS_CLAUDE_HOME: homeDir,
+    };
+    if (process.env["ANTHROPIC_API_KEY"]) {
+      env["ANTHROPIC_API_KEY"] = process.env["ANTHROPIC_API_KEY"];
+    }
+
+    const mcpConfigPath = await this.writeMcpConfig(slug, row.worktree_path);
+
+    const handle = await provider.resume({
+      sessionSlug: slug,
+      worktree: row.worktree_path,
+      externalId: providerState?.external_id ?? undefined,
+      env,
+      mcpConfigPath,
+      additionalPrompt,
+    });
+
+    this.handles.set(slug, handle);
+
+    if (handle.externalId) {
+      this.upsertProviderState.run(slug, providerName, handle.externalId, 0, 0, "{}", nowIso());
+    }
+
+    this.deps.ctx.audit.record(
+      "system",
+      "session.reply.delivered",
+      { kind: "session", id: slug },
+      { count: pending.length, provider: providerName },
+    );
+
+    this.updateSession.run("running", nowIso(), nowIso(), null, row.worktree_path, row.branch ?? null, slug);
+    const updatedRow = this.getSessionRow(slug)!;
+    this.emitUpdated(this.buildSession(updatedRow));
+
+    this.pipeHandle(slug, handle, providerName);
+    return true;
   }
 
   async resumeAllActive(): Promise<void> {
@@ -592,18 +654,11 @@ export class SessionRegistry {
           this.upsertProviderState.run(slug, providerName, handle.externalId, 0, 0, "{}", nowIso());
         }
 
-        const pending = this.replyQueue.pendingAll(slug);
-        for (const item of pending) {
-          handle.write(item.payload);
-          this.replyQueue.markDelivered(item.id);
-        }
-
         this.pipeHandle(slug, handle, providerName);
 
         ctx.audit.record("system", "session.resume", { kind: "session", id: slug }, {
           provider: providerName,
           externalId: handle.externalId ?? null,
-          pendingReplies: pending.length,
         });
         log.info("resumed session", { slug });
       } catch (err) {
@@ -643,17 +698,12 @@ export class SessionRegistry {
       }
     }
 
-    const status = row.status as SessionStatus;
-    const handle = this.handles.get(slug);
-    const injected = status === "running" || status === "waiting_input";
-
     const now = nowIso();
     const seq = (db.prepare(
       `SELECT COALESCE(MAX(seq), -1) AS last_seq FROM transcript_events WHERE session_slug = ?`,
     ).get(slug) as { last_seq: number }).last_seq + 1;
 
     const body: Record<string, unknown> = { text, source: "operator" };
-    if (injected) body["injected"] = true;
     if (copied.length > 0) body["attachments"] = copied;
     const bodyJson = JSON.stringify(body);
 
@@ -684,40 +734,8 @@ export class SessionRegistry {
       ? `${text}\n\n[Attached: ${copied.map((a) => a.name).join(", ")}]\n`
       : text;
 
-    if (handle && injected) {
-      try {
-        handle.write(payload);
-        ctx.audit.record("operator", "session.reply.injected", { kind: "session", id: slug });
-      } catch (err) {
-        ctx.audit.record("operator", "session.reply.failed", { kind: "session", id: slug }, { error: String(err) });
-        const failSeq = (db.prepare(
-          `SELECT COALESCE(MAX(seq), -1) AS last_seq FROM transcript_events WHERE session_slug = ?`,
-        ).get(slug) as { last_seq: number }).last_seq + 1;
-        const failId = newEventId();
-        const failNow = nowIso();
-        const failBody = JSON.stringify({
-          level: "error",
-          text: "reply injection failed",
-          data: { error: String(err) },
-        });
-        db.prepare(
-          `INSERT OR IGNORE INTO transcript_events(id, session_slug, seq, turn, kind, body, timestamp)
-           VALUES (?, ?, ?, ?, 'status', ?, ?)`,
-        ).run(failId, slug, failSeq, session.stats.turns ?? 0, failBody, failNow);
-        const failEv = rowToTranscriptEvent({
-          id: failId, session_slug: slug, seq: failSeq,
-          turn: session.stats.turns ?? 0,
-          kind: "status",
-          body: failBody,
-          timestamp: failNow,
-        });
-        this.deps.bus.emit({ kind: "transcript_event", sessionSlug: slug, event: failEv });
-        throw err;
-      }
-    } else {
-      this.replyQueue.enqueue(slug, payload);
-      ctx.audit.record("operator", "session.reply.queued", { kind: "session", id: slug });
-    }
+    this.replyQueue.enqueue(slug, payload);
+    ctx.audit.record("operator", "session.reply.queued", { kind: "session", id: slug });
   }
 
   async stop(slug: string, _reason?: string): Promise<void> {
