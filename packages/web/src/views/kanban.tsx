@@ -41,7 +41,7 @@ const COL_HEADER_BG: Partial<Record<SessionStatus, string>> = {
   failed: "bg-red-950/40 border-red-800/40",
 };
 
-type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed";
+type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
 
 interface Props {
@@ -57,7 +57,8 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
 
   const sessions = useMemo(() => {
     let arr = Array.from(sessionsMap.values());
-    if (filterStatus !== "all") arr = arr.filter((s) => s.status === filterStatus);
+    if (filterStatus === "attention") arr = arr.filter((s) => s.attention && s.attention.length > 0);
+    else if (filterStatus !== "all") arr = arr.filter((s) => s.status === filterStatus);
     if (filterMode !== "all") arr = arr.filter((s) => s.mode === filterMode);
     return arr;
   }, [sessionsMap, filterStatus, filterMode]);

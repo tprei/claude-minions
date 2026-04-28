@@ -41,7 +41,7 @@ function toggleSet<T>(set: Set<T>, val: T): Set<T> {
   return next;
 }
 
-type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed";
+type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
 
 interface Props {
@@ -75,7 +75,9 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
     let list = [...sessions].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     );
-    if (filterStatus !== "all") {
+    if (filterStatus === "attention") {
+      list = list.filter((s) => s.attention && s.attention.length > 0);
+    } else if (filterStatus !== "all") {
       list = list.filter((s) => s.status === filterStatus);
     }
     if (filterMode !== "all") {
@@ -165,7 +167,7 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
 
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
-          <EmptyState filterMode={filterMode} />
+          <EmptyState filterMode={filterMode} filterStatus={filterStatus} />
         ) : (
           <>
             <table className="w-full text-sm hidden sm:table">
@@ -271,7 +273,15 @@ function ChildrenChip({ slugs }: { slugs: string[] }) {
   );
 }
 
-function EmptyState({ filterMode }: { filterMode: FilterMode }) {
+function EmptyState({ filterMode, filterStatus }: { filterMode: FilterMode; filterStatus: FilterStatus }) {
+  if (filterStatus === "attention") {
+    return (
+      <div className="flex flex-col items-center justify-center text-center px-4 mt-16 gap-2">
+        <p className="text-sm text-fg-muted max-w-md">Nothing needs attention right now.</p>
+        <p className="text-xs text-fg-subtle">Sessions surface here when they are failed, waiting on input, or have CI red.</p>
+      </div>
+    );
+  }
   if (filterMode === "dag-task") {
     return (
       <div className="flex flex-col items-center justify-center text-center px-4 mt-16 gap-3">
