@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Session } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS, EMPTY_TRANSCRIPTS } from "../store/sessionStore.js";
 import { useRootStore } from "../store/root.js";
 import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
 import { Diff } from "../components/Diff.js";
-import { Tabs, type Tab } from "./Tabs.js";
+import type { Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
 import { QuickActions } from "./quickActions.js";
 import { RecoveryFooter } from "./RecoveryFooter.js";
@@ -30,6 +30,74 @@ const SURFACE_TABS: Tab[] = [
   { id: "screenshots", label: "Screenshots" },
   { id: "dag", label: "DAG status" },
 ];
+
+function SurfaceTabList({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: Tab[];
+  active: string;
+  onChange: (id: string) => void;
+}) {
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  function activate(idx: number) {
+    const tab = tabs[idx];
+    if (!tab) return;
+    onChange(tab.id);
+    const el = refs.current[idx];
+    if (el) el.focus();
+  }
+
+  function onKeyDown(e: ReactKeyboardEvent<HTMLButtonElement>, idx: number) {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      activate((idx + 1) % tabs.length);
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      activate((idx - 1 + tabs.length) % tabs.length);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      activate(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      activate(tabs.length - 1);
+    }
+  }
+
+  return (
+    <div role="tablist" aria-label="Session surface" className="flex flex-wrap border-b border-border">
+      {tabs.map((tab, idx) => {
+        const isActive = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            ref={(el) => {
+              refs.current[idx] = el;
+            }}
+            type="button"
+            role="tab"
+            id={`surface-tab-${tab.id}`}
+            aria-selected={isActive}
+            aria-controls={`surface-tabpanel-${tab.id}`}
+            tabIndex={isActive ? 0 : -1}
+            onClick={() => onChange(tab.id)}
+            onKeyDown={(e) => onKeyDown(e, idx)}
+            className={cx(
+              "px-3 py-2 text-xs transition-colors whitespace-nowrap",
+              isActive
+                ? "text-fg border-b-2 border-accent -mb-px"
+                : "text-fg-subtle hover:text-fg-muted",
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 720;
@@ -355,8 +423,13 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
       <OperationalHeader session={session} onClose={onClose} />
-      <Tabs tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <SurfaceTabList tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
+      <div
+        role="tabpanel"
+        id={`surface-tabpanel-${activeTab}`}
+        aria-labelledby={`surface-tab-${activeTab}`}
+        className="flex-1 min-h-0 flex flex-col overflow-hidden"
+      >
         {activeTab === "transcript" && <Transcript events={events} />}
         {activeTab === "diff" && <DiffPanel session={session} />}
         {activeTab === "pr" && <PRPanel session={session} />}

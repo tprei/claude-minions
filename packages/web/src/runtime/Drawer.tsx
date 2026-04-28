@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { RuntimeConfigResponse, RuntimeOverrides } from "@minions/shared";
 import { AutoForm } from "./autoForm.js";
+import { Banner } from "../components/Banner.js";
+import { useApiMutation } from "../hooks/useApiMutation.js";
 
 interface Props {
   api: {
@@ -14,26 +16,49 @@ export function RuntimeDrawer({ api, onClose }: Props) {
   const [config, setConfig] = useState<RuntimeConfigResponse | null>(null);
   const [draft, setDraft] = useState<RuntimeOverrides>({});
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [restartPending, setRestartPending] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       const res = await api.get("/api/config/runtime") as RuntimeConfigResponse;
       setConfig(res);
       setDraft(res.values);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load config");
+      setLoadError(err instanceof Error ? err.message : "Failed to load config");
     } finally {
       setLoading(false);
     }
   }, [api]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const saveMutation = useApiMutation<RuntimeOverrides, RuntimeConfigResponse>(
+    async (overrides) => {
+      const res = await api.patch("/api/config/runtime", overrides) as RuntimeConfigResponse;
+      return res;
+    },
+    {
+      onSuccess: async (_res, overrides) => {
+        if (!config) return;
+        const baseline = config.values;
+        const restartChanged = config.schema.fields.some((f) => {
+          const applies = f.applies ?? "live";
+          if (applies !== "restart") return false;
+          const before = baseline[f.key];
+          const after = overrides[f.key];
+          return JSON.stringify(before) !== JSON.stringify(after);
+        });
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+        if (restartChanged) setRestartPending(true);
+        await load();
+      },
+    },
+  );
 
   function handleChange(key: string, value: unknown) {
     setDraft(d => ({ ...d, [key]: value }));
@@ -46,30 +71,13 @@ export function RuntimeDrawer({ api, onClose }: Props) {
     setDraft(d => ({ ...d, [key]: field.default }));
   }
 
-  async function handleSave() {
+  function handleSave() {
     if (!config) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const baseline = config.values;
-      const restartChanged = config.schema.fields.some((f) => {
-        const applies = f.applies ?? "live";
-        if (applies !== "restart") return false;
-        const before = baseline[f.key];
-        const after = draft[f.key];
-        return JSON.stringify(before) !== JSON.stringify(after);
-      });
-      await api.patch("/api/config/runtime", draft);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-      if (restartChanged) setRestartPending(true);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
+    void saveMutation.run(draft);
   }
+
+  const saving = saveMutation.loading;
+  const mutationError = saveMutation.error;
 
   return (
     <div className="flex flex-col h-full">
@@ -101,8 +109,20 @@ export function RuntimeDrawer({ api, onClose }: Props) {
           </div>
         )}
 
-        {error && (
-          <div className="p-4 text-red-400 text-sm">{error}</div>
+        {mutationError && (
+          <div className="mx-4 mt-3">
+            <Banner
+              tone="error"
+              title={mutationError.code}
+              message={mutationError.message}
+              detail={mutationError.status ? `HTTP ${mutationError.status}` : undefined}
+              onDismiss={() => saveMutation.reset()}
+            />
+          </div>
+        )}
+
+        {loadError && (
+          <div className="p-4 text-red-400 text-sm">{loadError}</div>
         )}
 
         {loading && !config && (

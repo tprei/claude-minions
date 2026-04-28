@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type ReactNode } from "react";
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { TranscriptEvent, ToolResultEvent } from "@minions/shared";
 import { pickComponent } from "./events/index.js";
 import { OrphanedToolResult } from "./events/OrphanedToolResult.js";
@@ -112,26 +112,74 @@ function TranscriptView({ events }: ViewProps) {
   );
 }
 
-interface TabButtonProps {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}
+const TRANSCRIPT_TABS: { id: TranscriptTab; label: string }[] = [
+  { id: "transcript", label: "Transcript" },
+  { id: "timeline", label: "Timeline" },
+];
 
-function TabButton({ active, onClick, children }: TabButtonProps) {
+function TranscriptTabList({
+  active,
+  onChange,
+}: {
+  active: TranscriptTab;
+  onChange: (id: TranscriptTab) => void;
+}) {
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  function activate(idx: number) {
+    const tab = TRANSCRIPT_TABS[idx];
+    if (!tab) return;
+    onChange(tab.id);
+    const el = refs.current[idx];
+    if (el) el.focus();
+  }
+
+  function onKeyDown(e: ReactKeyboardEvent<HTMLButtonElement>, idx: number) {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      activate((idx + 1) % TRANSCRIPT_TABS.length);
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      activate((idx - 1 + TRANSCRIPT_TABS.length) % TRANSCRIPT_TABS.length);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      activate(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      activate(TRANSCRIPT_TABS.length - 1);
+    }
+  }
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cx(
-        "px-3 py-1 text-[11px] transition-colors",
-        active
-          ? "text-fg border-b-2 border-accent -mb-px"
-          : "text-fg-subtle hover:text-fg-muted",
-      )}
-    >
-      {children}
-    </button>
+    <div role="tablist" aria-label="Transcript view" className="flex border-b border-border bg-bg-soft px-2">
+      {TRANSCRIPT_TABS.map((tab, idx) => {
+        const isActive = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            ref={(el) => {
+              refs.current[idx] = el;
+            }}
+            type="button"
+            role="tab"
+            id={`transcript-tab-${tab.id}`}
+            aria-selected={isActive}
+            aria-controls={`transcript-tabpanel-${tab.id}`}
+            tabIndex={isActive ? 0 : -1}
+            onClick={() => onChange(tab.id)}
+            onKeyDown={(e) => onKeyDown(e, idx)}
+            className={cx(
+              "px-3 py-1 text-[11px] transition-colors",
+              isActive
+                ? "text-fg border-b-2 border-accent -mb-px"
+                : "text-fg-subtle hover:text-fg-muted",
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -144,15 +192,15 @@ export function Transcript({ events }: Props) {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex border-b border-border bg-bg-soft px-2">
-        <TabButton active={tab === "transcript"} onClick={() => setTab("transcript")}>
-          Transcript
-        </TabButton>
-        <TabButton active={tab === "timeline"} onClick={() => setTab("timeline")}>
-          Timeline
-        </TabButton>
+      <TranscriptTabList active={tab} onChange={setTab} />
+      <div
+        role="tabpanel"
+        id={`transcript-tabpanel-${tab}`}
+        aria-labelledby={`transcript-tab-${tab}`}
+        className="flex-1 min-h-0 flex flex-col"
+      >
+        {tab === "transcript" ? <TranscriptView events={events} /> : <Timeline events={events} />}
       </div>
-      {tab === "transcript" ? <TranscriptView events={events} /> : <Timeline events={events} />}
     </div>
   );
 }

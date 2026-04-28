@@ -1,4 +1,4 @@
-import type { RuntimeConfigSchema, RuntimeOverrides } from "@minions/shared";
+import type { RuntimeConfigSchema, RuntimeField, RuntimeOverrides } from "@minions/shared";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { RuntimeRepo } from "../store/repos/runtimeRepo.js";
 import { runtimeConfigSchema } from "./schema.js";
@@ -12,12 +12,18 @@ export interface RuntimeSubsystem {
   update: (patch: RuntimeOverrides) => Promise<void>;
 }
 
+const REDACTED = "[redacted]";
+
 function buildDefaults(): RuntimeOverrides {
   const defaults: RuntimeOverrides = {};
   for (const field of runtimeConfigSchema.fields) {
     defaults[field.key] = field.default;
   }
   return defaults;
+}
+
+function isSecretField(field: RuntimeField): boolean {
+  return (field as RuntimeField & { secret?: boolean }).secret === true;
 }
 
 function validatePatch(patch: RuntimeOverrides): void {
@@ -82,14 +88,21 @@ export function createRuntimeSubsystem(deps: SubsystemDeps): SubsystemResult<Run
     const next = { ...current, ...patch };
     repo.write(next);
 
+    const fieldMap = new Map(runtimeConfigSchema.fields.map((f) => [f.key, f]));
     for (const [key, value] of Object.entries(patch)) {
       const before = effectiveBefore[key];
       if (JSON.stringify(before) === JSON.stringify(value)) continue;
+      const field = fieldMap.get(key);
+      const secret = field ? isSecretField(field) : false;
       ctx.audit.record(
         "operator",
-        "runtime.update",
+        "runtime.override",
         { kind: "runtime-field", id: key },
-        { field: key, before, after: value },
+        {
+          fieldPath: key,
+          oldValue: secret ? REDACTED : before,
+          newValue: secret ? REDACTED : value,
+        },
       );
     }
 

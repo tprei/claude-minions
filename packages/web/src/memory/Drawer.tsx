@@ -9,6 +9,8 @@ import { useConnectionStore } from "../connections/store.js";
 import { useVersionStore } from "../store/version.js";
 import { useMemoryStore } from "../store/memoryStore.js";
 import { listMemories } from "../transport/rest.js";
+import { Banner } from "../components/Banner.js";
+import { useApiMutation, type MutationError } from "../hooks/useApiMutation.js";
 
 interface Props {
   api: {
@@ -39,6 +41,16 @@ const SEARCH_DEBOUNCE_MS = 200;
 
 const EMPTY_REPOS: RepoBinding[] = [];
 
+interface SaveArgs {
+  body: CreateMemoryRequest | Partial<CreateMemoryRequest>;
+  memoryId?: string;
+}
+
+interface ReviewArgs {
+  memoryId: string;
+  body: MemoryReviewCommand;
+}
+
 export function MemoryDrawer({ api, onClose }: Props) {
   const activeId = useConnectionStore(s => s.activeId);
   const conn = useConnectionStore(s =>
@@ -50,7 +62,8 @@ export function MemoryDrawer({ api, onClose }: Props) {
 
   const [items, setItems] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<MutationError | null>(null);
   const [tab, setTab] = useState<MemoryTab>("all");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -69,7 +82,7 @@ export function MemoryDrawer({ api, onClose }: Props) {
       return;
     }
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       const opts: Parameters<typeof listMemories>[1] = {};
       if (tab !== "all") opts.status = tab as MemoryStatus;
@@ -82,11 +95,11 @@ export function MemoryDrawer({ api, onClose }: Props) {
         for (const m of res.items) store.upsert(activeId, m);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load memories");
+      setLoadError(err instanceof Error ? err.message : "Failed to load memories");
     } finally {
       setLoading(false);
     }
-  }, [conn, tab, debouncedSearch, repoId]);
+  }, [conn, tab, debouncedSearch, repoId, activeId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -103,30 +116,68 @@ export function MemoryDrawer({ api, onClose }: Props) {
     });
   }, [items, debouncedSearch, repoId]);
 
+  const saveMutation = useApiMutation<SaveArgs, unknown>(
+    async ({ body, memoryId }) => {
+      if (memoryId) return api.patch(`/api/memories/${memoryId}`, body);
+      return api.post("/api/memories", body);
+    },
+    {
+      onSuccess: async () => {
+        setMutationError(null);
+        await load();
+        setMode({ kind: "list" });
+      },
+      onError: (err) => setMutationError(err),
+    },
+  );
+
+  const proposeMutation = useApiMutation<CreateMemoryRequest | Partial<CreateMemoryRequest>, unknown>(
+    (body) => api.post("/api/memories", body),
+    {
+      onSuccess: () => {
+        setMutationError(null);
+        setMode({ kind: "list" });
+      },
+      onError: (err) => setMutationError(err),
+    },
+  );
+
+  const reviewMutation = useApiMutation<ReviewArgs, unknown>(
+    ({ memoryId, body }) => api.patch(`/api/memories/${memoryId}/review`, body),
+    {
+      onSuccess: async (_res, args) => {
+        setMutationError(null);
+        await load();
+        if (mode.kind === "review" && mode.memory.id === args.memoryId) {
+          setMode({ kind: "list" });
+        }
+      },
+      onError: (err) => setMutationError(err),
+    },
+  );
+
   async function handleSave(req: CreateMemoryRequest | Partial<CreateMemoryRequest>) {
     if (mode.kind === "edit" && mode.memory) {
-      await api.patch(`/api/memories/${mode.memory.id}`, req);
+      const result = await saveMutation.run({ body: req, memoryId: mode.memory.id });
+      if (result === undefined) throw new Error(saveMutation.error?.message ?? "Save failed");
     } else {
-      await api.post("/api/memories", req);
+      const result = await saveMutation.run({ body: req });
+      if (result === undefined) throw new Error(saveMutation.error?.message ?? "Save failed");
     }
-    await load();
-    setMode({ kind: "list" });
   }
 
   async function handlePropose(req: CreateMemoryRequest | Partial<CreateMemoryRequest>) {
-    await api.post("/api/memories", req);
-    setMode({ kind: "list" });
+    const result = await proposeMutation.run(req);
+    if (result === undefined) throw new Error(proposeMutation.error?.message ?? "Propose failed");
   }
 
   async function handleReview(memory: Memory, req: MemoryReviewCommand) {
-    await api.patch(`/api/memories/${memory.id}/review`, req);
-    await load();
-    setMode({ kind: "list" });
+    const result = await reviewMutation.run({ memoryId: memory.id, body: req });
+    if (result === undefined) throw new Error(reviewMutation.error?.message ?? "Review failed");
   }
 
   async function handleQuickReview(memory: Memory, req: MemoryReviewCommand) {
-    await api.patch(`/api/memories/${memory.id}/review`, req);
-    await load();
+    await reviewMutation.run({ memoryId: memory.id, body: req });
   }
 
   const activeMemory = mode.kind === "review" || mode.kind === "edit" ? mode.memory : undefined;
@@ -164,6 +215,18 @@ export function MemoryDrawer({ api, onClose }: Props) {
         )}
         <button className="btn p-1.5" onClick={onClose} aria-label="Close">✕</button>
       </div>
+
+      {mutationError && (
+        <div className="px-4 pt-3 shrink-0">
+          <Banner
+            tone="error"
+            title={mutationError.code}
+            message={mutationError.message}
+            detail={mutationError.status ? `HTTP ${mutationError.status}` : undefined}
+            onDismiss={() => setMutationError(null)}
+          />
+        </div>
+      )}
 
       {mode.kind === "list" && (
         <>
@@ -219,11 +282,11 @@ export function MemoryDrawer({ api, onClose }: Props) {
       )}
 
       <div className="flex-1 overflow-y-auto">
-        {error && (
-          <div className="p-4 text-red-400 text-sm">{error}</div>
+        {loadError && (
+          <div className="p-4 text-red-400 text-sm">{loadError}</div>
         )}
 
-        {mode.kind === "list" && !error && (
+        {mode.kind === "list" && !loadError && (
           loading ? (
             <div className="flex justify-center py-12">
               <div className="w-5 h-5 rounded-full border-2 border-accent border-t-transparent animate-spin" />
