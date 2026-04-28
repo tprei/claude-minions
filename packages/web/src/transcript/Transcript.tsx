@@ -4,9 +4,26 @@ import { pickComponent } from "./events/index.js";
 import { OrphanedToolResult } from "./events/OrphanedToolResult.js";
 import { Timeline } from "./Timeline.js";
 import { cx } from "../util/classnames.js";
+import { ResizeHandle } from "../components/ResizeHandle.js";
+import { Sheet } from "../components/Sheet.js";
+import {
+  getLayout,
+  setLayout,
+  getBreakpoint,
+  subscribe as subscribePanelLayout,
+} from "../util/panelLayout.js";
 
 const MAX_EVENTS = 500;
 const NEAR_BOTTOM_THRESHOLD = 120;
+
+const PANEL_TRANSCRIPT = "transcript";
+const TRANSCRIPT_DEFAULT_WIDTH = 640;
+const TRANSCRIPT_MIN_WIDTH = 280;
+const TRANSCRIPT_MAX_WIDTH = 1400;
+
+function clampTranscriptWidth(n: number): number {
+  return Math.max(TRANSCRIPT_MIN_WIDTH, Math.min(TRANSCRIPT_MAX_WIDTH, n));
+}
 
 type TranscriptTab = "transcript" | "timeline";
 
@@ -187,7 +204,7 @@ interface Props {
   events: TranscriptEvent[];
 }
 
-export function Transcript({ events }: Props) {
+function TranscriptInner({ events }: Props) {
   const [tab, setTab] = useState<TranscriptTab>("transcript");
 
   return (
@@ -201,6 +218,103 @@ export function Transcript({ events }: Props) {
       >
         {tab === "transcript" ? <TranscriptView events={events} /> : <Timeline events={events} />}
       </div>
+    </div>
+  );
+}
+
+interface WrapperHeaderProps {
+  collapsed: boolean;
+  onToggle: () => void;
+}
+
+function WrapperHeader({ collapsed, onToggle }: WrapperHeaderProps) {
+  return (
+    <div className="flex items-center justify-between flex-shrink-0 border-b border-border bg-bg-soft px-2 py-1">
+      <span className="text-[10px] uppercase tracking-wide text-fg-subtle px-1">Transcript</span>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        aria-label={collapsed ? "Expand transcript" : "Collapse transcript"}
+        data-testid="transcript-collapse"
+        className="text-[11px] text-fg-subtle hover:text-fg px-1 leading-none"
+      >
+        {collapsed ? "▸" : "▾"}
+      </button>
+    </div>
+  );
+}
+
+export function Transcript({ events }: Props) {
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    const stored = getLayout(PANEL_TRANSCRIPT);
+    return stored ? stored.collapsed : false;
+  });
+  const [width, setWidth] = useState<number>(() => {
+    const stored = getLayout(PANEL_TRANSCRIPT);
+    return stored ? clampTranscriptWidth(stored.size) : TRANSCRIPT_DEFAULT_WIDTH;
+  });
+  const [isMobile, setIsMobile] = useState<boolean>(() => getBreakpoint() === "mobile");
+
+  useEffect(() => {
+    setLayout(PANEL_TRANSCRIPT, { size: width, collapsed });
+  }, [width, collapsed]);
+
+  useEffect(() => {
+    return subscribePanelLayout((bp) => {
+      setIsMobile(bp === "mobile");
+      const stored = getLayout(PANEL_TRANSCRIPT);
+      if (!stored) return;
+      setWidth(clampTranscriptWidth(stored.size));
+      setCollapsed(stored.collapsed);
+    });
+  }, []);
+
+  const handleDrag = useCallback((delta: number) => {
+    setWidth((w) => clampTranscriptWidth(w + delta));
+  }, []);
+
+  const toggle = useCallback(() => setCollapsed((c) => !c), []);
+
+  if (isMobile) {
+    return (
+      <div data-panel="transcript" className="flex flex-col flex-1 min-h-0">
+        <WrapperHeader collapsed={collapsed} onToggle={toggle} />
+        <Sheet open={!collapsed} onClose={() => setCollapsed(true)} title="Transcript">
+          <div className="h-[80vh] flex flex-col">
+            <TranscriptInner events={events} />
+          </div>
+        </Sheet>
+      </div>
+    );
+  }
+
+  if (collapsed) {
+    return (
+      <div
+        data-panel="transcript"
+        data-collapsed="true"
+        className="flex flex-col flex-shrink-0 border-r border-border bg-bg-soft"
+        style={{ width: 36 }}
+      >
+        <WrapperHeader collapsed={collapsed} onToggle={toggle} />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-panel="transcript"
+      className="flex flex-shrink-0 min-h-0 border-r border-border"
+      style={{ width }}
+    >
+      <div className="flex-1 min-w-0 flex flex-col">
+        <WrapperHeader collapsed={collapsed} onToggle={toggle} />
+        <div data-testid="transcript-body" className="flex-1 min-h-0 flex flex-col">
+          <TranscriptInner events={events} />
+        </div>
+      </div>
+      <ResizeHandle onDrag={handleDrag} />
     </div>
   );
 }
