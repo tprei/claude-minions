@@ -224,7 +224,18 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
     [conn],
   );
 
-  const inputDisabled = !conn || session.status === "completed" || session.status === "cancelled";
+  const handleStop = useCallback(async () => {
+    if (!conn) return;
+    await postCommand(conn, { kind: "stop", sessionSlug: session.slug });
+  }, [conn, session.slug]);
+
+  const inputDisabled = !conn || session.status === "completed" || session.status === "cancelled" || session.status === "failed";
+  const isRunning = session.status === "running";
+  const inputPlaceholder = inputDisabled
+    ? `Session ${session.status}.`
+    : isRunning
+      ? "Reply queues to land mid-turn…"
+      : undefined;
 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
@@ -253,8 +264,10 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
         onSubmit={handleSubmit}
         onSlashCommand={handleSlashCommand}
         disabled={inputDisabled}
-        placeholder={inputDisabled && session.status !== "running" ? "Session ended." : undefined}
-        hint={session.status === "running" ? "(injected mid-turn)" : undefined}
+        placeholder={inputPlaceholder}
+        hint={isRunning ? "(injected mid-turn)" : undefined}
+        running={isRunning}
+        onStop={handleStop}
       />
     </div>
   );
