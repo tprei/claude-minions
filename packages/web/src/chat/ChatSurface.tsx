@@ -168,6 +168,93 @@ function DagStatusPanel({ session }: { session: Session }) {
   );
 }
 
+const PR_STATE_PILL: Record<"open" | "closed" | "merged", string> = {
+  open: "bg-emerald-900/40 text-emerald-300",
+  merged: "bg-purple-900/40 text-purple-300",
+  closed: "bg-bg-elev text-fg-muted",
+};
+
+function OperationalHeader({ session, onClose }: { session: Session; onClose: () => void }) {
+  function navTo(view: "list" | "dag", slug?: string | null, dagId?: string) {
+    const activeId = useConnectionStore.getState().activeId;
+    if (!activeId) return;
+    const { query } = parseUrl();
+    const nextQuery = dagId ? { ...query, dag: dagId } : query;
+    setUrlState({ connectionId: activeId, view, sessionSlug: slug ?? null, query: nextQuery });
+  }
+  const shortParent = session.parentSlug ? session.parentSlug.slice(0, 8) : null;
+  return (
+    <div className="flex flex-col gap-1 px-3 py-2 border-b border-border">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-sm font-medium text-fg truncate flex-1">{session.title}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-fg-subtle hover:text-fg-muted text-lg leading-none"
+          title="Close (return to list)"
+        >
+          ×
+        </button>
+      </div>
+      <div className="flex items-center flex-wrap gap-1.5 text-[10px]">
+        <span className="pill bg-bg-elev text-fg-muted font-mono">{session.mode}</span>
+        {session.shipStage && (
+          <span className="pill bg-purple-900/40 text-purple-300">stage:{session.shipStage}</span>
+        )}
+        {session.branch && (
+          <span className="pill bg-bg-elev text-fg-subtle font-mono truncate max-w-[180px]" title={session.branch}>
+            ⎇ {session.branch}
+          </span>
+        )}
+        {session.pr && (
+          <a
+            href={session.pr.url}
+            target="_blank"
+            rel="noreferrer"
+            className={cx("pill font-mono hover:underline", PR_STATE_PILL[session.pr.state])}
+            title={session.pr.title}
+          >
+            PR #{session.pr.number} · {session.pr.state}{session.pr.draft ? " (draft)" : ""}
+          </a>
+        )}
+        {session.attention && session.attention.length > 0 && (
+          <span className="pill bg-amber-900/40 text-amber-300" title={session.attention.map((a) => a.kind).join(", ")}>
+            ⚠ {session.attention.length}
+          </span>
+        )}
+        {shortParent && (
+          <button
+            type="button"
+            onClick={() => navTo("list", session.parentSlug)}
+            className="pill bg-bg-elev text-fg-subtle hover:text-fg font-mono"
+            title={`parent: ${session.parentSlug}`}
+          >
+            ↑ {shortParent}
+          </button>
+        )}
+        {session.dagId && (
+          <button
+            type="button"
+            onClick={() => navTo("dag", null, session.dagId)}
+            className="pill bg-indigo-900/40 text-indigo-300 hover:underline font-mono"
+            title={`DAG ${session.dagId}`}
+          >
+            DAG
+          </button>
+        )}
+        {session.childSlugs && session.childSlugs.length > 0 && (
+          <span className="pill bg-bg-elev text-fg-subtle">↓ {session.childSlugs.length}</span>
+        )}
+        {session.modelHint && (
+          <span className="pill bg-bg-elev text-fg-subtle font-mono truncate max-w-[140px]" title={session.modelHint}>
+            {session.modelHint}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface PanelProps {
   session: Session;
   activeTab: string;
@@ -239,17 +326,7 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <span className="text-xs font-medium text-fg-muted truncate flex-1">{session.title}</span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-fg-subtle hover:text-fg-muted text-lg leading-none"
-          title="Close (press ?)"
-        >
-          ×
-        </button>
-      </div>
+      <OperationalHeader session={session} onClose={onClose} />
       <Tabs tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {activeTab === "transcript" && <Transcript events={events} />}
