@@ -23,6 +23,8 @@ import { initInstallPrompt } from "./pwa/install.js";
 import { initOfflineDetection } from "./pwa/offline.js";
 import { OfflineBanner } from "./pwa/OfflineBanner.js";
 import { InstallButton } from "./pwa/InstallButton.js";
+import { registerServiceWorker } from "./pwa/sw.js";
+import { UpdateBanner } from "./pwa/UpdateBanner.js";
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
@@ -114,6 +116,7 @@ export function App(): ReactElement {
   useEffect(() => {
     try { initInstallPrompt(); } catch (err) { console.error("initInstallPrompt failed", err); }
     try { initOfflineDetection(); } catch (err) { console.error("initOfflineDetection failed", err); }
+    try { registerServiceWorker(); } catch (err) { console.error("registerServiceWorker failed", err); }
   }, []);
 
   return (
@@ -182,6 +185,8 @@ export function App(): ReactElement {
       />
 
       <OfflineBanner />
+
+      <UpdateBanner />
     </>
   );
 }

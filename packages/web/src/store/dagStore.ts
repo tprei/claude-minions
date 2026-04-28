@@ -6,6 +6,15 @@ interface DagStore {
   replaceAll: (connId: string, dags: DAG[]) => void;
   upsert: (connId: string, dag: DAG) => void;
   remove: (connId: string, id: string) => void;
+  /**
+   * Apply an optimistic mutation to a DAG. Returns a rollback closure that
+   * restores the prior DAG when invoked. No-op if the DAG is missing.
+   */
+  applyOptimisticDag: (
+    connId: string,
+    id: string,
+    mutator: (prev: DAG) => DAG,
+  ) => () => void;
 }
 
 export const EMPTY_DAGS: Map<string, DAG> = new Map();
@@ -49,5 +58,23 @@ export const useDagStore = create<DagStore>((set) => ({
         slice.delete(id);
       }),
     }));
+  },
+
+  applyOptimisticDag(connId, id, mutator) {
+    const prev = useDagStore.getState().byConnection.get(connId)?.get(id);
+    if (!prev) return () => {};
+    const next = mutator(prev);
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        slice.set(id, next);
+      }),
+    }));
+    return () => {
+      set(s => ({
+        byConnection: withSlice(s.byConnection, connId, (slice) => {
+          slice.set(id, prev);
+        }),
+      }));
+    };
   },
 }));
