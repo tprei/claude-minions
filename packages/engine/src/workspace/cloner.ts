@@ -13,18 +13,16 @@ export async function ensureBareClone(
   const git = simpleGit();
 
   if (await pathExists(barePath)) {
-    log.info("fetching existing bare clone", { repoId, barePath });
-    const bareGit = simpleGit(barePath);
-    // Bare clones created with `--bare` (vs `--mirror`) have no `+refs/heads/*:refs/heads/*`
-    // refspec, so `fetch --all` only updates `FETCH_HEAD` and never advances local branches.
-    // Set the mirror refspec then fetch so local `main` (and any other branch we resolve
-    // baseSha against in addWorktree) always reflects origin.
-    await bareGit.raw(["config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*"]);
-    await bareGit.fetch(["--prune", "origin"]);
+    // Targeted fetch happens per-session in addWorktree (force-fetch the requested
+    // baseBranch) — that way we never touch refs/heads/minions/* branches that are
+    // currently checked out by other worktrees, which git refuses to update.
+    log.info("bare clone present, deferring fetch to addWorktree", { repoId, barePath });
   } else {
     log.info("cloning bare repo", { repoId, remote, barePath });
-    // `--mirror` sets up the proper refspec so future fetches advance local branches.
-    await git.clone(remote, barePath, ["--mirror"]);
+    // `--mirror` would set up `+refs/heads/*:refs/heads/*` automatically, but that
+    // refspec collides with checked-out worktree branches on later fetches. Plain
+    // `--bare` keeps the bare clean; addWorktree fetches just the baseBranch on demand.
+    await git.clone(remote, barePath, ["--bare"]);
   }
 
   return barePath;

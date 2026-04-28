@@ -7,9 +7,9 @@ const MOBILE_QUERY = "(max-width: 767px)";
 
 const CHAT_RAIL_PANEL = "chat-rail";
 const RAIL_STORAGE_KEY = `panelLayout:${CHAT_RAIL_PANEL}`;
-const RAIL_DEFAULT_WIDTH = 200;
-const RAIL_MIN_WIDTH = 140;
-const RAIL_MAX_WIDTH = 320;
+const RAIL_DEFAULT_WIDTH = 240;
+const RAIL_MIN_WIDTH = 60;
+const RAIL_MAX_WIDTH = 720;
 
 function clampRail(width: number): number {
   return Math.max(RAIL_MIN_WIDTH, Math.min(RAIL_MAX_WIDTH, width));
@@ -133,13 +133,14 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
             ) : (
               <>
                 <div
+                  data-testid="chat-rail"
                   className="flex-shrink-0 overflow-y-auto bg-bg"
                   style={{ width: railWidth }}
                 >
                   {main}
                 </div>
                 <ResizeHandle onDrag={handleRailDrag} />
-                <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+                <div data-testid="chat-primary" className="flex-1 min-w-0 overflow-hidden flex flex-col">
                   {chatSurface}
                 </div>
               </>

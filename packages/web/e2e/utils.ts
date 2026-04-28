@@ -4,10 +4,13 @@ export const E2E_LABEL = "e2e-engine";
 export const E2E_CONN_ID = "e2e-conn";
 export const E2E_COLOR = "#7c5cff";
 
+export const API_BASE = process.env["MINIONS_E2E_BASE"] ?? "http://127.0.0.1:8801";
+export const API_TOKEN = process.env["MINIONS_E2E_TOKEN"] ?? "devtoken";
+
 export async function seedConnection(
   page: Page,
-  baseUrl: string,
-  token: string,
+  baseUrl: string = API_BASE,
+  token: string = API_TOKEN,
   label: string = E2E_LABEL,
 ): Promise<void> {
   await page.goto("/");
