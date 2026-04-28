@@ -92,7 +92,52 @@ export function createShipSubsystem(deps: SubsystemDeps): SubsystemResult<Engine
     },
   };
 
+  queueMicrotask(() => {
+    void reconcileVerifySummariesOnBoot(db, coordinator, log.child({ subsystem: "ship-coordinator" }));
+  });
+
   return { api };
+}
+
+interface VerifyStageRow {
+  session_slug: string;
+}
+
+async function reconcileVerifySummariesOnBoot(
+  db: Database.Database,
+  coordinator: ShipCoordinator,
+  log: Logger,
+): Promise<void> {
+  let rows: VerifyStageRow[];
+  try {
+    rows = db
+      .prepare(
+        `SELECT s.session_slug
+         FROM ship_state s
+         INNER JOIN sessions sess ON sess.slug = s.session_slug
+         WHERE s.stage = 'verify'
+           AND sess.status NOT IN ('completed', 'failed', 'cancelled')`,
+      )
+      .all() as VerifyStageRow[];
+  } catch (e) {
+    log.error("ship boot reconcile query failed", { message: (e as Error).message });
+    return;
+  }
+
+  for (const row of rows) {
+    try {
+      await coordinator.emitVerifySummary(row.session_slug);
+    } catch (e) {
+      log.error("ship boot reconcile emit failed", {
+        slug: row.session_slug,
+        message: (e as Error).message,
+      });
+    }
+  }
+
+  if (rows.length > 0) {
+    log.info("ship boot reconcile re-emitted verify summaries", { count: rows.length });
+  }
 }
 
 export { ShipCoordinator } from "./coordinator.js";
