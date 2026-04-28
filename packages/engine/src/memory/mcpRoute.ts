@@ -23,6 +23,6 @@ export function registerMcpRoute(app: FastifyInstance, ctx: EngineContext): void
 
     const handle = serveMcpStdio(sessionSlug, ctx);
     const responseLine = handle.handleLine(body.line);
-    await reply.send({ line: responseLine });
+    await reply.send({ line: responseLine ?? "" });
   });
 }

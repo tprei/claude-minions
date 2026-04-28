@@ -74,6 +74,7 @@ async function forward(line) {
     return;
   }
 
+  if (json.line.length === 0) return;
   process.stdout.write(json.line + "\n");
 }
 
