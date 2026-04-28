@@ -23,7 +23,8 @@ interface Props {
 type DrawerMode =
   | { kind: "list" }
   | { kind: "edit"; memory?: Memory }
-  | { kind: "review"; memory: Memory };
+  | { kind: "review"; memory: Memory }
+  | { kind: "propose" };
 
 const TABS: { id: MemoryTab; label: string }[] = [
   { id: "all", label: "All" },
@@ -112,6 +113,11 @@ export function MemoryDrawer({ api, onClose }: Props) {
     setMode({ kind: "list" });
   }
 
+  async function handlePropose(req: CreateMemoryRequest | Partial<CreateMemoryRequest>) {
+    await api.post("/api/memories", req);
+    setMode({ kind: "list" });
+  }
+
   async function handleReview(memory: Memory, req: MemoryReviewCommand) {
     await api.patch(`/api/memories/${memory.id}/review`, req);
     await load();
@@ -144,30 +150,32 @@ export function MemoryDrawer({ api, onClose }: Props) {
           {mode.kind === "list" && "Memories"}
           {mode.kind === "edit" && (mode.memory ? "Edit Memory" : "New Memory")}
           {mode.kind === "review" && "Review Memory"}
+          {mode.kind === "propose" && "Propose Memory"}
         </h2>
         {mode.kind === "list" && (
-          <>
-            <button
-              className="btn text-xs"
-              onClick={load}
-              disabled={loading}
-              aria-label="Refresh"
-            >
-              {loading ? "…" : "↺"}
-            </button>
-            <button
-              className="btn-primary text-xs"
-              onClick={() => setMode({ kind: "edit" })}
-            >
-              + New
-            </button>
-          </>
+          <button
+            className="btn text-xs"
+            onClick={load}
+            disabled={loading}
+            aria-label="Refresh"
+          >
+            {loading ? "…" : "↺"}
+          </button>
         )}
         <button className="btn p-1.5" onClick={onClose} aria-label="Close">✕</button>
       </div>
 
       {mode.kind === "list" && (
         <>
+          <div className="px-4 py-2 border-b border-border shrink-0">
+            <button
+              className="btn-primary text-xs w-full"
+              onClick={() => setMode({ kind: "propose" })}
+            >
+              + Propose memory
+            </button>
+          </div>
+
           <div className="px-4 py-2 border-b border-border shrink-0">
             <input
               className="input w-full text-xs"
@@ -235,6 +243,13 @@ export function MemoryDrawer({ api, onClose }: Props) {
           <MemoryEdit
             memory={mode.memory}
             onSave={handleSave}
+            onCancel={() => setMode({ kind: "list" })}
+          />
+        )}
+
+        {mode.kind === "propose" && (
+          <MemoryEdit
+            onSave={handlePropose}
             onCancel={() => setMode({ kind: "list" })}
           />
         )}
