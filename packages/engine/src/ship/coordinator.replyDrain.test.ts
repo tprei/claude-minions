@@ -178,6 +178,7 @@ describe("ShipCoordinator + replyQueue drain integration", () => {
       ship: {
         advance: async () => {},
         onTurnCompleted: async () => {},
+        reconcileOnBoot: async () => {},
       },
       readiness: {
         compute: async () => ({} as never),
@@ -203,6 +204,7 @@ describe("ShipCoordinator + replyQueue drain integration", () => {
     (ctx as unknown as { ship: EngineContext["ship"] }).ship = {
       onTurnCompleted: (s: string) => coordinator.onTurnCompleted(s),
       advance: (s: string, to?: import("@minions/shared").ShipStage, n?: string) => coordinator.advance(s, to, n),
+      reconcileOnBoot: () => coordinator.reconcileOnBoot(),
     };
   });
 

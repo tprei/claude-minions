@@ -90,6 +90,10 @@ export function createShipSubsystem(deps: SubsystemDeps): SubsystemResult<Engine
     async onTurnCompleted(slug: string): Promise<void> {
       await coordinator.onTurnCompleted(slug);
     },
+
+    async reconcileOnBoot(): Promise<void> {
+      await coordinator.reconcileOnBoot();
+    },
   };
 
   queueMicrotask(() => {

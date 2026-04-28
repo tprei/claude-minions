@@ -146,6 +146,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
 
   ctx.resource.start();
   await ctx.sessions.resumeAllActive();
+  await ctx.ship.reconcileOnBoot();
 
   return ctx;
 }
