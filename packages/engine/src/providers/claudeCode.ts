@@ -254,7 +254,9 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
     "--verbose",
   ];
 
-  if (opts.allowWriteTools !== false) {
+  if (opts.allowWriteTools === false) {
+    args.push("--permission-mode", "plan");
+  } else {
     args.push("--dangerously-skip-permissions");
   }
 
@@ -281,7 +283,9 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
 export function buildResumeArgs(opts: ProviderResumeOpts): string[] {
   const args = ["--output-format", "stream-json", "--print", "--verbose"];
 
-  if (opts.allowWriteTools !== false) {
+  if (opts.allowWriteTools === false) {
+    args.push("--permission-mode", "plan");
+  } else {
     args.push("--dangerously-skip-permissions");
   }
 
