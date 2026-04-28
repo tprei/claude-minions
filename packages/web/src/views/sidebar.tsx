@@ -83,6 +83,21 @@ export function Sidebar({
 
   return (
     <div className="flex flex-col h-full py-2 gap-1">
+      {activeId && (
+        <div className="px-2">
+          <button
+            onClick={() => navigate("new")}
+            className={cx(
+              "btn-primary w-full justify-center text-sm gap-1",
+              currentView === "new" && "ring-2 ring-accent/40",
+            )}
+          >
+            <span className="text-base leading-none">+</span>
+            New session
+          </button>
+        </div>
+      )}
+
       <div className="px-2">
         <p className="text-xs text-fg-subtle uppercase tracking-wider px-2 py-1">Views</p>
         {VIEW_OPTIONS.map(opt => {
