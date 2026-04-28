@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -8,18 +8,22 @@ import ReactFlow, {
   type Edge,
   type Node,
   type NodeProps,
+  type OnMove,
+  type Viewport as RFViewport,
   Handle,
   Position,
 } from "reactflow";
 import dagre from "dagre";
 import type { DAG, DAGNode, DAGNodeStatus } from "@minions/shared";
 import { useDagStore, EMPTY_DAGS } from "../store/dagStore.js";
+import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { UpgradeNotice } from "../components/UpgradeNotice.js";
 import { cx } from "../util/classnames.js";
+import { getViewport, setViewport, type Viewport } from "./dagViewport.js";
 import "reactflow/dist/style.css";
 
 const STATUS_COLOR: Record<DAGNodeStatus, string> = {
@@ -39,8 +43,18 @@ const STATUS_COLOR: Record<DAGNodeStatus, string> = {
 
 const NODE_W = 180;
 const NODE_H = 64;
+const PARENT_NODE_ID = "__parent__";
 
-function layoutDag(dag: DAG): { nodes: Node[]; edges: Edge[] } {
+interface DagNodeData {
+  node: DAGNode;
+}
+
+interface ParentNodeData {
+  sessionSlug: string;
+  parentDagId: string | null;
+}
+
+function layoutDag(dag: DAG): { nodes: Node[]; edges: Edge[]; rootIds: string[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "TB", ranksep: 80, nodesep: 40 });
@@ -61,7 +75,7 @@ function layoutDag(dag: DAG): { nodes: Node[]; edges: Edge[] } {
     return {
       id: n.id,
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
-      data: { node: n },
+      data: { node: n } satisfies DagNodeData,
       type: "dagNode",
     };
   });
@@ -79,28 +93,65 @@ function layoutDag(dag: DAG): { nodes: Node[]; edges: Edge[] } {
     }
   }
 
-  return { nodes, edges };
+  const rootIds = dag.nodes
+    .filter((n) => n.dependsOn.length === 0)
+    .map((n) => n.id);
+
+  return { nodes, edges, rootIds };
 }
 
-function DagNodeComponent({ data }: NodeProps<{ node: DAGNode }>) {
-  const { node } = data;
-  const activeId = useConnectionStore.getState().activeId;
+function findParentDagId(
+  dags: Iterable<DAG>,
+  parentSlug: string,
+  excludeDagId: string,
+): string | null {
+  for (const d of dags) {
+    if (d.id === excludeDagId) continue;
+    if (d.rootSessionSlug === parentSlug) return d.id;
+    if (d.nodes.some((n) => n.sessionSlug === parentSlug)) return d.id;
+  }
+  return null;
+}
 
-  const goToSession = (slug: string) => {
-    const { view, query } = parseUrl();
+function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
+  const { node } = data;
+  const activeId = useConnectionStore((s) => s.activeId);
+  const hasAttention = useSessionStore((s) => {
+    if (!node.sessionSlug || !activeId) return false;
+    const sessions = s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS;
+    const session = sessions.get(node.sessionSlug);
+    return !!session && session.attention.length > 0;
+  });
+  const showAttention = hasAttention || node.status === "failed";
+
+  const goToSession = (slug: string): void => {
     if (!activeId) return;
+    const { view, query } = parseUrl();
     setUrlState({ connectionId: activeId, view, sessionSlug: slug, query });
   };
 
   return (
     <div
       className={cx(
-        "rounded-lg border px-3 py-2 text-xs w-44 cursor-default select-none",
+        "relative rounded-lg border px-3 py-2 text-xs cursor-default select-none",
         STATUS_COLOR[node.status],
       )}
       style={{ width: NODE_W, minHeight: NODE_H }}
     >
       <Handle type="target" position={Position.Top} className="!bg-zinc-600" />
+      {showAttention && (
+        <span
+          aria-label="needs attention"
+          title={
+            node.status === "failed"
+              ? "node failed"
+              : "session has attention flags"
+          }
+          className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none border border-red-300 shadow"
+        >
+          !
+        </span>
+      )}
       <div className="font-medium leading-tight truncate">{node.title}</div>
       <div className="mt-1 text-[10px] opacity-70">{node.status}</div>
       {node.sessionSlug && (
@@ -120,14 +171,138 @@ function DagNodeComponent({ data }: NodeProps<{ node: DAGNode }>) {
   );
 }
 
-const NODE_TYPES: NodeTypes = { dagNode: DagNodeComponent };
+function ParentNodeComponent({ data }: NodeProps<ParentNodeData>) {
+  const target = data.parentDagId ? "open parent DAG" : "open parent session";
+  return (
+    <div
+      className="rounded-lg border border-dashed border-fg-subtle bg-bg-elev px-3 py-2 text-xs text-fg-muted cursor-pointer select-none"
+      style={{ width: NODE_W, minHeight: NODE_H }}
+      title={`double-click to ${target}`}
+    >
+      <div className="text-[10px] uppercase tracking-wide opacity-60">parent</div>
+      <div className="font-medium leading-tight truncate">{data.sessionSlug}</div>
+      <Handle type="source" position={Position.Bottom} className="!bg-zinc-600" />
+    </div>
+  );
+}
+
+const NODE_TYPES: NodeTypes = {
+  dagNode: DagNodeComponent,
+  parentRef: ParentNodeComponent,
+};
 
 interface CanvasProps {
   dag: DAG;
+  connectionId: string | null;
+  onSelectDag: (id: string) => void;
 }
 
-function DagCanvasInner({ dag }: CanvasProps) {
-  const { nodes, edges } = useMemo(() => layoutDag(dag), [dag]);
+function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
+  const dagsMap = useDagStore(
+    (s) => (connectionId ? s.byConnection.get(connectionId) ?? EMPTY_DAGS : EMPTY_DAGS),
+  );
+
+  const { nodes, edges } = useMemo(() => {
+    const { nodes: baseNodes, edges: baseEdges, rootIds } = layoutDag(dag);
+
+    if (!dag.rootSessionSlug) {
+      return { nodes: baseNodes, edges: baseEdges };
+    }
+
+    const parentDagId = findParentDagId(
+      dagsMap.values(),
+      dag.rootSessionSlug,
+      dag.id,
+    );
+
+    const minRootX = baseNodes.length
+      ? Math.min(...baseNodes.map((n) => n.position.x))
+      : 0;
+    const maxRootX = baseNodes.length
+      ? Math.max(...baseNodes.map((n) => n.position.x + NODE_W))
+      : NODE_W;
+    const centerX = (minRootX + maxRootX) / 2 - NODE_W / 2;
+    const topY = baseNodes.length
+      ? Math.min(...baseNodes.map((n) => n.position.y))
+      : 0;
+
+    const parentNode: Node = {
+      id: PARENT_NODE_ID,
+      position: { x: centerX, y: topY - NODE_H - 80 },
+      data: {
+        sessionSlug: dag.rootSessionSlug,
+        parentDagId,
+      } satisfies ParentNodeData,
+      type: "parentRef",
+      draggable: false,
+      selectable: false,
+    };
+
+    const parentEdges: Edge[] = rootIds.map((rootId) => ({
+      id: `${PARENT_NODE_ID}->${rootId}`,
+      source: PARENT_NODE_ID,
+      target: rootId,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: "#a78bfa", strokeDasharray: "4 4" },
+    }));
+
+    return {
+      nodes: [parentNode, ...baseNodes],
+      edges: [...baseEdges, ...parentEdges],
+    };
+  }, [dag, dagsMap]);
+
+  const stored = useMemo<Viewport | null>(() => {
+    if (!connectionId) return null;
+    return getViewport(connectionId, dag.id);
+  }, [connectionId, dag.id]);
+
+  const defaultViewport = useMemo<RFViewport | undefined>(() => {
+    if (!stored) return undefined;
+    return { x: stored.x, y: stored.y, zoom: stored.scale };
+  }, [stored]);
+
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+    };
+  }, []);
+
+  const handleMove = useCallback<OnMove>(
+    (_event, viewport) => {
+      if (!connectionId) return;
+      if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => {
+        setViewport(connectionId, dag.id, {
+          x: viewport.x,
+          y: viewport.y,
+          scale: viewport.zoom,
+        });
+      }, 200);
+    },
+    [connectionId, dag.id],
+  );
+
+  const handleNodeDoubleClick = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      if (node.id !== PARENT_NODE_ID) return;
+      const data = node.data as ParentNodeData;
+      if (data.parentDagId) {
+        onSelectDag(data.parentDagId);
+        return;
+      }
+      if (!connectionId) return;
+      const { view, query } = parseUrl();
+      setUrlState({
+        connectionId,
+        view,
+        sessionSlug: data.sessionSlug,
+        query,
+      });
+    },
+    [connectionId, onSelectDag],
+  );
 
   return (
     <div className="w-full h-full">
@@ -135,7 +310,10 @@ function DagCanvasInner({ dag }: CanvasProps) {
         nodes={nodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
-        fitView
+        fitView={!defaultViewport}
+        defaultViewport={defaultViewport}
+        onMove={handleMove}
+        onNodeDoubleClick={handleNodeDoubleClick}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#27272a" gap={20} />
@@ -221,7 +399,11 @@ export function DagCanvasView({ dagId }: Props) {
         <span className="text-fg-subtle text-xs">{selected.nodes.length} nodes</span>
       </div>
       <div className="flex-1">
-        <DagCanvasInner dag={selected} />
+        <DagCanvasInner
+          dag={selected}
+          connectionId={activeId}
+          onSelectDag={selectDag}
+        />
       </div>
     </div>
   );
