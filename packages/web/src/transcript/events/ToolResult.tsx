@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ToolResultEvent, ToolResultFormat, ToolResultStatus } from "@minions/shared";
 import { Markdown } from "../../components/Markdown.js";
 import { Diff } from "../../components/Diff.js";
@@ -7,6 +8,12 @@ const STATUS_COLORS: Record<ToolResultStatus, string> = {
   ok: "bg-green-900 text-green-300",
   error: "bg-red-900 text-red-300",
   partial: "bg-amber-900 text-amber-300",
+};
+
+const STATUS_GLYPH: Record<ToolResultStatus, string> = {
+  ok: "✓",
+  error: "✗",
+  partial: "…",
 };
 
 function detectFormat(event: ToolResultEvent): ToolResultFormat {
@@ -24,43 +31,76 @@ function detectFormat(event: ToolResultEvent): ToolResultFormat {
   return "text";
 }
 
+function formatTs(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toTimeString().slice(0, 8);
+}
+
+function previewBody(body: string): string {
+  const firstLine = body.split("\n", 1)[0] ?? "";
+  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
+}
+
 interface Props {
   event: ToolResultEvent;
 }
 
 export function ToolResult({ event }: Props) {
+  const [expanded, setExpanded] = useState(false);
   const fmt = detectFormat(event);
   return (
-    <div className="my-0.5 ml-4 border-l-2 border-border pl-3">
-      <div className="flex items-center gap-2 mb-1">
+    <div className="my-1 ml-6 bg-bg-elev border border-border rounded-md overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-2 w-full px-2 py-1.5 text-left hover:bg-bg-soft transition-colors"
+      >
         <span className={cx("pill text-[10px]", STATUS_COLORS[event.status])}>
-          {event.status}
+          <span aria-hidden>{STATUS_GLYPH[event.status]}</span>
+          <span>{event.status}</span>
         </span>
         {event.toolName && (
-          <span className="text-[11px] text-fg-subtle font-mono">{event.toolName}</span>
+          <span className="font-mono text-[11px] text-fg-muted shrink-0">{event.toolName}</span>
         )}
+        <span className="text-[11px] text-fg-subtle truncate flex-1 min-w-0">
+          {previewBody(event.body)}
+        </span>
         {event.truncated && (
-          <span className="pill bg-bg-elev text-fg-muted text-[10px]">truncated</span>
+          <span className="pill bg-bg-elev text-fg-muted text-[10px] shrink-0">truncated</span>
         )}
-      </div>
-      {fmt === "markdown" && <Markdown text={event.body} />}
-      {fmt === "diff" && <Diff text={event.body} wrap />}
-      {fmt === "json" && (
-        <pre className="text-[11px] text-fg-muted bg-bg-soft rounded p-2 border border-border overflow-x-auto">
-          {event.body}
-        </pre>
-      )}
-      {fmt === "image" && (
-        <img
-          src={event.body}
-          alt="tool result"
-          className="max-w-xs rounded border border-border"
-        />
-      )}
-      {(fmt === "text" || fmt === "binary") && (
-        <pre className="text-sm text-fg-muted bg-bg-soft rounded p-2 border border-border whitespace-pre-wrap break-words">
-          {event.body}
-        </pre>
+        <span className="text-[10px] font-mono text-fg-subtle shrink-0">
+          {formatTs(event.timestamp)}
+        </span>
+        <span
+          className={cx(
+            "text-fg-subtle shrink-0 transition-transform",
+            expanded ? "rotate-90" : "",
+          )}
+        >
+          ›
+        </span>
+      </button>
+      {expanded && (
+        <div className="border-t border-border p-2 font-mono text-xs">
+          {fmt === "markdown" && <Markdown text={event.body} />}
+          {fmt === "diff" && <Diff text={event.body} wrap />}
+          {fmt === "json" && (
+            <pre className="text-[11px] text-fg-muted whitespace-pre-wrap break-words overflow-x-auto">
+              {event.body}
+            </pre>
+          )}
+          {fmt === "image" && (
+            <img
+              src={event.body}
+              alt="tool result"
+              className="max-w-xs rounded border border-border"
+            />
+          )}
+          {(fmt === "text" || fmt === "binary") && (
+            <pre className="text-fg-muted whitespace-pre-wrap break-words">{event.body}</pre>
+          )}
+        </div>
       )}
     </div>
   );

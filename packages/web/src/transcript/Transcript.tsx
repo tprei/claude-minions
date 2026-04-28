@@ -88,7 +88,7 @@ function TranscriptView({ events }: ViewProps) {
     <div
       ref={containerRef}
       onScroll={onScroll}
-      className="flex-1 overflow-y-auto px-4 py-3 space-y-0.5"
+      className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5"
     >
       {events.length === 0 && (
         <div className="text-sm text-fg-subtle text-center mt-12">No events yet.</div>
