@@ -48,11 +48,14 @@ test.describe("smoke", () => {
     await expect(card).toBeVisible({ timeout: 15_000 });
     await card.click();
 
-    const handle = page.locator('[role="separator"]').first();
+    // The handle between the list rail and the chat primary slot. Dragging it LEFT
+    // shrinks the rail and grows the chat by the same amount.
+    const handle = page.locator('main [role="separator"]').first();
     await expect(handle).toBeVisible();
 
-    const panel = handle.locator("..");
-    const before = await panel.evaluate((el) => (el as HTMLElement).getBoundingClientRect().width);
+    const chat = page.locator('[data-testid="chat-primary"]');
+    await expect(chat).toBeVisible();
+    const before = await chat.evaluate((el) => (el as HTMLElement).getBoundingClientRect().width);
 
     const box = await handle.boundingBox();
     if (!box) throw new Error("resize handle has no bounding box");
@@ -67,7 +70,7 @@ test.describe("smoke", () => {
     await page.mouse.move(endX, startY, { steps: 5 });
     await page.mouse.up();
 
-    const after = await panel.evaluate((el) => (el as HTMLElement).getBoundingClientRect().width);
+    const after = await chat.evaluate((el) => (el as HTMLElement).getBoundingClientRect().width);
     const delta = after - before;
     expect(delta).toBeGreaterThanOrEqual(150);
     expect(delta).toBeLessThanOrEqual(250);
