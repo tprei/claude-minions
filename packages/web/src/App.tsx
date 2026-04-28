@@ -1,13 +1,16 @@
-import { useState, useEffect, type ReactElement } from "react";
+import { useState, useEffect, useMemo, type ReactElement } from "react";
 import { AppLayout } from "./views/layout.js";
 import { Header } from "./views/header.js";
 import { Sidebar } from "./views/sidebar.js";
 import { Spinner } from "./components/Spinner.js";
 import { Sheet } from "./components/Sheet.js";
+import { CommandPalette } from "./components/CommandPalette.js";
+import { buildActions, type PaletteSessionRef } from "./components/CommandPalette.actions.js";
 import { parseUrl, type ViewKind } from "./routing/parseUrl.js";
 import { subscribeUrlChanges } from "./routing/urlState.js";
 import { useConnectionStore } from "./connections/store.js";
 import { useRootStore } from "./store/root.js";
+import { useSessionStore, EMPTY_SESSIONS } from "./store/sessionStore.js";
 import { apiFetch } from "./transport/rest.js";
 import type { Connection } from "./connections/store.js";
 import { ViewSwitcher } from "./views/ViewSwitcher.js";
@@ -57,9 +60,12 @@ export function App(): ReactElement {
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [loopsOpen, setLoopsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const hydrated = useConnectionStore(s => s._hydrated);
   const activeConn = useRootStore(s => s.getActiveConnection());
+  const activeId = useConnectionStore(s => s.activeId);
+  const sessionsMap = useSessionStore(s => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS));
 
   useEffect(() => {
     const unsub = subscribeUrlChanges(() => {
@@ -67,6 +73,35 @@ export function App(): ReactElement {
     });
     return unsub;
   }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen(v => !v);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  const paletteSessions = useMemo<PaletteSessionRef[]>(() => {
+    const arr: PaletteSessionRef[] = [];
+    for (const s of sessionsMap.values()) {
+      arr.push({ slug: s.slug, title: s.title, status: s.status });
+    }
+    arr.sort((a, b) => a.title.localeCompare(b.title));
+    return arr;
+  }, [sessionsMap]);
+
+  const paletteActions = useMemo(() => buildActions({
+    activeId,
+    openMemory: () => setMemoryOpen(true),
+    openRuntime: () => setRuntimeOpen(true),
+    openLoops: () => setLoopsOpen(true),
+    openAudit: () => setAuditOpen(true),
+    sessions: paletteSessions,
+  }), [activeId, paletteSessions]);
 
   const { view, sessionSlug } = urlState;
 
@@ -139,6 +174,12 @@ export function App(): ReactElement {
           <div className="p-4 text-sm text-fg-muted">Audit drawer — provided by Web C</div>
         </Sheet>
       )}
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        actions={paletteActions}
+      />
 
       <OfflineBanner />
     </>
