@@ -15,7 +15,7 @@ interface HealthResponse {
 }
 
 export function registerHealthRoutes(app: FastifyInstance, ctx: EngineContext): void {
-  app.get("/api/health", async (_req, reply) => {
+  app.get("/api/health", { config: { auth: "public" } }, async (_req, reply) => {
     const entries = listProviders();
     const providers: ProviderStatus[] = await Promise.all(
       entries.map(async (entry): Promise<ProviderStatus> => {

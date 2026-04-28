@@ -247,6 +247,52 @@ export async function findClaudeBinary(): Promise<string | null> {
   }
 }
 
+export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
+  const args = [
+    "--output-format", "stream-json",
+    "--print",
+    "--verbose",
+    "--dangerously-skip-permissions",
+  ];
+
+  if (opts.modelHint) {
+    args.push("--model", opts.modelHint);
+  }
+
+  if (opts.mcpConfigPath) {
+    args.push("--mcp-config", opts.mcpConfigPath);
+  }
+
+  let fullPrompt = opts.prompt;
+  if (opts.preamble) {
+    fullPrompt = `${opts.preamble}\n\n---\n\n${opts.prompt}`;
+  }
+  if (opts.additionalPrompt && opts.additionalPrompt.length > 0) {
+    fullPrompt = `${fullPrompt}\n\n[Operator reply]: ${opts.additionalPrompt}`;
+  }
+
+  args.push("--", fullPrompt);
+  return args;
+}
+
+export function buildResumeArgs(opts: ProviderResumeOpts): string[] {
+  const args = ["--output-format", "stream-json", "--print", "--verbose", "--dangerously-skip-permissions"];
+
+  if (opts.mcpConfigPath) {
+    args.push("--mcp-config", opts.mcpConfigPath);
+  }
+
+  if (opts.externalId) {
+    args.push("--resume", opts.externalId);
+  }
+
+  if (opts.additionalPrompt && opts.additionalPrompt.length > 0) {
+    args.push("--", `[Operator reply]: ${opts.additionalPrompt}`);
+  }
+
+  return args;
+}
+
 export const claudeCodeProvider: AgentProvider = {
   name: "claude-code",
 
@@ -257,27 +303,7 @@ export const claudeCodeProvider: AgentProvider = {
       return mockProvider.spawn(opts);
     }
 
-    const args = [
-      "--output-format", "stream-json",
-      "--print",
-      "--verbose",
-      "--dangerously-skip-permissions",
-    ];
-
-    if (opts.modelHint) {
-      args.push("--model", opts.modelHint);
-    }
-
-    if (opts.mcpConfigPath) {
-      args.push("--mcp-config", opts.mcpConfigPath);
-    }
-
-    let fullPrompt = opts.prompt;
-    if (opts.preamble) {
-      fullPrompt = `${opts.preamble}\n\n---\n\n${opts.prompt}`;
-    }
-
-    args.push("--", fullPrompt);
+    const args = buildSpawnArgs(opts);
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -303,15 +329,7 @@ export const claudeCodeProvider: AgentProvider = {
       return mockProvider.resume(opts);
     }
 
-    const args = ["--output-format", "stream-json", "--print", "--verbose", "--dangerously-skip-permissions"];
-
-    if (opts.mcpConfigPath) {
-      args.push("--mcp-config", opts.mcpConfigPath);
-    }
-
-    if (opts.externalId) {
-      args.push("--resume", opts.externalId);
-    }
+    const args = buildResumeArgs(opts);
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,

@@ -1,5 +1,6 @@
 import type { EngineContext } from "../context.js";
 import type { MemoryKind } from "@minions/shared";
+import { MemoryValidationError, validateMemoryBody } from "@minions/shared";
 import { EngineError } from "../errors.js";
 
 interface JsonRpcRequest {
@@ -112,6 +113,15 @@ function dispatchTool(
       if (typeof args["title"] !== "string") return err(id, -32602, "title is required");
       if (typeof args["body"] !== "string") return err(id, -32602, "body is required");
       if (args["scope"] !== "global" && args["scope"] !== "repo") return err(id, -32602, "scope must be global or repo");
+
+      try {
+        validateMemoryBody(args["body"]);
+      } catch (e) {
+        if (e instanceof MemoryValidationError) {
+          return err(id, -32602, e.message);
+        }
+        throw e;
+      }
 
       ctx.memory
         .create({

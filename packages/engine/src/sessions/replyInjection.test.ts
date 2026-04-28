@@ -1,4 +1,4 @@
-import { test, describe, beforeEach } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import os from "node:os";
@@ -8,9 +8,95 @@ import { EventBus } from "../bus/eventBus.js";
 import { SessionRegistry } from "./registry.js";
 import { createLogger } from "../logger.js";
 import { migrations } from "../store/migrations.js";
-import type { ProviderHandle, ProviderEvent } from "../providers/provider.js";
+import type {
+  AgentProvider,
+  ProviderEvent,
+  ProviderHandle,
+  ProviderResumeOpts,
+  ProviderSpawnOpts,
+  ParseStreamState,
+} from "../providers/provider.js";
+import { registerProvider } from "../providers/registry.js";
 import type { EngineContext } from "../context.js";
 import type { TranscriptEventEvent, UserMessageEvent } from "@minions/shared";
+
+const REPLY_TEST_PROVIDER_NAME = "reply-injection-test";
+
+interface CapturedResume {
+  opts: ProviderResumeOpts;
+}
+
+interface CapturedSpawn {
+  opts: ProviderSpawnOpts;
+}
+
+const captured = {
+  resumes: [] as CapturedResume[],
+  spawns: [] as CapturedSpawn[],
+};
+
+function buildControlledHandle(): {
+  handle: ProviderHandle;
+  exit: (code?: number) => void;
+} {
+  let resolved = false;
+  let exitResolve: (v: { code: number | null; signal: NodeJS.Signals | null }) => void = () => {};
+  const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((r) => {
+    exitResolve = r;
+  });
+
+  const handle: ProviderHandle = {
+    pid: undefined,
+    externalId: undefined,
+    kill(_signal: NodeJS.Signals) {
+      if (resolved) return;
+      resolved = true;
+      exitResolve({ code: null, signal: _signal });
+    },
+    write(_text: string) {},
+    async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+      await exitPromise;
+    },
+    waitForExit() {
+      return exitPromise;
+    },
+  };
+
+  return {
+    handle,
+    exit: (code = 0) => {
+      if (resolved) return;
+      resolved = true;
+      exitResolve({ code, signal: null });
+    },
+  };
+}
+
+const exitControls: Array<(code?: number) => void> = [];
+
+const replyTestProvider: AgentProvider = {
+  name: REPLY_TEST_PROVIDER_NAME,
+  async spawn(opts) {
+    captured.spawns.push({ opts });
+    const { handle, exit } = buildControlledHandle();
+    exitControls.push(exit);
+    return handle;
+  },
+  async resume(opts) {
+    captured.resumes.push({ opts });
+    const { handle, exit } = buildControlledHandle();
+    exitControls.push(exit);
+    return handle;
+  },
+  parseStreamChunk(_buf: string, state: ParseStreamState) {
+    return { events: [], state };
+  },
+  detectQuotaError(_text: string) {
+    return false;
+  },
+};
+
+registerProvider(replyTestProvider);
 
 function makeInMemoryDb(): Database.Database {
   const db = new Database(":memory:");
@@ -20,46 +106,25 @@ function makeInMemoryDb(): Database.Database {
   return db;
 }
 
-function insertSession(db: Database.Database, slug: string, status: string): void {
+function insertSession(
+  db: Database.Database,
+  slug: string,
+  status: string,
+  worktreePath: string,
+  provider = "mock",
+): void {
   db.prepare(`
     INSERT INTO sessions(
       slug, title, prompt, mode, status, attention, quick_actions,
       stats_turns, stats_input_tokens, stats_output_tokens,
       stats_cache_read_tokens, stats_cache_creation_tokens,
       stats_cost_usd, stats_duration_ms, stats_tool_calls,
-      provider, created_at, updated_at, pr_draft, metadata
+      provider, worktree_path, created_at, updated_at, pr_draft, metadata
     ) VALUES (
       ?, ?, ?, 'task', ?, '[]', '[]',
-      0, 0, 0, 0, 0, 0, 0, 0, 'mock', datetime('now'), datetime('now'), 0, '{}'
+      0, 0, 0, 0, 0, 0, 0, 0, ?, ?, datetime('now'), datetime('now'), 0, '{}'
     )
-  `).run(slug, "test", "prompt", status);
-}
-
-interface CollectingHandle extends ProviderHandle {
-  writes: string[];
-}
-
-function makeCollectingHandle(): CollectingHandle {
-  const writes: string[] = [];
-  const handle: CollectingHandle = {
-    pid: 1234,
-    writes,
-    write(text: string) {
-      writes.push(text);
-    },
-    kill() {},
-    waitForExit() {
-      return new Promise(() => {});
-    },
-    [Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
-      return {
-        async next() {
-          return { value: undefined, done: true };
-        },
-      };
-    },
-  };
-  return handle;
+  `).run(slug, "test", "prompt", status, provider, worktreePath);
 }
 
 function makeStubCtx(): EngineContext {
@@ -67,6 +132,20 @@ function makeStubCtx(): EngineContext {
     audit: {
       record: () => {},
       list: () => [],
+    },
+    dags: {
+      onSessionTerminal: async () => {},
+    },
+    ship: {
+      onTurnCompleted: async () => {},
+    },
+    env: {
+      host: "127.0.0.1",
+      port: 8787,
+      token: "test-token",
+    },
+    memory: {
+      renderPreamble: () => "",
     },
   } as unknown as EngineContext;
 }
@@ -82,7 +161,15 @@ function readUserMessages(db: Database.Database, slug: string): UserMessageEvent
   return rows.map((r) => JSON.parse(r.body) as UserMessageEvent);
 }
 
-describe("SessionRegistry.reply (injection)", () => {
+function pendingReplyPayloads(db: Database.Database, slug: string): string[] {
+  return (db
+    .prepare(
+      `SELECT payload FROM reply_queue WHERE session_slug = ? AND delivered_at IS NULL ORDER BY queued_at ASC`,
+    )
+    .all(slug) as Array<{ payload: string }>).map((r) => r.payload);
+}
+
+describe("SessionRegistry.reply (queue contract)", () => {
   let db: Database.Database;
   let bus: EventBus;
   let registry: SessionRegistry;
@@ -92,6 +179,9 @@ describe("SessionRegistry.reply (injection)", () => {
     db = makeInMemoryDb();
     bus = new EventBus();
     workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "reply-inj-"));
+    captured.resumes.length = 0;
+    captured.spawns.length = 0;
+    exitControls.length = 0;
     registry = new SessionRegistry({
       db,
       bus,
@@ -101,9 +191,13 @@ describe("SessionRegistry.reply (injection)", () => {
     });
   });
 
-  test("pending session enqueues reply and records non-injected user_message", async () => {
+  afterEach(() => {
+    db.close();
+  });
+
+  test("pending session enqueues reply and emits user_message transcript event", async () => {
     const slug = "sess-pending";
-    insertSession(db, slug, "pending");
+    insertSession(db, slug, "pending", path.join(workspaceDir, slug));
 
     const emitted: TranscriptEventEvent[] = [];
     bus.on("transcript_event", (ev) => emitted.push(ev));
@@ -114,71 +208,112 @@ describe("SessionRegistry.reply (injection)", () => {
     assert.equal(msgs.length, 1);
     assert.equal(msgs[0]?.text, "hello while pending");
     assert.equal(msgs[0]?.source, "operator");
-    assert.notEqual(msgs[0]?.injected, true);
+    assert.notEqual(msgs[0]?.injected, true, "injected flag should not be set under queue contract");
 
-    const queueRows = db.prepare(
-      `SELECT payload FROM reply_queue WHERE session_slug = ? AND delivered_at IS NULL`,
-    ).all(slug) as Array<{ payload: string }>;
-    assert.equal(queueRows.length, 1);
-    assert.equal(queueRows[0]?.payload, "hello while pending");
+    assert.deepEqual(pendingReplyPayloads(db, slug), ["hello while pending"]);
 
     assert.equal(emitted.length, 1);
     assert.equal(emitted[0]?.event.kind, "user_message");
   });
 
-  test("running session with handle: two consecutive replies write to provider, both injected", async () => {
+  test("running session: reply enqueues; never writes to handle.stdin", async () => {
     const slug = "sess-running";
-    insertSession(db, slug, "running");
+    const worktree = path.join(workspaceDir, slug);
+    fs.mkdirSync(worktree, { recursive: true });
+    insertSession(db, slug, "running", worktree);
 
-    const handle = makeCollectingHandle();
+    const writes: string[] = [];
+    const handle: ProviderHandle = {
+      pid: 1234,
+      kill() {},
+      write(text: string) {
+        writes.push(text);
+      },
+      waitForExit() {
+        return new Promise(() => {});
+      },
+      async *[Symbol.asyncIterator]() {},
+    };
     injectHandle(registry, slug, handle);
 
-    const emitted: TranscriptEventEvent[] = [];
-    bus.on("transcript_event", (ev) => emitted.push(ev));
+    await registry.reply(slug, "first-payload-zzz");
+    await registry.reply(slug, "second-payload-zzz");
 
-    await registry.reply(slug, "first");
-    await registry.reply(slug, "second");
-
-    assert.deepEqual(handle.writes, ["first", "second"]);
+    assert.deepEqual(writes, [], "handle.stdin must not receive replies (claude --print does not read stdin)");
+    assert.deepEqual(pendingReplyPayloads(db, slug), [
+      "first-payload-zzz",
+      "second-payload-zzz",
+    ]);
 
     const msgs = readUserMessages(db, slug);
     assert.equal(msgs.length, 2);
-    assert.equal(msgs[0]?.text, "first");
-    assert.equal(msgs[0]?.injected, true);
-    assert.equal(msgs[1]?.text, "second");
-    assert.equal(msgs[1]?.injected, true);
-
-    const queueCount = (db.prepare(
-      `SELECT COUNT(*) AS c FROM reply_queue WHERE session_slug = ?`,
-    ).get(slug) as { c: number }).c;
-    assert.equal(queueCount, 0);
-
-    const userMsgEvents = emitted.filter((e) => e.event.kind === "user_message");
-    assert.equal(userMsgEvents.length, 2);
-    for (const ev of userMsgEvents) {
-      assert.equal((ev.event as UserMessageEvent).injected, true);
-    }
   });
 
-  test("completed session: reply persists transcript event but does not write to provider; injected is false", async () => {
-    const slug = "sess-completed";
-    insertSession(db, slug, "completed");
+  test("on next turn (handle exit), queued replies are delivered to provider.resume via additionalPrompt", async () => {
+    const slug = "sess-deliver";
+    const worktree = path.join(workspaceDir, slug);
+    fs.mkdirSync(worktree, { recursive: true });
+    insertSession(db, slug, "running", worktree, REPLY_TEST_PROVIDER_NAME);
 
-    const handle = makeCollectingHandle();
-    injectHandle(registry, slug, handle);
+    db.prepare(
+      `INSERT INTO provider_state(session_slug, provider, external_id, last_seq, last_turn, data, updated_at)
+       VALUES (?, ?, ?, 0, 0, '{}', datetime('now'))`,
+    ).run(slug, REPLY_TEST_PROVIDER_NAME, "ext-abc");
 
-    await registry.reply(slug, "post-completion");
+    await registry.resumeAllActive();
 
-    assert.deepEqual(handle.writes, []);
+    assert.equal(captured.resumes.length, 1, "resumeAllActive triggers initial resume");
+    assert.equal(captured.resumes[0]?.opts.additionalPrompt, undefined);
 
-    const msgs = readUserMessages(db, slug);
-    assert.equal(msgs.length, 1);
-    assert.equal(msgs[0]?.text, "post-completion");
-    assert.notEqual(msgs[0]?.injected, true);
+    const tag = "UNIQUE-TAG-XK4Q9";
+    await registry.reply(slug, `hello agent ${tag}`);
 
-    const queueRows = db.prepare(
-      `SELECT payload FROM reply_queue WHERE session_slug = ? AND delivered_at IS NULL`,
-    ).all(slug) as Array<{ payload: string }>;
-    assert.equal(queueRows.length, 1);
+    assert.deepEqual(pendingReplyPayloads(db, slug), [`hello agent ${tag}`]);
+
+    const firstExit = exitControls[0];
+    assert.ok(firstExit, "first handle should be exit-controllable");
+    firstExit(0);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(captured.resumes.length, 2, "drain hook resumes session with queued replies");
+    const additional = captured.resumes[1]?.opts.additionalPrompt ?? "";
+    assert.ok(
+      additional.includes(tag),
+      `additionalPrompt should contain the operator reply tag (got: ${additional})`,
+    );
+
+    assert.deepEqual(pendingReplyPayloads(db, slug), [], "queue is drained after delivery");
+  });
+
+  test("two consecutive replies are joined into a single additionalPrompt on next turn", async () => {
+    const slug = "sess-join";
+    const worktree = path.join(workspaceDir, slug);
+    fs.mkdirSync(worktree, { recursive: true });
+    insertSession(db, slug, "running", worktree, REPLY_TEST_PROVIDER_NAME);
+
+    db.prepare(
+      `INSERT INTO provider_state(session_slug, provider, external_id, last_seq, last_turn, data, updated_at)
+       VALUES (?, ?, ?, 0, 0, '{}', datetime('now'))`,
+    ).run(slug, REPLY_TEST_PROVIDER_NAME, "ext-join");
+
+    await registry.resumeAllActive();
+
+    await registry.reply(slug, "TAGA-aaa");
+    await registry.reply(slug, "TAGB-bbb");
+
+    const firstExit = exitControls[0];
+    assert.ok(firstExit);
+    firstExit(0);
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(captured.resumes.length, 2);
+    const additional = captured.resumes[1]?.opts.additionalPrompt ?? "";
+    assert.ok(additional.includes("TAGA-aaa"));
+    assert.ok(additional.includes("TAGB-bbb"));
+    assert.ok(
+      additional.indexOf("TAGA-aaa") < additional.indexOf("TAGB-bbb"),
+      "replies preserved in queue order",
+    );
   });
 });

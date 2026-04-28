@@ -1,11 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import type { EngineContext } from "../context.js";
-import { buildAuthPreHandler } from "./auth.js";
 
 export function attachSseRoute(app: FastifyInstance, ctx: EngineContext): void {
   app.get(
     "/api/events",
-    { preHandler: buildAuthPreHandler(ctx.env.token) },
+    { config: { auth: "query-token" } },
     async (req, reply) => {
       const origin = req.headers.origin;
       if (origin && ctx.env.corsOrigins.includes(origin)) {
