@@ -135,6 +135,13 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   featuresPending = featureSets.pending;
 
   await app.listen({ port: env.port, host: env.host });
+  const addr = app.server.address();
+  if (addr && typeof addr === "object") {
+    env.port = addr.port;
+  }
+  shutdownHooks.push(async () => {
+    await app.close();
+  });
   engineLog.info("engine listening", { port: env.port, host: env.host });
 
   ctx.resource.start();
