@@ -35,6 +35,7 @@ const VIEW_OPTIONS: ViewOption[] = [
   { id: "kanban", label: "Kanban", icon: "⬜" },
   { id: "dag", label: "DAG", icon: "⬡", feature: "dags" },
   { id: "ship", label: "Ship", icon: "🚢", feature: "ship" },
+  { id: "doctor", label: "Doctor", icon: "🩺" },
 ];
 
 const STATUS_FILTERS: { value: FilterStatus; label: string }[] = [
