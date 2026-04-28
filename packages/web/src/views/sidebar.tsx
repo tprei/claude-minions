@@ -1,6 +1,7 @@
 import { useMemo, type ReactElement } from "react";
 import { useConnectionStore } from "../connections/store.js";
 import { useVersionStore } from "../store/version.js";
+import { useMemoryStore, EMPTY_MEMORIES } from "../store/memoryStore.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl, type ViewKind } from "../routing/parseUrl.js";
 import { cx } from "../util/classnames.js";
@@ -66,6 +67,12 @@ export function Sidebar({
   const activeId = useConnectionStore(s => s.activeId);
   const featureList = useVersionStore(s => (activeId ? s.byConnection.get(activeId)?.features : undefined));
   const features = useMemo(() => new Set<string>(featureList ?? []), [featureList]);
+  const memoriesMap = useMemoryStore(s => (activeId ? s.byConnection.get(activeId) ?? EMPTY_MEMORIES : EMPTY_MEMORIES));
+  const pendingCount = useMemo(() => {
+    let n = 0;
+    for (const m of memoriesMap.values()) if (m.status === "pending") n++;
+    return n;
+  }, [memoriesMap]);
 
   function navigate(view: ViewKind): void {
     if (!activeId) return;
@@ -148,7 +155,16 @@ export function Sidebar({
         )}
         {features.has("memory") && (
           <button onClick={onOpenMemory} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
-            <span>🧠</span> Memory
+            <span>🧠</span>
+            <span className="flex-1 text-left">Memory</span>
+            {pendingCount > 0 && (
+              <span
+                className="pill bg-yellow-900/40 text-yellow-300 text-[10px]"
+                title={`${pendingCount} pending memory ${pendingCount === 1 ? "review" : "reviews"}`}
+              >
+                {pendingCount}
+              </span>
+            )}
           </button>
         )}
         {features.has("runtime-overrides") && (

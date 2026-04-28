@@ -16,6 +16,8 @@ import type {
   Command,
   CommandResult,
   Memory,
+  MemoryKind,
+  MemoryStatus,
   CreateMemoryRequest,
   MemoryReviewCommand,
   RuntimeConfigResponse,
@@ -191,8 +193,24 @@ export function deleteSession(conn: Connection, slug: string): Promise<OkEnvelop
   return apiFetch(conn, `/api/sessions/${slug}`, { method: "DELETE" });
 }
 
-export function listMemories(conn: Connection): Promise<ListEnvelope<Memory>> {
-  return apiFetch(conn, "/api/memories");
+export interface ListMemoriesOptions {
+  status?: MemoryStatus;
+  kind?: MemoryKind;
+  q?: string;
+  repoId?: string;
+}
+
+export function listMemories(
+  conn: Connection,
+  opts?: ListMemoriesOptions,
+): Promise<ListEnvelope<Memory>> {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.kind) params.set("kind", opts.kind);
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.repoId) params.set("repoId", opts.repoId);
+  const qs = params.toString();
+  return apiFetch(conn, qs ? `/api/memories?${qs}` : "/api/memories");
 }
 
 export function createMemory(conn: Connection, req: CreateMemoryRequest): Promise<Memory> {
