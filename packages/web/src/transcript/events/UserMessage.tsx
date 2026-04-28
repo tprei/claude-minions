@@ -1,4 +1,5 @@
 import type { UserMessageEvent } from "@minions/shared";
+import { MarkdownText } from "../markdown.js";
 import { cx } from "../../util/classnames.js";
 
 const SOURCE_LABELS: Record<NonNullable<UserMessageEvent["source"]>, string> = {
@@ -31,8 +32,8 @@ export function UserMessage({ event }: Props) {
           <span className="pill text-[10px] bg-bg-elev text-fg-muted">injected</span>
         )}
       </div>
-      <div className="max-w-[80%] bg-blue-900/40 border border-blue-700/40 rounded-xl px-3 py-2 text-sm text-fg whitespace-pre-wrap">
-        {event.text}
+      <div className="max-w-[80%] bg-blue-900/40 border border-blue-700/40 rounded-xl px-3 py-2 text-sm text-fg">
+        <MarkdownText text={event.text} />
       </div>
       {event.attachments && event.attachments.length > 0 && (
         <div className="flex flex-wrap gap-1">

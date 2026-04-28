@@ -1,5 +1,5 @@
 import type { AssistantTextEvent } from "@minions/shared";
-import { Markdown } from "../../components/Markdown.js";
+import { MarkdownText } from "../markdown.js";
 import { cx } from "../../util/classnames.js";
 
 interface Props {
@@ -8,8 +8,8 @@ interface Props {
 
 export function AssistantText({ event }: Props) {
   return (
-    <div className={cx("py-1", event.partial && "opacity-70")}>
-      <Markdown text={event.text} />
+    <div className={cx("py-1 text-sm text-fg", event.partial && "opacity-70")}>
+      <MarkdownText text={event.text} />
     </div>
   );
 }
