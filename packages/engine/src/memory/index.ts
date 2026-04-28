@@ -6,7 +6,7 @@ import { renderPreamble as doRenderPreamble } from "./preamble.js";
 import { EngineError } from "../errors.js";
 
 export interface MemorySubsystem {
-  list: (filter?: { status?: MemoryStatus; kind?: MemoryKind }) => Memory[];
+  list: (filter?: { status?: MemoryStatus; kind?: MemoryKind; q?: string; repoId?: string }) => Memory[];
   get: (id: string) => Memory | null;
   create: (req: CreateMemoryRequest) => Promise<Memory>;
   update: (id: string, patch: Partial<Pick<Memory, "title" | "body" | "pinned">>) => Promise<Memory>;

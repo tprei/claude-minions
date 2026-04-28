@@ -48,6 +48,7 @@ export interface MemoryFilter {
   kind?: MemoryKind;
   scope?: "global" | "repo";
   repoId?: string;
+  q?: string;
 }
 
 export class MemoryStore {
@@ -100,6 +101,11 @@ export class MemoryStore {
     if (filter?.repoId !== undefined) {
       conditions.push("repo_id = ?");
       params.push(filter.repoId);
+    }
+    if (filter?.q !== undefined && filter.q !== "") {
+      conditions.push("(LOWER(title) LIKE ? OR LOWER(body) LIKE ?)");
+      const needle = `%${filter.q.toLowerCase()}%`;
+      params.push(needle, needle);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

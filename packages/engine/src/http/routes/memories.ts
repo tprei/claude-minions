@@ -58,7 +58,9 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: EngineContext): 
     const query = req.query as Record<string, string | undefined>;
     const status = query["status"] as MemoryStatus | undefined;
     const kind = query["kind"] as MemoryKind | undefined;
-    const memories = ctx.memory.list({ status, kind });
+    const q = query["q"]?.trim() || undefined;
+    const repoId = query["repoId"]?.trim() || undefined;
+    const memories = ctx.memory.list({ status, kind, q, repoId });
     await reply.send({ items: memories });
   });
 
