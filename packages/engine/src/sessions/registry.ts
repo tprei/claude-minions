@@ -35,6 +35,12 @@ import { ensureBareClone } from "../workspace/cloner.js";
 import { addWorktree, removeWorktree, initScratchRepo } from "../workspace/worktree.js";
 import { linkDeps } from "../workspace/depsCache.js";
 import { injectAssets } from "../workspace/assetInjector.js";
+import {
+  checkAdmission,
+  classifyMode,
+  emptyRunningByClass,
+  type RunningByClass,
+} from "./admission.js";
 
 interface RepoRow {
   id: string;
@@ -102,6 +108,7 @@ export class SessionRegistry {
   private readonly listSessions: Database.Statement;
   private readonly listChildren: Database.Statement;
   private readonly listActiveSession: Database.Statement;
+  private readonly listAdmittedSession: Database.Statement;
   private readonly getProviderState: Database.Statement;
   private readonly upsertProviderState: Database.Statement;
   private readonly listTranscript: Database.Statement;
@@ -159,6 +166,9 @@ export class SessionRegistry {
     this.listChildren = db.prepare(`SELECT slug FROM sessions WHERE parent_slug = ?`);
     this.listActiveSession = db.prepare(
       `SELECT * FROM sessions WHERE status IN ('running', 'waiting_input')`,
+    );
+    this.listAdmittedSession = db.prepare(
+      `SELECT mode FROM sessions WHERE status IN ('pending', 'running', 'waiting_input')`,
     );
     this.getProviderState = db.prepare(`SELECT * FROM provider_state WHERE session_slug = ?`);
     this.upsertProviderState = db.prepare(`
@@ -254,12 +264,38 @@ export class SessionRegistry {
     return rows.map(rowToTranscriptEvent);
   }
 
+  private countRunningByClass(): RunningByClass {
+    const counts = emptyRunningByClass();
+    const rows = this.listAdmittedSession.all() as Array<{ mode: string }>;
+    for (const row of rows) {
+      const cls = classifyMode(row.mode as SessionMode);
+      counts[cls] += 1;
+    }
+    return counts;
+  }
+
   async create(req: CreateSessionRequest): Promise<Session> {
     const { db, bus, log, ctx, workspaceDir } = this.deps;
 
     const slug = newSlug();
     const now = nowIso();
     const mode: SessionMode = req.mode ?? "task";
+
+    const cls = classifyMode(mode);
+    const runningByClass = this.countRunningByClass();
+    const decision = checkAdmission(cls, runningByClass, ctx.runtime.effective());
+    if (!decision.admit) {
+      ctx.audit.record(
+        "system",
+        "session.create.denied",
+        { kind: "session", id: slug },
+        { class: cls, reason: decision.reason, runningByClass },
+      );
+      throw new EngineError("conflict", `Admission denied: ${decision.reason}`, {
+        class: cls,
+        runningByClass,
+      });
+    }
     const providerName = ctx.env.provider;
     const title = req.title ?? req.prompt.slice(0, 80);
 
