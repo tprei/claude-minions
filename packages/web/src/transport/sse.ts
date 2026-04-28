@@ -126,7 +126,7 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
       es?.close();
       es = null;
       if (closed) return;
-      setStatus("reconnecting");
+      setStatus(attempt >= 3 ? "down" : "reconnecting");
       const delay = fullJitter(attempt++);
       retryTimer = setTimeout(open, delay);
     });
@@ -140,6 +140,8 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
     attempt = 0;
     open();
   }
+
+  sseStatusStore.registerReconnect(conn.id, forceReconnect);
 
   async function backfillSinceHighWater(): Promise<void> {
     const snapshots = [...highWaterBySlug.entries()];
@@ -221,6 +223,7 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
       // Drop the per-connection entry so a stale "reconnecting" pill never lingers
       // after the operator removes the connection.
       sseStatusStore.clear(conn.id);
+      sseStatusStore.unregisterReconnect(conn.id);
     },
   };
 }
