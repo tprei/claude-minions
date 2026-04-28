@@ -105,6 +105,7 @@ export function App(): ReactElement {
             filterStatus={filterStatus}
             filterMode={filterMode}
             sessionSlug={sessionSlug ?? null}
+            api={api}
           />
         }
         chatSurface={
