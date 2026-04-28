@@ -111,6 +111,34 @@ function CheckpointsPanel({ session }: { session: Session }) {
   );
 }
 
+function AuthedImage({ session, filename }: { session: Session; filename: string }) {
+  const conn = useRootStore((s) => s.getActiveConnection());
+  const [src, setSrc] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!conn) return;
+    let cancelled = false;
+    let blobUrl: string | null = null;
+    const url = `${conn.baseUrl.replace(/\/$/, "")}/api/sessions/${session.slug}/screenshots/${encodeURIComponent(filename)}`;
+    fetch(url, { headers: { Authorization: `Bearer ${conn.token}` } })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(blob);
+        setSrc(blobUrl);
+      })
+      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); });
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [conn, session.slug, filename]);
+  if (err) return <div className="text-xs text-err p-2 border border-border rounded">load failed: {err}</div>;
+  if (!src) return <div className="text-xs text-fg-subtle p-2 border border-border rounded animate-pulse">loading…</div>;
+  return <img src={src} alt={filename} className="rounded border border-border w-full" />;
+}
+
 function ScreenshotsPanel({ session }: { session: Session }) {
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,12 +158,10 @@ function ScreenshotsPanel({ session }: { session: Session }) {
     <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-2">
       {screenshots.length === 0 && <p className="text-sm text-fg-subtle col-span-2">No screenshots.</p>}
       {screenshots.map((s) => (
-        <img
-          key={s.filename}
-          src={`/api/sessions/${session.slug}/screenshots/${s.filename}`}
-          alt={s.filename}
-          className="rounded border border-border w-full"
-        />
+        <div key={s.filename} className="flex flex-col gap-1">
+          <AuthedImage session={session} filename={s.filename} />
+          <span className="text-[10px] font-mono text-fg-subtle truncate" title={s.filename}>{s.filename}</span>
+        </div>
       ))}
     </div>
   );
