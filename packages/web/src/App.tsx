@@ -15,7 +15,7 @@ import { ChatSurface } from "./chat/ChatSurface.js";
 import { MemoryDrawer } from "./memory/Drawer.js";
 import { RuntimeDrawer } from "./runtime/Drawer.js";
 import { ResourcePanel } from "./resource/Panel.js";
-import { useResourceStore } from "./store/resourceStore.js";
+import { ResourceIndicator } from "./resource/Indicator.js";
 import { initInstallPrompt } from "./pwa/install.js";
 import { initOfflineDetection } from "./pwa/offline.js";
 import { OfflineBanner } from "./pwa/OfflineBanner.js";
@@ -60,9 +60,6 @@ export function App(): ReactElement {
 
   const hydrated = useConnectionStore(s => s._hydrated);
   const activeConn = useRootStore(s => s.getActiveConnection());
-  const resourceSnapshot = useResourceStore(
-    s => (activeConn ? s.byConnection.get(activeConn.id) ?? null : null),
-  );
 
   useEffect(() => {
     const unsub = subscribeUrlChanges(() => {
@@ -87,7 +84,7 @@ export function App(): ReactElement {
   return (
     <>
       <AppLayout
-        header={<Header api={api} installPrompt={<InstallButton />} />}
+        header={<Header api={api} installPrompt={<InstallButton />} resourceIndicator={activeConn ? <ResourceIndicator connId={activeConn.id} /> : undefined} />}
         sidebar={({ closeMobile }) => (
           <Sidebar
             currentView={view as ViewKind}
@@ -129,9 +126,9 @@ export function App(): ReactElement {
         </Sheet>
       )}
 
-      {loopsOpen && resourceSnapshot && (
+      {loopsOpen && activeConn && (
         <Sheet open={loopsOpen} onClose={() => setLoopsOpen(false)} side="right" title="Resources">
-          <ResourcePanel snapshot={resourceSnapshot} lagHistory={[]} />
+          <ResourcePanel connId={activeConn.id} />
         </Sheet>
       )}
 
