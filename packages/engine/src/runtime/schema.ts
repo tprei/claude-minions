@@ -11,6 +11,7 @@ const fields: RuntimeField[] = [
     max: 32,
     step: 1,
     group: "execution",
+    applies: "live",
   },
   {
     key: "loopMaxTotal",
@@ -22,6 +23,7 @@ const fields: RuntimeField[] = [
     max: 100,
     step: 1,
     group: "loops",
+    applies: "live",
   },
   {
     key: "loopReservedInteractive",
@@ -33,6 +35,7 @@ const fields: RuntimeField[] = [
     max: 20,
     step: 1,
     group: "loops",
+    applies: "live",
   },
   {
     key: "ciAutoFix",
@@ -41,6 +44,7 @@ const fields: RuntimeField[] = [
     type: "boolean",
     default: false,
     group: "ci",
+    applies: "live",
   },
   {
     key: "quotaRetryBudget",
@@ -52,6 +56,7 @@ const fields: RuntimeField[] = [
     max: 10,
     step: 1,
     group: "execution",
+    applies: "live",
   },
   {
     key: "memoryMcpEnabled",
@@ -60,6 +65,7 @@ const fields: RuntimeField[] = [
     type: "boolean",
     default: true,
     group: "memory",
+    applies: "restart",
   },
   {
     key: "qualityTimeoutMs",
@@ -71,6 +77,7 @@ const fields: RuntimeField[] = [
     max: 3600000,
     step: 1000,
     group: "quality",
+    applies: "live",
   },
   {
     key: "pushNotifyOnAttention",
@@ -79,6 +86,7 @@ const fields: RuntimeField[] = [
     type: "boolean",
     default: true,
     group: "notifications",
+    applies: "live",
   },
   {
     key: "judgeRubricDefault",
@@ -87,6 +95,7 @@ const fields: RuntimeField[] = [
     type: "string",
     default: "Favor correctness first, then minimality, then clarity.",
     group: "variants",
+    applies: "live",
   },
   {
     key: "sseHeartbeatSec",
@@ -99,6 +108,7 @@ const fields: RuntimeField[] = [
     step: 1,
     group: "transport",
     requiresRestart: true,
+    applies: "restart",
   },
   {
     key: "rebaseAutoResolverEnabled",
@@ -107,6 +117,7 @@ const fields: RuntimeField[] = [
     type: "boolean",
     default: true,
     group: "execution",
+    applies: "live",
   },
   {
     key: "landingDefaultStrategy",
@@ -116,6 +127,7 @@ const fields: RuntimeField[] = [
     default: "squash",
     enumValues: ["merge", "squash", "rebase"],
     group: "execution",
+    applies: "live",
   },
   {
     key: "autoCommitOnCompletion",
@@ -124,6 +136,7 @@ const fields: RuntimeField[] = [
     type: "boolean",
     default: true,
     group: "execution",
+    applies: "live",
   },
 ];
 

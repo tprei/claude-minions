@@ -17,6 +17,7 @@ export function RuntimeDrawer({ api, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [restartPending, setRestartPending] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,12 +47,22 @@ export function RuntimeDrawer({ api, onClose }: Props) {
   }
 
   async function handleSave() {
+    if (!config) return;
     setSaving(true);
     setError(null);
     try {
+      const baseline = config.values;
+      const restartChanged = config.schema.fields.some((f) => {
+        const applies = f.applies ?? "live";
+        if (applies !== "restart") return false;
+        const before = baseline[f.key];
+        const after = draft[f.key];
+        return JSON.stringify(before) !== JSON.stringify(after);
+      });
       await api.patch("/api/config/runtime", draft);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      if (restartChanged) setRestartPending(true);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -76,6 +87,20 @@ export function RuntimeDrawer({ api, onClose }: Props) {
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {restartPending && (
+          <div className="mx-4 mt-3 px-3 py-2 rounded border border-amber-500/40 bg-amber-900/20 text-amber-200 text-xs flex items-center gap-2">
+            <span className="flex-1">Restart engine to apply</span>
+            <button
+              type="button"
+              className="text-amber-300/70 hover:text-amber-200"
+              onClick={() => setRestartPending(false)}
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className="p-4 text-red-400 text-sm">{error}</div>
         )}
