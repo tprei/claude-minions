@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { StatusEvent } from "@minions/shared";
+import { MarkdownText } from "../markdown.js";
 import { cx } from "../../util/classnames.js";
 
 const LEVEL_STYLES = {
@@ -12,6 +14,8 @@ const LEVEL_ICONS = {
   warn: "⚠️",
   error: "🚨",
 };
+
+const COLLAPSE_THRESHOLD = 400;
 
 function getVerdict(data: Record<string, unknown>): { winner?: string; rationale?: string; scores?: Record<string, number> } | null {
   if (!("winner" in data) && !("rationale" in data)) return null;
@@ -30,11 +34,28 @@ interface Props {
 
 export function StatusBanner({ event }: Props) {
   const verdict = event.data ? getVerdict(event.data) : null;
+  const collapsible = event.text.length > COLLAPSE_THRESHOLD;
+  const [expanded, setExpanded] = useState(false);
+  const visibleText = collapsible && !expanded
+    ? event.text.slice(0, COLLAPSE_THRESHOLD).trimEnd() + "…"
+    : event.text;
+
   return (
     <div className={cx("rounded-lg border px-3 py-2 my-1 text-sm", LEVEL_STYLES[event.level])}>
       <div className="flex items-start gap-2">
         <span>{LEVEL_ICONS[event.level]}</span>
-        <span className="flex-1">{event.text}</span>
+        <div className="flex-1 min-w-0">
+          <MarkdownText text={visibleText} />
+          {collapsible && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1 text-[11px] underline opacity-80 hover:opacity-100"
+            >
+              {expanded ? "show less" : "show more"}
+            </button>
+          )}
+        </div>
       </div>
       {verdict && (
         <div className="mt-2 pt-2 border-t border-current/20 space-y-1 text-xs">
