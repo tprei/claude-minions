@@ -15,9 +15,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo 'no tests'"
+    "test": "node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\""
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
 }
