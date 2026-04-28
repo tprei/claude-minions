@@ -8,11 +8,12 @@ import { useResourceStore } from "./resourceStore.js";
 import { useMemoryStore } from "./memoryStore.js";
 import { useVersionStore } from "./version.js";
 
-async function refetch(conn: Connection): Promise<void> {
+async function refetch(conn: Connection, isDisposed: () => boolean): Promise<void> {
   const [sessionsEnv, dagsEnv] = await Promise.all([
     getSessions(conn),
     getDags(conn),
   ]);
+  if (isDisposed()) return;
   const sessions = sessionsEnv.items;
   const dags = dagsEnv.items;
   useSessionStore.getState().replaceAll(conn.id, sessions);
@@ -20,28 +21,35 @@ async function refetch(conn: Connection): Promise<void> {
   await saveSnapshot(conn.id, { sessions, dags });
 }
 
-async function fetchVersion(conn: Connection): Promise<void> {
+async function fetchVersion(conn: Connection, isDisposed: () => boolean): Promise<void> {
   try {
     const info = await getVersion(conn);
+    if (isDisposed()) return;
     useVersionStore.getState().setVersion(conn.id, info);
   } catch {
     // non-fatal — features will be empty
   }
 }
 
+// TODO(T54): once the vitest harness lands, add coverage that detaches a
+// connection while init() is mid-flight (snapshot load, version fetch, and
+// onReconnect refetch) and asserts no entries remain in session/dag/version
+// stores for that conn.id.
 export function attachConnection(conn: Connection, delayMs = 0): () => void {
   let disposed = false;
   let disposeTimer: ReturnType<typeof setTimeout> | null = null;
   let sseConn: ReturnType<typeof connectSse> | null = null;
+  const isDisposed = (): boolean => disposed;
 
   async function init(): Promise<void> {
     const snapshot = await loadSnapshot(conn.id);
-    if (snapshot && !disposed) {
+    if (disposed) return;
+    if (snapshot) {
       useSessionStore.getState().replaceAll(conn.id, snapshot.sessions);
       useDagStore.getState().replaceAll(conn.id, snapshot.dags);
     }
 
-    await fetchVersion(conn);
+    await fetchVersion(conn, isDisposed);
 
     if (disposed) return;
 
@@ -61,9 +69,8 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
       onMemoryReviewed(e) { useMemoryStore.getState().upsert(conn.id, e.memory); },
       onMemoryDeleted(e) { useMemoryStore.getState().remove(conn.id, e.id); },
       async onReconnect() {
-        if (!disposed) {
-          await refetch(conn);
-        }
+        if (disposed) return;
+        await refetch(conn, isDisposed);
       },
     });
   }
