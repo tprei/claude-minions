@@ -225,6 +225,10 @@ export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): 
         <div className="flex-shrink-0">{installPrompt}</div>
       )}
 
+      {(resourceIndicator || installPrompt) && (
+        <div className="h-5 w-px bg-border mx-1 flex-shrink-0" aria-hidden="true" />
+      )}
+
       {api && <PushToggle api={api} />}
 
       <ThemeToggle />
