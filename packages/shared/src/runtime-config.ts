@@ -18,8 +18,8 @@ export interface RuntimeField {
   max?: number;
   step?: number;
   group?: string;
-  applies?: RuntimeFieldApplies;
   requiresRestart?: boolean;
+  applies?: RuntimeFieldApplies;
 }
 
 export interface RuntimeConfigSchema {
