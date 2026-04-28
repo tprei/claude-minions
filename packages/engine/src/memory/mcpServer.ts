@@ -44,12 +44,99 @@ function parseRequest(line: string): JsonRpcRequest | null {
 }
 
 export interface McpSessionHandle {
-  handleLine(line: string): string;
+  handleLine(line: string): string | null;
+}
+
+const TOOL_DEFINITIONS = [
+  {
+    name: "propose_memory",
+    description: "Propose a new operator memory. The memory enters review queue with status=pending; an operator approves before it influences future sessions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["engineering", "product", "incident", "convention", "other"] },
+        title: { type: "string", description: "Short subject (under 80 chars)" },
+        body: { type: "string", description: "1-3 sentences explaining WHY and HOW to apply" },
+        scope: { type: "string", enum: ["global", "repo"] },
+        repoId: { type: "string", description: "required when scope=repo" },
+      },
+      required: ["kind", "title", "body", "scope"],
+    },
+  },
+  {
+    name: "list_memories",
+    description: "List existing operator memories, optionally filtered by status or kind.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["pending", "approved", "rejected"] },
+        kind: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "get_memory",
+    description: "Fetch a single memory by id.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+] as const;
+
+function dispatchTool(
+  name: string,
+  args: Record<string, unknown>,
+  id: number | string | null,
+  sessionSlug: string,
+  ctx: EngineContext,
+): string {
+  switch (name) {
+    case "list_memories": {
+      const filter = {
+        status: typeof args["status"] === "string" ? (args["status"] as import("@minions/shared").MemoryStatus) : undefined,
+        kind: typeof args["kind"] === "string" ? (args["kind"] as MemoryKind) : undefined,
+      };
+      const memories = ctx.memory.list(filter);
+      return ok(id, { content: [{ type: "text", text: JSON.stringify({ memories }, null, 2) }] });
+    }
+    case "get_memory": {
+      if (typeof args["id"] !== "string") return err(id, -32602, "id is required");
+      const memory = ctx.memory.get(args["id"]);
+      if (!memory) return err(id, -32001, `Memory ${args["id"]} not found`);
+      return ok(id, { content: [{ type: "text", text: JSON.stringify({ memory }, null, 2) }] });
+    }
+    case "propose_memory": {
+      if (typeof args["kind"] !== "string") return err(id, -32602, "kind is required");
+      if (typeof args["title"] !== "string") return err(id, -32602, "title is required");
+      if (typeof args["body"] !== "string") return err(id, -32602, "body is required");
+      if (args["scope"] !== "global" && args["scope"] !== "repo") return err(id, -32602, "scope must be global or repo");
+
+      ctx.memory
+        .create({
+          kind: args["kind"] as MemoryKind,
+          title: args["title"],
+          body: args["body"],
+          scope: args["scope"],
+          repoId: typeof args["repoId"] === "string" ? args["repoId"] : undefined,
+          proposedFromSession: sessionSlug,
+        })
+        .then((memory) => {
+          ctx.bus.emit({ kind: "memory_proposed", memory });
+        })
+        .catch(() => {});
+
+      return ok(id, { content: [{ type: "text", text: "queued" }] });
+    }
+    default:
+      return err(id, -32601, `Tool not found: ${name}`);
+  }
 }
 
 export function serveMcpStdio(sessionSlug: string, ctx: EngineContext): McpSessionHandle {
   return {
-    handleLine(line: string): string {
+    handleLine(line: string): string | null {
       const req = parseRequest(line.trim());
       if (!req) {
         return err(null, -32700, "Parse error");
@@ -57,59 +144,42 @@ export function serveMcpStdio(sessionSlug: string, ctx: EngineContext): McpSessi
 
       try {
         switch (req.method) {
-          case "list_memories": {
+          case "initialize":
+            return ok(req.id, {
+              protocolVersion: "2024-11-05",
+              capabilities: { tools: {} },
+              serverInfo: { name: "minions-memory", version: "1.0.0" },
+            });
+
+          case "notifications/initialized":
+          case "notifications/cancelled":
+            return null;
+
+          case "ping":
+            return ok(req.id, {});
+
+          case "tools/list":
+            return ok(req.id, { tools: TOOL_DEFINITIONS });
+
+          case "tools/call": {
             const params = (req.params ?? {}) as Record<string, unknown>;
-            const filter = {
-              status: typeof params["status"] === "string" ? (params["status"] as import("@minions/shared").MemoryStatus) : undefined,
-              kind: typeof params["kind"] === "string" ? (params["kind"] as MemoryKind) : undefined,
-            };
-            const memories = ctx.memory.list(filter);
-            return ok(req.id, { memories });
+            const name = params["name"];
+            const argsRaw = params["arguments"];
+            if (typeof name !== "string") return err(req.id, -32602, "tools/call requires name");
+            const args = (argsRaw && typeof argsRaw === "object" ? argsRaw : {}) as Record<string, unknown>;
+            return dispatchTool(name, args, req.id, sessionSlug, ctx);
           }
 
-          case "get_memory": {
-            const params = (req.params ?? {}) as Record<string, unknown>;
-            if (typeof params["id"] !== "string") {
-              return err(req.id, -32602, "id is required");
-            }
-            const memory = ctx.memory.get(params["id"]);
-            if (!memory) {
-              return err(req.id, -32001, `Memory ${params["id"]} not found`);
-            }
-            return ok(req.id, { memory });
-          }
+          case "resources/list":
+            return ok(req.id, { resources: [] });
 
-          case "propose_memory": {
-            const params = (req.params ?? {}) as Record<string, unknown>;
-            if (typeof params["kind"] !== "string") {
-              return err(req.id, -32602, "kind is required");
-            }
-            if (typeof params["title"] !== "string") {
-              return err(req.id, -32602, "title is required");
-            }
-            if (typeof params["body"] !== "string") {
-              return err(req.id, -32602, "body is required");
-            }
-            if (params["scope"] !== "global" && params["scope"] !== "repo") {
-              return err(req.id, -32602, "scope must be global or repo");
-            }
+          case "prompts/list":
+            return ok(req.id, { prompts: [] });
 
-            ctx.memory
-              .create({
-                kind: params["kind"] as MemoryKind,
-                title: params["title"],
-                body: params["body"],
-                scope: params["scope"],
-                repoId: typeof params["repoId"] === "string" ? params["repoId"] : undefined,
-                proposedFromSession: sessionSlug,
-              })
-              .then((memory) => {
-                ctx.bus.emit({ kind: "memory_proposed", memory });
-              })
-              .catch(() => {});
-
-            return ok(req.id, { queued: true });
-          }
+          case "list_memories":
+          case "get_memory":
+          case "propose_memory":
+            return dispatchTool(req.method, (req.params ?? {}) as Record<string, unknown>, req.id, sessionSlug, ctx);
 
           default:
             return err(req.id, -32601, `Method not found: ${req.method}`);
