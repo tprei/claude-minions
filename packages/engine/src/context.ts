@@ -100,7 +100,7 @@ export interface EngineContext {
   };
 
   memory: {
-    list: (filter?: { status?: import("@minions/shared").MemoryStatus; kind?: import("@minions/shared").MemoryKind }) => import("@minions/shared").Memory[];
+    list: (filter?: { status?: import("@minions/shared").MemoryStatus; kind?: import("@minions/shared").MemoryKind; q?: string; repoId?: string }) => import("@minions/shared").Memory[];
     get: (id: string) => import("@minions/shared").Memory | null;
     create: (req: import("@minions/shared").CreateMemoryRequest) => Promise<import("@minions/shared").Memory>;
     update: (id: string, patch: Partial<Pick<import("@minions/shared").Memory, "title" | "body" | "pinned">>) => Promise<import("@minions/shared").Memory>;

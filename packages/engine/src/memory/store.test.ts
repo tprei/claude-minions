@@ -151,6 +151,89 @@ describe("MemoryStore", () => {
     assert.ok(repoMemories.length >= 1);
   });
 
+  test("filter by q matches title and body case-insensitively", () => {
+    store.insert({
+      kind: "user",
+      status: "approved",
+      scope: "global",
+      repoId: undefined,
+      pinned: false,
+      title: "Unique-FOO-Title",
+      body: "ordinary body",
+      proposedBy: undefined,
+      proposedFromSession: undefined,
+      reviewedBy: undefined,
+      reviewedAt: undefined,
+      rejectionReason: undefined,
+      supersedes: undefined,
+    });
+    store.insert({
+      kind: "user",
+      status: "approved",
+      scope: "global",
+      repoId: undefined,
+      pinned: false,
+      title: "ordinary title",
+      body: "Hidden bAr in the body",
+      proposedBy: undefined,
+      proposedFromSession: undefined,
+      reviewedBy: undefined,
+      reviewedAt: undefined,
+      rejectionReason: undefined,
+      supersedes: undefined,
+    });
+
+    const titleMatches = store.list({ q: "foo" });
+    assert.ok(titleMatches.some(m => m.title === "Unique-FOO-Title"));
+    assert.ok(!titleMatches.some(m => m.title === "ordinary title"));
+
+    const bodyMatches = store.list({ q: "BAR" });
+    assert.ok(bodyMatches.some(m => m.body === "Hidden bAr in the body"));
+
+    const empty = store.list({ q: "definitely-not-present-zzz" });
+    assert.equal(empty.length, 0);
+  });
+
+  test("filter by q combines with status", () => {
+    store.insert({
+      kind: "user",
+      status: "pending",
+      scope: "global",
+      repoId: undefined,
+      pinned: false,
+      title: "needle pending",
+      body: "x",
+      proposedBy: undefined,
+      proposedFromSession: undefined,
+      reviewedBy: undefined,
+      reviewedAt: undefined,
+      rejectionReason: undefined,
+      supersedes: undefined,
+    });
+    store.insert({
+      kind: "user",
+      status: "approved",
+      scope: "global",
+      repoId: undefined,
+      pinned: false,
+      title: "needle approved",
+      body: "x",
+      proposedBy: undefined,
+      proposedFromSession: undefined,
+      reviewedBy: undefined,
+      reviewedAt: undefined,
+      rejectionReason: undefined,
+      supersedes: undefined,
+    });
+
+    const result = store.list({ q: "needle", status: "pending" });
+    for (const m of result) {
+      assert.equal(m.status, "pending");
+      assert.ok(m.title.toLowerCase().includes("needle"));
+    }
+    assert.ok(result.length >= 1);
+  });
+
   test("save updates memory", () => {
     const memory = store.insert({
       kind: "user",
