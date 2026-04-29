@@ -83,9 +83,10 @@ export class TranscriptCollector {
     slug: string,
     events: AsyncIterable<ProviderEvent>,
     onExternalId?: (id: string) => void,
+    startTurn = 0,
   ): Promise<void> {
     const { bus, log } = this.deps;
-    let turn = 0;
+    let turn = startTurn;
     let turnDelta = 0;
     let toolCallDelta = 0;
     let hasFirstEvent = false;
