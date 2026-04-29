@@ -13,6 +13,7 @@ import { createLogger } from "../logger.js";
 import { EventBus } from "../bus/eventBus.js";
 import { KeyedMutex } from "../util/mutex.js";
 import { createDagSubsystem } from "./index.js";
+import { parseDagFromTranscript } from "./parser.js";
 import type { SubsystemDeps } from "../wiring.js";
 
 const SHIP_SLUG = "ship-sess-1";
@@ -298,5 +299,117 @@ describe("dag transcript subscriber", () => {
 
     assert.equal(api.list().length, 0);
     assert.equal(statusInfos(db, SHIP_SLUG).length, 0);
+  });
+
+  test("dag block with nested ```ts fence in node prompt parses correctly", () => {
+    const nestedPrompt =
+      "Implement the schema. Example:\n```ts\nexport interface User {\n  id: string;\n  email: string;\n}\n```\nThen migrate.";
+    const block = JSON.stringify({
+      title: "Build login flow",
+      goal: "Ship a working login form",
+      nodes: [
+        { title: "schema", prompt: nestedPrompt, dependsOn: [] },
+        { title: "api", prompt: "build /login", dependsOn: ["schema"] },
+      ],
+    });
+    const text = `Plan:\n\n\`\`\`dag\n${block}\n\`\`\`\n\nlet me know.`;
+    const ev = makeAssistantText(0, text);
+    transcriptRef.events.push(ev);
+    persistTranscript(db, [ev]);
+
+    bus.emit({ kind: "transcript_event", sessionSlug: SHIP_SLUG, event: ev });
+
+    const dags = api.list();
+    assert.equal(dags.length, 1, "DAG created despite nested ```ts fence");
+    const dag = dags[0]!;
+    assert.equal(dag.nodes.length, 2);
+    const schemaNode = dag.nodes.find((n) => n.title === "schema")!;
+    assert.equal(
+      schemaNode.prompt,
+      nestedPrompt,
+      "node prompt preserved verbatim, including nested ```ts fence",
+    );
+  });
+});
+
+describe("parseDagFromTranscript (unit)", () => {
+  function ev(seq: number, text: string): AssistantTextEvent {
+    return {
+      id: `evt-${seq}`,
+      sessionSlug: "any",
+      seq,
+      turn: 0,
+      timestamp: new Date().toISOString(),
+      kind: "assistant_text",
+      text,
+    };
+  }
+
+  test("parses dag block whose first node prompt contains nested ```ts code block", () => {
+    const nestedPrompt =
+      "Update parser:\n```ts\nconst RE = /```dag\\n([\\s\\S]*?)```/g;\nconsole.log(RE);\n```\nThen run tests.";
+    const block = JSON.stringify({
+      title: "Fix dag parser",
+      goal: "Handle nested code fences inside node prompts",
+      nodes: [
+        { title: "parser", prompt: nestedPrompt, dependsOn: [] },
+        { title: "tests", prompt: "add fixtures", dependsOn: ["parser"] },
+      ],
+    });
+    const text = `Here is the plan.\n\n\`\`\`dag\n${block}\n\`\`\`\n`;
+
+    const parsed = parseDagFromTranscript([ev(27, text)]);
+    assert.ok(parsed, "parser returns a DAG, not null");
+    assert.equal(parsed!.title, "Fix dag parser");
+    assert.equal(parsed!.nodes.length, 2);
+    assert.equal(parsed!.nodes[0]!.title, "parser");
+    assert.equal(
+      parsed!.nodes[0]!.prompt,
+      nestedPrompt,
+      "first node prompt is intact, including the nested ```ts fence",
+    );
+    assert.deepEqual(parsed!.nodes[0]!.dependsOn, []);
+    assert.deepEqual(parsed!.nodes[1]!.dependsOn, ["parser"]);
+  });
+
+  test("parses dag block with multiple nested fences across several nodes", () => {
+    const block = JSON.stringify({
+      title: "T",
+      goal: "G",
+      nodes: [
+        { title: "a", prompt: "first ```ts\nconst x = 1;\n``` end", dependsOn: [] },
+        { title: "b", prompt: "second ```js\nlet y = 2;\n``` end", dependsOn: ["a"] },
+        { title: "c", prompt: "third ```sh\necho hi\n``` end", dependsOn: ["b"] },
+      ],
+    });
+    const text = `\`\`\`dag\n${block}\n\`\`\``;
+    const parsed = parseDagFromTranscript([ev(1, text)]);
+    assert.ok(parsed);
+    assert.equal(parsed!.nodes.length, 3);
+    assert.match(parsed!.nodes[0]!.prompt, /```ts/);
+    assert.match(parsed!.nodes[1]!.prompt, /```js/);
+    assert.match(parsed!.nodes[2]!.prompt, /```sh/);
+  });
+
+  test("returns null when no dag fence is present", () => {
+    assert.equal(parseDagFromTranscript([ev(0, "no fence here")]), null);
+  });
+
+  test("returns null when dag fence has malformed JSON", () => {
+    const text = "```dag\n{ not valid json\n```";
+    assert.equal(parseDagFromTranscript([ev(0, text)]), null);
+  });
+
+  test("plain dag block without nested fences still parses (regression)", () => {
+    const block = JSON.stringify({
+      title: "Plain",
+      goal: "g",
+      nodes: [{ title: "n", prompt: "do n", dependsOn: [] }],
+    });
+    const text = `\`\`\`dag\n${block}\n\`\`\``;
+    const parsed = parseDagFromTranscript([ev(0, text)]);
+    assert.ok(parsed);
+    assert.equal(parsed!.title, "Plain");
+    assert.equal(parsed!.nodes[0]!.prompt, "do n");
   });
 });
