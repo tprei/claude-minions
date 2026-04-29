@@ -96,6 +96,7 @@ function makeHarness(sessions: Session[]): RestackHarness {
           await new Promise((r) => setTimeout(r, delay));
         }
       },
+      onUpstreamMerged: async () => {},
     },
     bus: {
       emit: (ev: { kind: string; [k: string]: unknown }) => {

@@ -9,6 +9,19 @@ export class RestackManager {
     private readonly log: Logger,
   ) {}
 
+  async restackChild(slug: string, newBase: string): Promise<void> {
+    await this.restackSession(slug, newBase);
+  }
+
+  async restackDagChild(
+    dagId: string,
+    nodeId: string,
+    sessionSlug: string,
+    newBase: string,
+  ): Promise<void> {
+    await this.restackDagNode(dagId, nodeId, sessionSlug, newBase);
+  }
+
   async restackChildren(landedSlug: string): Promise<void> {
     const landedSession = this.ctx.sessions.get(landedSlug);
     if (!landedSession) return;

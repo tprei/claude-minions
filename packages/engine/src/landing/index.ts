@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import simpleGit from "simple-git";
-import type { PRSummary } from "@minions/shared";
+import type { PRSummary, Session } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import type { Logger } from "../logger.js";
@@ -10,13 +10,27 @@ import { formatStackComment } from "./stackComment.js";
 import { pushBranch as defaultPushBranch } from "./push.js";
 import { ensurePullRequest as defaultEnsurePullRequest, type EnsurePullRequestArgs } from "./openPR.js";
 import { EngineError } from "../errors.js";
+import { SessionRepo } from "../store/repos/sessionRepo.js";
 
 export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
 export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
+export type EditPullRequestBaseFn = (args: {
+  cwd: string;
+  prNumber: number;
+  newBase: string;
+  log: Logger;
+}) => Promise<void>;
+
+export interface SessionStateUpdater {
+  update(slug: string, patch: { baseBranch?: string }): void;
+  setPr(slug: string, pr: PRSummary | null): void;
+}
 
 export interface LandingManagerDeps {
   pushBranch?: PushBranchFn;
   ensurePullRequest?: EnsurePullRequestFn;
+  editPullRequestBase?: EditPullRequestBaseFn;
+  sessionRepo?: SessionStateUpdater | null;
 }
 
 function isOnlineRemote(remote: string): boolean {
@@ -42,9 +56,15 @@ function runGh(args: string[], opts: { cwd: string; log: Logger }): Promise<stri
   });
 }
 
+const defaultEditPullRequestBase: EditPullRequestBaseFn = async ({ cwd, prNumber, newBase, log }) => {
+  await runGh(["pr", "edit", String(prNumber), "--base", newBase], { cwd, log });
+};
+
 export class LandingManager {
   private readonly pushBranch: PushBranchFn;
   private readonly ensurePullRequest: EnsurePullRequestFn;
+  private readonly editPullRequestBase: EditPullRequestBaseFn;
+  private readonly sessionRepo: SessionStateUpdater | null;
 
   constructor(
     private readonly ctx: EngineContext,
@@ -55,6 +75,8 @@ export class LandingManager {
   ) {
     this.pushBranch = deps.pushBranch ?? defaultPushBranch;
     this.ensurePullRequest = deps.ensurePullRequest ?? defaultEnsurePullRequest;
+    this.editPullRequestBase = deps.editPullRequestBase ?? defaultEditPullRequestBase;
+    this.sessionRepo = deps.sessionRepo ?? null;
   }
 
   async land(slug: string, strategy: "merge" | "squash" | "rebase" = "squash", force = false): Promise<void> {
@@ -277,6 +299,95 @@ export class LandingManager {
     );
   }
 
+  async onUpstreamMerged(parentSlug: string): Promise<void> {
+    const parent = this.ctx.sessions.get(parentSlug);
+    if (!parent || !parent.branch) return;
+    const oldBase = parent.branch;
+    const newBase = parent.baseBranch ?? "main";
+
+    this.log.info("upstream merged: restacking children", {
+      parent: parentSlug,
+      oldBase,
+      newBase,
+    });
+    this.ctx.audit.record(
+      "system",
+      "landing.upstream_merged",
+      { kind: "session", id: parentSlug },
+      { oldBase, newBase },
+    );
+
+    const allSessions = this.ctx.sessions.list();
+    const childSessions = allSessions.filter(
+      (s) => s.baseBranch === oldBase && s.slug !== parentSlug,
+    );
+
+    for (const child of childSessions) {
+      await this.rebaseChildOntoNewBase(child, newBase);
+    }
+
+    const handledSlugs = new Set(childSessions.map((c) => c.slug));
+    const allDags = this.dagRepo.list();
+    for (const dag of allDags) {
+      for (const node of dag.nodes) {
+        if (node.baseBranch !== oldBase || !node.sessionSlug) continue;
+        try {
+          this.dagRepo.updateNode(node.id, { baseBranch: newBase });
+        } catch (err) {
+          this.log.warn("failed to update dag node base", {
+            dagId: dag.id,
+            nodeId: node.id,
+            err: (err as Error).message,
+          });
+        }
+        if (handledSlugs.has(node.sessionSlug)) continue;
+        const childSession = this.ctx.sessions.get(node.sessionSlug);
+        if (!childSession) continue;
+        await this.rebaseChildOntoNewBase(childSession, newBase);
+        handledSlugs.add(node.sessionSlug);
+      }
+    }
+  }
+
+  private async rebaseChildOntoNewBase(child: Session, newBase: string): Promise<void> {
+    if (this.sessionRepo) {
+      this.sessionRepo.update(child.slug, { baseBranch: newBase });
+    }
+
+    const repo = child.repoId ? this.ctx.repos().find((r) => r.id === child.repoId) : undefined;
+    const onlineFlow =
+      !!(repo?.remote && isOnlineRemote(repo.remote)) &&
+      !!child.pr &&
+      child.pr.state === "open";
+
+    if (onlineFlow && child.pr && child.worktreePath) {
+      try {
+        await this.editPullRequestBase({
+          cwd: child.worktreePath,
+          prNumber: child.pr.number,
+          newBase,
+          log: this.log,
+        });
+        if (this.sessionRepo) {
+          this.sessionRepo.setPr(child.slug, { ...child.pr, base: newBase });
+        }
+      } catch (err) {
+        this.log.warn("failed to update child PR base on GitHub", {
+          child: child.slug,
+          prNumber: child.pr.number,
+          err: (err as Error).message,
+        });
+      }
+    }
+
+    const refreshed = this.ctx.sessions.get(child.slug);
+    if (refreshed) {
+      this.ctx.bus.emit({ kind: "session_updated", session: refreshed });
+    }
+
+    await this.restack.restackChild(child.slug, newBase);
+  }
+
   async retryRebase(slug: string): Promise<void> {
     const session = this.ctx.sessions.get(slug);
     if (!session) throw new EngineError("not_found", `session not found: ${slug}`);
@@ -328,14 +439,16 @@ export class LandingManager {
 export function createLandingSubsystem(
   deps: SubsystemDeps & { dagRepo: DagRepo },
 ): SubsystemResult<EngineContext["landing"]> {
-  const { ctx, log, dagRepo } = deps;
+  const { ctx, log, dagRepo, db } = deps;
 
+  const sessionRepo = new SessionRepo(db);
   const restack = new RestackManager(ctx, dagRepo, log.child({ subsystem: "restack" }));
   const manager = new LandingManager(
     ctx,
     dagRepo,
     restack,
     log.child({ subsystem: "landing" }),
+    { sessionRepo },
   );
 
   const api: EngineContext["landing"] = {
@@ -349,6 +462,10 @@ export function createLandingSubsystem(
 
     async retryRebase(slug: string): Promise<void> {
       await manager.retryRebase(slug);
+    },
+
+    async onUpstreamMerged(slug: string): Promise<void> {
+      await manager.onUpstreamMerged(slug);
     },
   };
 
