@@ -1,0 +1,88 @@
+.hljs {
+  color: rgb(var(--fg));
+  background: rgb(var(--bg-soft));
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-tag,
+.hljs-meta-keyword,
+.hljs-doctag {
+  color: rgb(var(--accent));
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-regexp,
+.hljs-link {
+  color: rgb(var(--ok));
+}
+
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-type,
+.hljs-params {
+  color: rgb(var(--warn));
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: rgb(var(--fg-subtle));
+  font-style: italic;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-class,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-variable {
+  color: rgb(var(--accent-soft));
+}
+
+.hljs-deletion {
+  color: rgb(var(--err));
+}
+
+.hljs-addition {
+  color: rgb(var(--ok));
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+.markdown-view code:not(.hljs) {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  background: rgb(var(--bg-soft));
+  color: rgb(var(--fg));
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.markdown-view pre {
+  background: rgb(var(--bg-soft));
+  color: rgb(var(--fg));
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.markdown-view pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
