@@ -14,11 +14,14 @@ import { useSessionStore, EMPTY_SESSIONS } from "./store/sessionStore.js";
 import { apiFetch } from "./transport/rest.js";
 import type { Connection } from "./connections/store.js";
 import { ViewSwitcher } from "./views/ViewSwitcher.js";
+import { AuditDrawer } from "./views/auditDrawer.js";
 import { ChatSurface } from "./chat/ChatSurface.js";
 import { MemoryDrawer } from "./memory/Drawer.js";
 import { RuntimeDrawer } from "./runtime/Drawer.js";
-import { ResourcePanel } from "./resource/Panel.js";
 import { ResourceIndicator } from "./resource/Indicator.js";
+import { LoopsDrawer } from "./views/loopsDrawer.js";
+import { VariantsDrawer } from "./views/variantsDrawer.js";
+import { EntrypointsDrawer } from "./views/entrypointsDrawer.js";
 import { initInstallPrompt } from "./pwa/install.js";
 import { initOfflineDetection } from "./pwa/offline.js";
 import { OfflineBanner } from "./pwa/OfflineBanner.js";
@@ -62,6 +65,8 @@ export function App(): ReactElement {
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [loopsOpen, setLoopsOpen] = useState(false);
+  const [variantsOpen, setVariantsOpen] = useState(false);
+  const [entrypointsOpen, setEntrypointsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const hydrated = useConnectionStore(s => s._hydrated);
@@ -102,6 +107,8 @@ export function App(): ReactElement {
     openRuntime: () => setRuntimeOpen(true),
     openLoops: () => setLoopsOpen(true),
     openAudit: () => setAuditOpen(true),
+    openVariants: () => setVariantsOpen(true),
+    openEntrypoints: () => setEntrypointsOpen(true),
     sessions: paletteSessions,
   }), [activeId, paletteSessions]);
 
@@ -166,15 +173,27 @@ export function App(): ReactElement {
         </Sheet>
       )}
 
-      {loopsOpen && activeConn && (
-        <Sheet open={loopsOpen} onClose={() => setLoopsOpen(false)} side="right" title="Resources">
-          <ResourcePanel connId={activeConn.id} />
+      {loopsOpen && api && (
+        <Sheet open={loopsOpen} onClose={() => setLoopsOpen(false)} side="right" title="Loops">
+          <LoopsDrawer api={api} onClose={() => setLoopsOpen(false)} />
         </Sheet>
       )}
 
       {auditOpen && (
         <Sheet open={auditOpen} onClose={() => setAuditOpen(false)} side="right" title="Audit">
-          <div className="p-4 text-sm text-fg-muted">Audit drawer — provided by Web C</div>
+          <AuditDrawer onClose={() => setAuditOpen(false)} />
+        </Sheet>
+      )}
+
+      {variantsOpen && api && (
+        <Sheet open={variantsOpen} onClose={() => setVariantsOpen(false)} side="right" title="Variants">
+          <VariantsDrawer api={api} onClose={() => setVariantsOpen(false)} />
+        </Sheet>
+      )}
+
+      {entrypointsOpen && api && (
+        <Sheet open={entrypointsOpen} onClose={() => setEntrypointsOpen(false)} side="right" title="Entrypoints">
+          <EntrypointsDrawer api={api} onClose={() => setEntrypointsOpen(false)} />
         </Sheet>
       )}
 

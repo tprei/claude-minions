@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { PRSummary } from "@minions/shared";
+import type { PRReviewDecision, PRSummary } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { Logger } from "../logger.js";
 import { EngineError } from "../errors.js";
@@ -20,6 +20,23 @@ interface GhPrViewJson {
   baseRefName: string;
   headRefName: string;
   isDraft: boolean;
+  reviewDecision?: string | null;
+}
+
+export function normalizeReviewDecision(raw: unknown): PRReviewDecision | null {
+  if (raw == null) return null;
+  if (typeof raw !== "string") return null;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "") return null;
+  if (
+    normalized === "approved" ||
+    normalized === "changes_requested" ||
+    normalized === "commented" ||
+    normalized === "review_required"
+  ) {
+    return normalized;
+  }
+  return null;
 }
 
 function runGh(args: string[]): Promise<string> {
@@ -128,7 +145,7 @@ export async function ensurePullRequest(
       "--repo",
       repoArg,
       "--json",
-      "number,url,state,title,baseRefName,headRefName,isDraft",
+      "number,url,state,title,baseRefName,headRefName,isDraft,reviewDecision",
     ]);
     const view = JSON.parse(viewRaw) as GhPrViewJson;
     summary = {
@@ -139,6 +156,7 @@ export async function ensurePullRequest(
       base: view.baseRefName,
       head: view.headRefName,
       title: view.title,
+      reviewDecision: normalizeReviewDecision(view.reviewDecision),
     };
   } catch (err) {
     log.warn("gh pr view failed, using fallback summary", {

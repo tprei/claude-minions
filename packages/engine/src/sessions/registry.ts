@@ -363,11 +363,14 @@ export class SessionRegistry {
     return row.root_slug ?? parentSlug;
   }
 
-  private async writeMcpConfig(slug: string, worktreePath: string): Promise<string> {
+  private async writeMcpConfig(slug: string, _worktreePath: string): Promise<string> {
     const env = this.deps.ctx.env;
-    const minionsDir = path.join(worktreePath, ".minions");
-    await ensureDir(minionsDir);
-    const mcpConfigPath = path.join(minionsDir, "mcp-config.json");
+    // The MCP config embeds MINIONS_TOKEN. It must live outside the worktree
+    // so an agent's `git add . && git commit` cannot capture and (if the
+    // branch is later pushed) leak the bearer token to a remote.
+    const mcpConfigDir = path.join(this.deps.workspaceDir, "mcp-configs");
+    await ensureDir(mcpConfigDir);
+    const mcpConfigPath = path.join(mcpConfigDir, `${slug}.json`);
     const host = env.host === "0.0.0.0" ? "127.0.0.1" : env.host;
     const config = {
       mcpServers: {

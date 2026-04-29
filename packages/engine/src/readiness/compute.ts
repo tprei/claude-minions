@@ -17,11 +17,11 @@ export function computeReviewCheck(session: Session): ReadinessCheck {
   if (!session.pr) {
     return { id: "review", label: "Review decision", status: "pending" };
   }
-  const rd = (session.pr as { reviewDecision?: string | null }).reviewDecision;
-  if (rd === "APPROVED") {
+  const rd = session.pr.reviewDecision;
+  if (rd === "approved") {
     return { id: "review", label: "Review approved", status: "ok" };
   }
-  if (rd === "CHANGES_REQUESTED") {
+  if (rd === "changes_requested") {
     return { id: "review", label: "Review", status: "blocked", detail: "Changes requested" };
   }
   return { id: "review", label: "Review", status: "pending", detail: "Awaiting review" };
