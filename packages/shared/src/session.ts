@@ -29,6 +29,13 @@ export type ShipStage = "think" | "plan" | "dag" | "verify" | "done";
 export const PERMISSION_TIERS = ["read", "worktree", "full"] as const;
 export type PermissionTier = (typeof PERMISSION_TIERS)[number];
 
+export const SESSION_BUCKETS = [
+  "bug-fix", "feature", "refactor", "dogfood-fix", "ci-fix",
+  "ship", "dag-task", "think", "review", "rebase-resolver",
+  "loop", "probe", "other",
+] as const;
+export type SessionBucket = (typeof SESSION_BUCKETS)[number];
+
 export interface QuickAction {
   id: string;
   label: string;
@@ -104,6 +111,7 @@ export interface Session {
   loopId?: string;
   variantOf?: string;
   metadata: Record<string, unknown>;
+  bucket?: SessionBucket;
 }
 
 export interface SessionWithTranscript extends Session {
@@ -130,6 +138,7 @@ export interface CreateSessionRequest {
   modelHint?: string;
   attachments?: AttachmentInput[];
   metadata?: Record<string, unknown>;
+  bucket?: SessionBucket;
 }
 
 export interface CreateVariantsRequest {

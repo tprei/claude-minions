@@ -55,6 +55,7 @@ interface SessionRow {
   variant_of: string | null;
   metadata: string;
   permission_tier: string | null;
+  bucket: string | null;
 }
 
 export interface PageCursor {
@@ -134,6 +135,7 @@ function rowToSession(row: SessionRow, childSlugs: string[]): Session {
     loopId: row.loop_id ?? undefined,
     variantOf: row.variant_of ?? undefined,
     metadata: JSON.parse(row.metadata) as Record<string, unknown>,
+    bucket: (row.bucket as import("@minions/shared").SessionBucket | null) ?? undefined,
   };
 }
 
@@ -151,6 +153,7 @@ export class SessionRepo {
   private readonly stmtSetAttention: Database.Statement;
   private readonly stmtSetQuickActions: Database.Statement;
   private readonly stmtUpdate: Database.Statement;
+  private readonly stmtSetBucket: Database.Statement;
 
   constructor(private readonly db: Database.Database) {
     this.stmtGet = db.prepare(`SELECT * FROM sessions WHERE slug = ?`);
@@ -173,11 +176,11 @@ export class SessionRepo {
         stats_cache_creation_tokens, stats_cost_usd, stats_duration_ms, stats_tool_calls,
         provider, model_hint, created_at, updated_at, started_at, completed_at,
         last_turn_at, dag_id, dag_node_id, loop_id, variant_of, metadata,
-        permission_tier
+        permission_tier, bucket
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?
+        ?, ?
       )`
     );
     this.stmtUpdateStatus = db.prepare(
@@ -216,6 +219,7 @@ export class SessionRepo {
         started_at = ?, updated_at = ?
        WHERE slug = ?`
     );
+    this.stmtSetBucket = db.prepare(`UPDATE sessions SET bucket = ?, updated_at = ? WHERE slug = ?`);
   }
 
   private childSlugs(slug: string): string[] {
@@ -337,7 +341,8 @@ export class SessionRepo {
       session.loopId ?? null,
       session.variantOf ?? null,
       JSON.stringify(session.metadata),
-      session.permissionTier ?? null
+      session.permissionTier ?? null,
+      session.bucket ?? null
     );
   }
 
@@ -400,5 +405,9 @@ export class SessionRepo {
 
   setQuickActions(slug: string, actions: QuickAction[]): void {
     this.stmtSetQuickActions.run(JSON.stringify(actions), nowIso(), slug);
+  }
+
+  setBucket(slug: string, bucket: import("@minions/shared").SessionBucket | null): void {
+    this.stmtSetBucket.run(bucket, nowIso(), slug);
   }
 }
