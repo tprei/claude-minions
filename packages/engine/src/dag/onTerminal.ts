@@ -60,6 +60,7 @@ export class DagTerminalHandler {
       this.repo.updateNode(node.id, {
         status: "landed",
         completedAt: new Date().toISOString(),
+        failedReason: null,
       });
       this.log.info("dag node landed", { dagId: dag.id, nodeId: node.id, sessionSlug: session.slug });
       await this.scheduler.tick(dag.id);
