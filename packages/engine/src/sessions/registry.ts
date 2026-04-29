@@ -165,12 +165,12 @@ export class SessionRegistry {
         stats_cost_usd, stats_duration_ms, stats_tool_calls,
         provider, model_hint, created_at, updated_at, started_at, completed_at,
         last_turn_at, dag_id, dag_node_id, loop_id, variant_of, metadata,
-        permission_tier
+        permission_tier, bucket
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
-        ?
+        ?, ?
       )
     `);
 
@@ -340,6 +340,7 @@ export class SessionRegistry {
       null, null, null, null,
       JSON.stringify(req.metadata ?? {}),
       permissionTier,
+      null,
     );
 
     if (mode === "ship") {
