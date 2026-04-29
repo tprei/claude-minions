@@ -5,11 +5,15 @@ import os from "node:os";
 import path from "node:path";
 import type { DoctorCheckName, FeatureFlag } from "@minions/shared";
 import type { EngineContext } from "../context.js";
+import { __setFindClaudeBinaryForTests } from "../providers/claudeCode.js";
 import {
   DOCTOR_CHECK_NAMES,
   DOCTOR_CHECKS,
   FEATURE_PROBES,
+  PROVIDER_PROBES,
   computeFeatureSets,
+  computeProviderHealth,
+  refreshProviderHealth,
   runDoctorChecks,
 } from "./probes.js";
 
@@ -306,6 +310,71 @@ describe("runDoctorChecks", () => {
       assert.equal(out.status, "ok");
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("provider health probes", () => {
+  it("claude-code probe is ok when the claude binary is found", async () => {
+    __setFindClaudeBinaryForTests(() => Promise.resolve("/usr/local/bin/claude"));
+    refreshProviderHealth();
+    try {
+      const result = await PROVIDER_PROBES["claude-code"]!();
+      assert.equal(result.status, "ok");
+      assert.equal(result.reason, undefined);
+    } finally {
+      __setFindClaudeBinaryForTests(null);
+      refreshProviderHealth();
+    }
+  });
+
+  it("claude-code probe is degraded with a clear reason when the binary is missing", async () => {
+    __setFindClaudeBinaryForTests(() => Promise.resolve(null));
+    refreshProviderHealth();
+    try {
+      const result = await PROVIDER_PROBES["claude-code"]!();
+      assert.equal(result.status, "degraded");
+      assert.match(result.reason ?? "", /claude CLI not found/);
+    } finally {
+      __setFindClaudeBinaryForTests(null);
+      refreshProviderHealth();
+    }
+  });
+
+  it("computeProviderHealth surfaces every registered provider", async () => {
+    __setFindClaudeBinaryForTests(() => Promise.resolve(null));
+    refreshProviderHealth();
+    try {
+      const health = await computeProviderHealth();
+      assert.ok(health["claude-code"], "claude-code entry must exist");
+      assert.equal(health["claude-code"]!.status, "degraded");
+      assert.ok(health["mock"], "mock entry must exist");
+      assert.equal(health["mock"]!.status, "ok");
+    } finally {
+      __setFindClaudeBinaryForTests(null);
+      refreshProviderHealth();
+    }
+  });
+
+  it("computeProviderHealth caches results until refreshProviderHealth is called", async () => {
+    let calls = 0;
+    __setFindClaudeBinaryForTests(() => {
+      calls += 1;
+      return Promise.resolve(null);
+    });
+    refreshProviderHealth();
+    try {
+      await computeProviderHealth();
+      await computeProviderHealth();
+      await computeProviderHealth();
+      assert.equal(calls, 1, "binary probe should be cached after first call");
+
+      refreshProviderHealth();
+      await computeProviderHealth();
+      assert.equal(calls, 2, "refresh should force the next call to re-probe");
+    } finally {
+      __setFindClaudeBinaryForTests(null);
+      refreshProviderHealth();
     }
   });
 });

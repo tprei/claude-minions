@@ -5,15 +5,60 @@ import process from "node:process";
 const slug = process.env["MINIONS_SESSION_SLUG"];
 const token = process.env["MINIONS_TOKEN"];
 const baseUrl = process.env["MINIONS_URL"];
+const probeMode = process.env["MINIONS_PROBE"] === "1";
 
 function writeJsonRpcError(id, code, message) {
   const payload = JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } });
   process.stdout.write(payload + "\n");
 }
 
-if (!slug || !token || !baseUrl) {
+function writeJsonRpcResult(id, result) {
+  const payload = JSON.stringify({ jsonrpc: "2.0", id, result });
+  process.stdout.write(payload + "\n");
+}
+
+if (!probeMode && (!slug || !token || !baseUrl)) {
   writeJsonRpcError(null, -32603, "minions-mcp-bridge: missing env (MINIONS_SESSION_SLUG, MINIONS_TOKEN, MINIONS_URL)");
   process.exit(1);
+}
+
+const PROBE_TOOLS = [
+  { name: "propose_memory" },
+  { name: "list_memories" },
+  { name: "get_memory" },
+];
+
+function handleProbeLine(line) {
+  let req;
+  try {
+    req = JSON.parse(line);
+  } catch {
+    writeJsonRpcError(null, -32700, "minions-mcp-bridge: parse error");
+    return;
+  }
+  if (!req || typeof req !== "object") {
+    writeJsonRpcError(null, -32600, "minions-mcp-bridge: invalid request");
+    return;
+  }
+  const id = "id" in req ? (req.id ?? null) : null;
+  switch (req.method) {
+    case "initialize":
+      writeJsonRpcResult(id, {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "minions-memory-bridge-probe", version: "1.0.0" },
+      });
+      return;
+    case "ping":
+      writeJsonRpcResult(id, {});
+      return;
+    case "tools/list":
+      writeJsonRpcResult(id, { tools: PROBE_TOOLS });
+      return;
+    default:
+      writeJsonRpcError(id, -32601, `minions-mcp-bridge: probe-mode does not handle ${req.method}`);
+      return;
+  }
 }
 
 function tryExtractId(line) {
@@ -95,6 +140,10 @@ async function drain() {
 
 rl.on("line", (line) => {
   if (!line.trim()) return;
+  if (probeMode) {
+    handleProbeLine(line);
+    return;
+  }
   queue.push(line);
   drain();
 });

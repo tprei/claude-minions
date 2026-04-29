@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, type ReactElement, type ReactNode } from "react";
+import { useState, useCallback, type ReactElement, type ReactNode } from "react";
 import { cx } from "../util/classnames.js";
 import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
+import { Sheet } from "../components/Sheet.js";
 
 const MOBILE_QUERY = "(max-width: 767px)";
 
@@ -53,15 +54,6 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
   });
   const [railWidth, setRailWidth] = useState<number>(() => loadRailWidth());
 
-  useEffect(() => {
-    if (!isMobile || !sidebarOpen) return;
-    const handler = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setSidebarOpen(false);
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [isMobile, sidebarOpen]);
-
   const closeMobile = (): void => {
     if (isMobile) setSidebarOpen(false);
   };
@@ -94,26 +86,7 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
       </div>
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {isMobile ? (
-          <>
-            {sidebarOpen && (
-              <div
-                className="fixed inset-0 bg-black/50 z-30"
-                onClick={() => setSidebarOpen(false)}
-                aria-hidden="true"
-              />
-            )}
-            <aside
-              className={cx(
-                "fixed left-0 top-12 bottom-0 w-64 border-r border-border bg-bg-soft z-40 overflow-y-auto transform transition-transform duration-200 ease-out",
-                sidebarOpen ? "translate-x-0" : "-translate-x-full",
-              )}
-              aria-hidden={!sidebarOpen}
-            >
-              {sidebarNode}
-            </aside>
-          </>
-        ) : (
+        {!isMobile && (
           <aside
             className={cx(
               "flex-shrink-0 border-r border-border bg-bg-soft transition-all duration-200 overflow-hidden",
@@ -150,6 +123,18 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
           )}
         </main>
       </div>
+
+      {isMobile && (
+        <Sheet
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          side="left"
+        >
+          <div data-testid="mobile-sidebar" className="-m-4">
+            {sidebarNode}
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }

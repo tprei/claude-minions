@@ -1,7 +1,43 @@
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { EngineContext } from "../context.js";
 import type { MemoryKind } from "@minions/shared";
 import { MemoryValidationError, validateMemoryBody } from "@minions/shared";
 import { EngineError } from "../errors.js";
+
+export function resolveBridgeEntry(): string | null {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const enginePkgRoot = path.resolve(here, "..", "..");
+  const dist = path.join(enginePkgRoot, "dist", "memory", "mcpBridge.mjs");
+  const src = path.join(enginePkgRoot, "src", "memory", "mcpBridge.mjs");
+  if (existsSync(dist)) return dist;
+  if (existsSync(src)) return src;
+  return null;
+}
+
+export interface BridgeEntryAssertion {
+  ok: boolean;
+  reason?: string;
+  path?: string;
+}
+
+export function assertBridgeEntry(bridgePath: string | null): BridgeEntryAssertion {
+  if (!bridgePath) return { ok: false, reason: "memory MCP bridge script not found" };
+  if (!existsSync(bridgePath)) return { ok: false, reason: `bridge entry missing: ${bridgePath}` };
+  let st;
+  try {
+    st = statSync(bridgePath);
+  } catch (err) {
+    return { ok: false, reason: `bridge entry stat failed: ${(err as Error).message}` };
+  }
+  if (!st.isFile()) return { ok: false, reason: `bridge entry is not a file: ${bridgePath}` };
+  if (st.size === 0) return { ok: false, reason: `bridge entry is empty: ${bridgePath}` };
+  if (!/\.(mjs|js|cjs)$/.test(bridgePath)) {
+    return { ok: false, reason: `bridge entry has unexpected extension: ${bridgePath}` };
+  }
+  return { ok: true, path: bridgePath };
+}
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";

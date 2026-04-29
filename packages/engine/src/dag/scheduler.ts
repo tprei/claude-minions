@@ -11,6 +11,23 @@ const TERMINAL_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionSta
   "cancelled",
 ]);
 
+const TERMINAL_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
+  "done",
+  "landed",
+  "skipped",
+  "failed",
+  "ci-failed",
+  "rebase-conflict",
+  "cancelled",
+]);
+
+const FAILED_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
+  "failed",
+  "ci-failed",
+  "rebase-conflict",
+  "cancelled",
+]);
+
 export class DagScheduler {
   constructor(
     private readonly repo: DagRepo,
@@ -103,12 +120,10 @@ export class DagScheduler {
     const dag = this.repo.get(dagId);
     if (!dag) return;
 
-    const allTerminal = dag.nodes.every((n) =>
-      ["done", "landed", "failed", "skipped"].includes(n.status),
-    );
+    const allTerminal = dag.nodes.every((n) => TERMINAL_NODE_STATUSES.has(n.status));
     if (!allTerminal) return;
 
-    const anyFailed = dag.nodes.some((n) => n.status === "failed");
+    const anyFailed = dag.nodes.some((n) => FAILED_NODE_STATUSES.has(n.status));
     this.repo.update(dagId, { status: anyFailed ? "failed" : "completed" });
   }
 
