@@ -109,7 +109,6 @@ function ndjsonToEvents(obj: NdjsonLine, state: ParseStreamState): { events: Pro
         status: isError ? "error" : "ok",
         body,
       });
-      state["turnInProgress"] = false;
       break;
     }
     case "result": {
@@ -123,20 +122,6 @@ function ndjsonToEvents(obj: NdjsonLine, state: ParseStreamState): { events: Pro
         events.push({ kind: "turn_completed", outcome: "errored", stopReason: subtype });
       }
       state["turnInProgress"] = false;
-      break;
-    }
-    case "user": {
-      const message = obj["message"] as Record<string, unknown> | undefined;
-      const content = message?.["content"];
-      if (Array.isArray(content)) {
-        const hasToolResult = content.some((c) => {
-          const cb = c as Record<string, unknown> | null;
-          return cb?.["type"] === "tool_result";
-        });
-        if (hasToolResult) {
-          state["turnInProgress"] = false;
-        }
-      }
       break;
     }
     default:
