@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -14,15 +14,19 @@ import ReactFlow, {
   Position,
 } from "reactflow";
 import dagre from "dagre";
-import type { DAG, DAGNode, DAGNodeStatus } from "@minions/shared";
+import { isRetryableDagNodeStatus, type DAG, type DAGNode, type DAGNodeStatus } from "@minions/shared";
 import { useDagStore, EMPTY_DAGS } from "../store/dagStore.js";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
-import { useConnectionStore } from "../connections/store.js";
+import { useConnectionStore, type Connection } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { useFeature } from "../hooks/useFeature.js";
+import { useApiMutation } from "../hooks/useApiMutation.js";
 import { UpgradeNotice } from "../components/UpgradeNotice.js";
 import { Sheet } from "../components/Sheet.js";
+import { Modal } from "../components/Modal.js";
+import { Button } from "../components/Button.js";
+import { retryDagNode } from "../transport/rest.js";
 import { cx } from "../util/classnames.js";
 import { PANEL_DAG_CANVAS, usePanelLayout } from "../util/panelLayout.js";
 import { getViewport, setViewport, type Viewport } from "./dagViewport.js";
@@ -53,6 +57,7 @@ const PARENT_NODE_ID = "__parent__";
 
 interface DagNodeData {
   node: DAGNode;
+  onRequestRetry?: (nodeId: string) => void;
 }
 
 interface ParentNodeData {
@@ -60,7 +65,10 @@ interface ParentNodeData {
   parentDagId: string | null;
 }
 
-function layoutDag(dag: DAG): { nodes: Node[]; edges: Edge[]; rootIds: string[] } {
+function layoutDag(
+  dag: DAG,
+  onRequestRetry?: (nodeId: string) => void,
+): { nodes: Node[]; edges: Edge[]; rootIds: string[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "TB", ranksep: 80, nodesep: 40 });
@@ -81,7 +89,7 @@ function layoutDag(dag: DAG): { nodes: Node[]; edges: Edge[]; rootIds: string[] 
     return {
       id: n.id,
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
-      data: { node: n } satisfies DagNodeData,
+      data: { node: n, onRequestRetry } satisfies DagNodeData,
       type: "dagNode",
     };
   });
@@ -120,7 +128,7 @@ function findParentDagId(
 }
 
 function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
-  const { node } = data;
+  const { node, onRequestRetry } = data;
   const activeId = useConnectionStore((s) => s.activeId);
   const hasAttention = useSessionStore((s) => {
     if (!node.sessionSlug || !activeId) return false;
@@ -129,6 +137,7 @@ function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
     return !!session && session.attention.length > 0;
   });
   const showAttention = hasAttention || node.status === "failed";
+  const canRetry = isRetryableDagNodeStatus(node.status);
 
   const goToSession = (slug: string): void => {
     if (!activeId) return;
@@ -160,18 +169,32 @@ function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
       )}
       <div className="font-medium leading-tight truncate">{node.title}</div>
       <div className="mt-1 text-[10px] opacity-70">{node.status}</div>
-      {node.sessionSlug && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (node.sessionSlug) goToSession(node.sessionSlug);
-          }}
-          className="mt-1 text-[10px] underline opacity-60 hover:opacity-100"
-        >
-          {node.sessionSlug}
-        </button>
-      )}
+      <div className="mt-1 flex items-center gap-2">
+        {node.sessionSlug && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (node.sessionSlug) goToSession(node.sessionSlug);
+            }}
+            className="text-[10px] underline opacity-60 hover:opacity-100"
+          >
+            {node.sessionSlug}
+          </button>
+        )}
+        {canRetry && onRequestRetry && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRequestRetry(node.id);
+            }}
+            className="text-[10px] px-1.5 py-0.5 rounded border border-red-700 bg-red-950/60 text-red-300 hover:bg-red-900/60 hover:text-red-200"
+          >
+            retry
+          </button>
+        )}
+      </div>
       <Handle type="source" position={Position.Bottom} className="!bg-zinc-600" />
     </div>
   );
@@ -203,13 +226,53 @@ interface CanvasProps {
   onSelectDag: (id: string) => void;
 }
 
+function transitiveDescendants(dag: DAG, rootId: string): DAGNode[] {
+  const set = new Set<string>([rootId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const n of dag.nodes) {
+      if (set.has(n.id)) continue;
+      if (n.dependsOn.some((dep) => set.has(dep))) {
+        set.add(n.id);
+        changed = true;
+      }
+    }
+  }
+  set.delete(rootId);
+  return dag.nodes.filter((n) => set.has(n.id));
+}
+
 function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
   const dagsMap = useDagStore(
     (s) => (connectionId ? s.byConnection.get(connectionId) ?? EMPTY_DAGS : EMPTY_DAGS),
   );
+  const conn = useConnectionStore((s) =>
+    connectionId ? s.connections.find((c) => c.id === connectionId) ?? null : null,
+  );
+
+  const [retryFor, setRetryFor] = useState<string | null>(null);
+
+  const retryMutation = useApiMutation<{ conn: Connection; dagId: string; nodeId: string }, DAG>(
+    ({ conn: c, dagId, nodeId }) => retryDagNode(c, dagId, nodeId),
+    {
+      onSuccess: () => {
+        setRetryFor(null);
+      },
+    },
+  );
+  const { reset: resetRetryMutation, run: runRetryMutation } = retryMutation;
+
+  const handleRequestRetry = useCallback(
+    (nodeId: string) => {
+      resetRetryMutation();
+      setRetryFor(nodeId);
+    },
+    [resetRetryMutation],
+  );
 
   const { nodes, edges } = useMemo(() => {
-    const { nodes: baseNodes, edges: baseEdges, rootIds } = layoutDag(dag);
+    const { nodes: baseNodes, edges: baseEdges, rootIds } = layoutDag(dag, handleRequestRetry);
 
     if (!dag.rootSessionSlug) {
       return { nodes: baseNodes, edges: baseEdges };
@@ -256,7 +319,26 @@ function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
       nodes: [parentNode, ...baseNodes],
       edges: [...baseEdges, ...parentEdges],
     };
-  }, [dag, dagsMap]);
+  }, [dag, dagsMap, handleRequestRetry]);
+
+  const retryNode = useMemo(
+    () => (retryFor ? dag.nodes.find((n) => n.id === retryFor) ?? null : null),
+    [dag, retryFor],
+  );
+  const downstream = useMemo(
+    () => (retryFor ? transitiveDescendants(dag, retryFor) : []),
+    [dag, retryFor],
+  );
+
+  const closeRetryModal = useCallback(() => {
+    setRetryFor(null);
+    resetRetryMutation();
+  }, [resetRetryMutation]);
+
+  const handleConfirmRetry = useCallback(() => {
+    if (!conn || !retryFor) return;
+    void runRetryMutation({ conn, dagId: dag.id, nodeId: retryFor });
+  }, [conn, retryFor, dag.id, runRetryMutation]);
 
   const stored = useMemo<Viewport | null>(() => {
     if (!connectionId) return null;
@@ -310,6 +392,9 @@ function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
     [connectionId, onSelectDag],
   );
 
+  const downstreamPreview = downstream.slice(0, 5);
+  const downstreamExtra = Math.max(0, downstream.length - downstreamPreview.length);
+
   return (
     <div className="w-full h-full">
       <ReactFlow
@@ -326,6 +411,64 @@ function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
         <Controls className="!bg-bg-elev !border-border" />
         <MiniMap className="!bg-bg-elev !border-border" nodeColor="#3f3f46" />
       </ReactFlow>
+      <Modal
+        open={retryNode !== null}
+        onClose={closeRetryModal}
+        title={retryNode ? `Retry node "${retryNode.title}"?` : undefined}
+      >
+        {retryNode && (
+          <div className="flex flex-col gap-4 text-sm">
+            <div>
+              <div className="text-xs text-fg-subtle mb-1">Failure reason:</div>
+              <pre className="card p-2 text-xs whitespace-pre-wrap break-words max-h-40 overflow-auto">
+                {retryNode.failedReason ?? "(none recorded)"}
+              </pre>
+            </div>
+            <div>
+              {downstream.length === 0 ? (
+                <div className="text-xs text-fg-muted">
+                  No downstream nodes depend on this one.
+                </div>
+              ) : (
+                <>
+                  <div className="text-xs text-fg-muted mb-1">
+                    Downstream nodes will be re-stacked against the new branch:
+                  </div>
+                  <ul className="list-disc pl-5 text-xs text-fg-muted space-y-0.5">
+                    {downstreamPreview.map((n) => (
+                      <li key={n.id} className="truncate">{n.title}</li>
+                    ))}
+                    {downstreamExtra > 0 && (
+                      <li className="text-fg-subtle">+{downstreamExtra} more</li>
+                    )}
+                  </ul>
+                </>
+              )}
+            </div>
+            {retryMutation.error && (
+              <div className="card p-2 text-xs text-err border border-err/30 bg-err/10">
+                {retryMutation.error.message}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="ghost"
+                onClick={closeRetryModal}
+                disabled={retryMutation.loading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleConfirmRetry}
+                disabled={retryMutation.loading || !conn}
+              >
+                {retryMutation.loading ? "Retrying…" : "Retry"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
