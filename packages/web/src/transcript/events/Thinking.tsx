@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ThinkingEvent } from "@minions/shared";
+import { MarkdownView } from "../../markdown/MarkdownView.js";
 import { cx } from "../../util/classnames.js";
 
 function formatTs(ts: string): string {
@@ -35,9 +36,9 @@ export function Thinking({ event }: Props) {
           <span className={cx("transition-transform", expanded ? "rotate-90" : "")}>›</span>
         </button>
         {expanded && (
-          <pre className="mt-1 text-xs italic text-fg-muted whitespace-pre-wrap bg-bg-soft rounded p-2 border border-border break-words">
-            {event.text}
-          </pre>
+          <div className="mt-1 text-xs italic text-fg-muted bg-bg-soft rounded p-2 border border-border">
+            <MarkdownView text={event.text} />
+          </div>
         )}
       </div>
     </div>
