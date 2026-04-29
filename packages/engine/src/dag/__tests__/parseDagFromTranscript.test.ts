@@ -275,4 +275,41 @@ describe("parseDagFromTranscript handler", () => {
     const apiNode = refreshed.nodes.find((n) => n.title === "api")!;
     assert.equal(apiNode.status, "pending", "dependent node still pending");
   });
+
+  test("tryCreateFromTranscript creates DAG directly from current transcript without bus event", async () => {
+    const block = JSON.stringify({
+      title: "Direct create",
+      goal: "Trigger DAG creation synchronously from coordinator",
+      nodes: [
+        { title: "root", prompt: "do root", dependsOn: [] },
+      ],
+    });
+    const ev = makeAssistantText(0, `\`\`\`dag\n${block}\n\`\`\``);
+    transcriptRef.events.push(ev);
+    persistTranscript(db, [ev]);
+
+    const result = await api.tryCreateFromTranscript(SHIP_SLUG);
+    assert.equal(result.created, true, "DAG was created on first call");
+    assert.ok(result.dagId, "dagId returned");
+
+    const dags = api.list();
+    assert.equal(dags.length, 1);
+    assert.equal(dags[0]!.id, result.dagId);
+
+    assert.equal(spy.setDagIdCalls.length, 1, "setDagId invoked once");
+    assert.equal(spy.setDagIdCalls[0]!.dagId, result.dagId);
+
+    const second = await api.tryCreateFromTranscript(SHIP_SLUG);
+    assert.equal(second.created, false, "second call is a no-op");
+    assert.equal(second.dagId, result.dagId, "second call returns existing dagId");
+    assert.equal(spy.setDagIdCalls.length, 1, "setDagId not called again");
+  });
+
+  test("tryCreateFromTranscript returns { created: false } when no parseable block", async () => {
+    transcriptRef.events.push(makeAssistantText(0, "no fenced dag block here"));
+    const result = await api.tryCreateFromTranscript(SHIP_SLUG);
+    assert.equal(result.created, false);
+    assert.equal(result.dagId, undefined);
+    assert.equal(api.list().length, 0);
+  });
 });

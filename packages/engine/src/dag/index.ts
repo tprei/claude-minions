@@ -158,53 +158,50 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
     return blocks;
   }
 
-  const unsubscribe = bus.on("transcript_event", (event) => {
-    const slug = event.sessionSlug;
+  async function tryCreateFromTranscript(
+    slug: string,
+  ): Promise<{ created: boolean; dagId?: string }> {
     const session = ctx.sessions.get(slug);
-    if (!session) return;
-    if (session.mode !== "ship") return;
-    if (session.shipStage !== "dag") return;
+    if (!session) return { created: false };
+
+    const existing = repo.byRootSession(slug);
+    if (existing) return { created: false, dagId: existing.id };
 
     const transcript = ctx.sessions.transcript(slug);
     const parsed = parseDagFromTranscript(transcript);
+    if (!parsed) return { created: false };
 
-    if (parsed) {
-      const existing = repo.byRootSession(slug);
-      if (existing) return;
-      try {
-        const created = repo.createFromParsed(parsed, {
-          repoId: session.repoId,
-          baseBranch: session.baseBranch,
-          rootSessionSlug: slug,
-        });
-        emitStatus(
-          slug,
-          "info",
-          `Created DAG ${created.id} with ${created.nodes.length} nodes from your fenced JSON block.`,
-          { dagId: created.id, nodeCount: created.nodes.length },
-        );
-        subLog.info("dag created from transcript", {
-          slug,
-          dagId: created.id,
-          nodes: created.nodes.length,
-        });
-        ctx.sessions.setDagId(slug, created.id);
-        scheduler.tick(created.id).catch((err: unknown) => {
-          subLog.error("scheduler.tick after dag creation failed", {
-            slug,
-            dagId: created.id,
-            err: (err as Error).message,
-          });
-        });
-      } catch (err) {
-        subLog.error("failed to create dag from parsed transcript", {
-          slug,
-          err: (err as Error).message,
-        });
-      }
-      return;
+    try {
+      const created = repo.createFromParsed(parsed, {
+        repoId: session.repoId,
+        baseBranch: session.baseBranch,
+        rootSessionSlug: slug,
+      });
+      emitStatus(
+        slug,
+        "info",
+        `Created DAG ${created.id} with ${created.nodes.length} nodes from your fenced JSON block.`,
+        { dagId: created.id, nodeCount: created.nodes.length },
+      );
+      subLog.info("dag created from transcript", {
+        slug,
+        dagId: created.id,
+        nodes: created.nodes.length,
+      });
+      ctx.sessions.setDagId(slug, created.id);
+      await scheduler.tick(created.id);
+      return { created: true, dagId: created.id };
+    } catch (err) {
+      subLog.error("failed to create dag from parsed transcript", {
+        slug,
+        err: (err as Error).message,
+      });
+      return { created: false };
     }
+  }
 
+  function emitMalformedBlockWarning(slug: string): void {
+    const transcript = ctx.sessions.transcript(slug);
     const blocks = findFencedDagBlocks(transcript);
     if (blocks.length === 0) return;
 
@@ -223,6 +220,26 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
       );
       break;
     }
+  }
+
+  const unsubscribe = bus.on("transcript_event", (event) => {
+    const slug = event.sessionSlug;
+    const session = ctx.sessions.get(slug);
+    if (!session) return;
+    if (session.mode !== "ship") return;
+    if (session.shipStage !== "dag") return;
+
+    tryCreateFromTranscript(slug)
+      .then((result) => {
+        if (result.created || result.dagId) return;
+        emitMalformedBlockWarning(slug);
+      })
+      .catch((err: unknown) => {
+        subLog.error("transcript_event tryCreateFromTranscript failed", {
+          slug,
+          err: (err as Error).message,
+        });
+      });
   });
 
   const api: EngineContext["dags"] = {
@@ -354,6 +371,10 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
         { nodeId, from, to: "landed" },
       );
       await scheduler.tick(dagId);
+    },
+
+    async tryCreateFromTranscript(slug: string): Promise<{ created: boolean; dagId?: string }> {
+      return tryCreateFromTranscript(slug);
     },
   };
 
