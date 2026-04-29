@@ -13,10 +13,12 @@ export async function onPrUpdated(
   const { pr } = session;
 
   if (pr.state === "merged" || pr.state === "closed") {
-    log.info("PR closed/merged, stopping session", { slug, prState: pr.state });
-    await ctx.sessions.stop(slug, `PR ${pr.state}`).catch((err) => {
-      log.warn("could not stop session on PR close", { slug, err: (err as Error).message });
-    });
+    if (session.status === "running" || session.status === "waiting_input") {
+      log.info("PR closed/merged, stopping session", { slug, prState: pr.state });
+      await ctx.sessions.stop(slug, `PR ${pr.state}`).catch((err) => {
+        log.warn("could not stop session on PR close", { slug, err: (err as Error).message });
+      });
+    }
 
     ctx.bus.emit({
       kind: "session_updated",
