@@ -268,4 +268,24 @@ describe("DagScheduler", () => {
 
     assert.equal(spawnedSessions.length, 3, "at most 3 sessions spawned (default cap)");
   });
+
+  for (const terminal of ["ci-failed", "rebase-conflict", "cancelled"] as const) {
+    test(`checkCompletion advances DAG to failed when a node ends in ${terminal}`, async () => {
+      const nodeA = makeNode("A", "landed");
+      const nodeB = makeNode("B", terminal);
+
+      const dag = makeDag("dag1", [nodeA, nodeB]);
+      const repo = makeMockRepo(dag) as unknown as DagRepo;
+      const spawnedSessions: Session[] = [];
+      const ctx = makeMockCtx(spawnedSessions);
+
+      const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+      await scheduler.tick("dag1");
+
+      assert.equal(spawnedSessions.length, 0, "no new sessions spawned");
+      const finalDag = repo.get("dag1");
+      assert.equal(finalDag?.status, "failed", `DAG should be failed when node is ${terminal}`);
+    });
+  }
 });

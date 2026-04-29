@@ -1,14 +1,102 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import readline from "node:readline";
 import type { DoctorCheck, DoctorCheckName, FeatureFlag } from "@minions/shared";
 import type { EngineContext } from "../context.js";
+import { findClaudeBinary } from "../providers/claudeCode.js";
+import { assertBridgeEntry } from "../memory/mcpServer.js";
 
 export type ProbeResult = { ready: true } | { ready: false; reason: string };
 export type FeatureProbe = (ctx: EngineContext) => ProbeResult | Promise<ProbeResult>;
 
 const READY: ProbeResult = { ready: true };
 const pending = (reason: string): ProbeResult => ({ ready: false, reason });
+
+export const MEMORY_MCP_PROBE_TIMEOUT_MS = 2000;
+
+export async function probeMemoryMcpBridge(
+  bridgePath: string | null,
+  timeoutMs = MEMORY_MCP_PROBE_TIMEOUT_MS,
+): Promise<ProbeResult> {
+  const assertion = assertBridgeEntry(bridgePath);
+  if (!assertion.ok || !assertion.path) {
+    return pending(assertion.reason ?? "memory MCP bridge script not found");
+  }
+
+  let child: ReturnType<typeof spawn> | null = null;
+  try {
+    child = spawn(process.execPath, [assertion.path], {
+      env: { ...process.env, MINIONS_PROBE: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (err) {
+    return pending(`bridge spawn failed: ${(err as Error).message}`);
+  }
+
+  const cleanup = (): void => {
+    try {
+      if (child && !child.killed) child.kill("SIGTERM");
+    } catch {
+      /* ignore */
+    }
+  };
+
+  try {
+    if (!child.stdin || !child.stdout) {
+      return pending("bridge spawn produced no stdio pipes");
+    }
+    const rl = readline.createInterface({ input: child.stdout });
+    const lineP = new Promise<string>((resolve, reject) => {
+      rl.once("line", (l) => resolve(l));
+      child!.once("error", (err) => reject(err));
+      child!.once("exit", (code, signal) => {
+        if (code !== 0 && code !== null) {
+          reject(new Error(`bridge exited with code ${code}`));
+        } else if (signal) {
+          reject(new Error(`bridge killed by signal ${signal}`));
+        }
+      });
+    });
+
+    const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    child.stdin.write(request + "\n");
+
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutP = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`tools/list timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+
+    let line: string;
+    try {
+      line = await Promise.race([lineP, timeoutP]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      rl.close();
+    }
+
+    let parsed: { result?: { tools?: { name?: string }[] }; error?: { code: number; message: string } };
+    try {
+      parsed = JSON.parse(line) as typeof parsed;
+    } catch (err) {
+      return pending(`bridge response not JSON: ${(err as Error).message}`);
+    }
+    if (parsed.error) {
+      return pending(`bridge tools/list error: ${parsed.error.message}`);
+    }
+    const tools = parsed.result?.tools ?? [];
+    const names = new Set(tools.map((t) => t.name).filter((n): n is string => typeof n === "string"));
+    if (!names.has("propose_memory")) {
+      return pending(`bridge tools/list missing propose_memory (got ${[...names].join(", ") || "none"})`);
+    }
+    return READY;
+  } catch (err) {
+    return pending(`bridge probe failed: ${(err as Error).message}`);
+  } finally {
+    cleanup();
+  }
+}
 
 export const FEATURE_PROBES: Record<FeatureFlag, FeatureProbe> = {
   sessions: (ctx) => (ctx.sessions ? READY : pending("sessions subsystem not wired")),
@@ -327,4 +415,59 @@ export async function runDoctorChecks(
     }
   }
   return out;
+}
+
+export type ProviderHealthStatus = "ok" | "degraded";
+
+export interface ProviderHealthEntry {
+  status: ProviderHealthStatus;
+  reason?: string;
+}
+
+type ProviderHealthProbe = () => Promise<ProviderHealthEntry>;
+
+export const PROVIDER_PROBES: Record<string, ProviderHealthProbe> = {
+  "claude-code": async () => {
+    const bin = await findClaudeBinary();
+    if (bin) return { status: "ok" };
+    return {
+      status: "degraded",
+      reason: "claude CLI not found in $PATH",
+    };
+  },
+  mock: async () => ({ status: "ok" }),
+};
+
+let providerHealthCache: Record<string, ProviderHealthEntry> | null = null;
+let providerHealthInflight: Promise<Record<string, ProviderHealthEntry>> | null = null;
+
+async function probeAllProviders(): Promise<Record<string, ProviderHealthEntry>> {
+  const out: Record<string, ProviderHealthEntry> = {};
+  for (const [name, probe] of Object.entries(PROVIDER_PROBES)) {
+    try {
+      out[name] = await probe();
+    } catch (err) {
+      out[name] = {
+        status: "degraded",
+        reason: `probe threw: ${(err as Error).message}`,
+      };
+    }
+  }
+  return out;
+}
+
+export async function computeProviderHealth(): Promise<Record<string, ProviderHealthEntry>> {
+  if (providerHealthCache) return providerHealthCache;
+  if (providerHealthInflight) return providerHealthInflight;
+  providerHealthInflight = probeAllProviders().then((result) => {
+    providerHealthCache = result;
+    providerHealthInflight = null;
+    return result;
+  });
+  return providerHealthInflight;
+}
+
+export function refreshProviderHealth(): void {
+  providerHealthCache = null;
+  providerHealthInflight = null;
 }

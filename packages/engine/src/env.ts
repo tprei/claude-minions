@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import { EngineError } from "./errors.js";
 
 export interface EngineEnv {
   port: number;
@@ -20,8 +21,16 @@ export interface EngineEnv {
   webDist: string | null;
 }
 
-function parseList(v: string | undefined): string[] {
-  if (!v) return [];
+const DEFAULT_CORS_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174",
+];
+
+function parseCorsOrigins(v: string | undefined): string[] {
+  if (v === undefined || v.trim() === "") return [...DEFAULT_CORS_ORIGINS];
+  if (v.trim() === "none") return [];
   return v.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
@@ -60,11 +69,21 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): EngineEnv {
       ? { id: ghAppId, privateKey: ghAppPrivateKey, installationId: ghAppInstallationId }
       : null;
 
+  const rawToken = env.MINIONS_TOKEN ?? "";
+  const allowInsecureToken = env.MINIONS_ALLOW_INSECURE_TOKEN === "1";
+  if (!allowInsecureToken && (rawToken === "" || rawToken === "changeme")) {
+    throw new EngineError(
+      "internal",
+      "Refusing to start: MINIONS_TOKEN must be set to a unique secret (not empty, not 'changeme'). " +
+        "Set MINIONS_ALLOW_INSECURE_TOKEN=1 to bypass this check (not recommended outside local development).",
+    );
+  }
+
   return {
     port: asInt(env.MINIONS_PORT, 8787),
-    host: env.MINIONS_HOST ?? "0.0.0.0",
-    token: env.MINIONS_TOKEN ?? "changeme",
-    corsOrigins: parseList(env.MINIONS_CORS_ORIGINS) || ["http://localhost:5173"],
+    host: env.MINIONS_HOST ?? "127.0.0.1",
+    token: rawToken,
+    corsOrigins: parseCorsOrigins(env.MINIONS_CORS_ORIGINS),
     workspace,
     provider: env.MINIONS_PROVIDER ?? "mock",
     logLevel: level(env.MINIONS_LOG_LEVEL),
