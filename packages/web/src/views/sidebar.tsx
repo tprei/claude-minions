@@ -1,4 +1,5 @@
 import { useMemo, type ReactElement } from "react";
+import { SESSION_BUCKETS, type SessionBucket } from "@minions/shared";
 import { useConnectionStore } from "../connections/store.js";
 import { useVersionStore } from "../store/version.js";
 import { useMemoryStore, EMPTY_MEMORIES } from "../store/memoryStore.js";
@@ -9,13 +10,16 @@ import { cx } from "../util/classnames.js";
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
+type FilterBucket = "all" | SessionBucket;
 
 interface SidebarProps {
   currentView: ViewKind;
   filterStatus: FilterStatus;
   filterMode: FilterMode;
+  filterBucket: FilterBucket;
   onFilterStatus: (v: FilterStatus) => void;
   onFilterMode: (v: FilterMode) => void;
+  onFilterBucket: (v: FilterBucket) => void;
   onOpenAudit: () => void;
   onOpenMemory: () => void;
   onOpenRuntime: () => void;
@@ -56,12 +60,19 @@ const MODE_FILTERS: { value: FilterMode; label: string }[] = [
   { value: "loop", label: "Loop" },
 ];
 
+const BUCKET_FILTERS: { value: FilterBucket; label: string }[] = [
+  { value: "all", label: "All buckets" },
+  ...SESSION_BUCKETS.map((b) => ({ value: b, label: b })),
+];
+
 export function Sidebar({
   currentView,
   filterStatus,
   filterMode,
+  filterBucket,
   onFilterStatus,
   onFilterMode,
+  onFilterBucket,
   onOpenAudit,
   onOpenMemory,
   onOpenRuntime,
@@ -164,6 +175,24 @@ export function Sidebar({
             className={cx(
               "w-full text-left px-2 py-1 rounded text-xs transition-colors",
               filterMode === f.value
+                ? "text-fg bg-bg-elev"
+                : "text-fg-subtle hover:text-fg-muted",
+            )}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="px-2">
+        <p className="text-xs text-fg-subtle uppercase tracking-wider px-2 py-1">Bucket</p>
+        {BUCKET_FILTERS.map(f => (
+          <button
+            key={f.value}
+            onClick={() => onFilterBucket(f.value)}
+            className={cx(
+              "w-full text-left px-2 py-1 rounded text-xs transition-colors",
+              filterBucket === f.value
                 ? "text-fg bg-bg-elev"
                 : "text-fg-subtle hover:text-fg-muted",
             )}

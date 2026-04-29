@@ -28,9 +28,11 @@ import { OfflineBanner } from "./pwa/OfflineBanner.js";
 import { InstallButton } from "./pwa/InstallButton.js";
 import { registerServiceWorker } from "./pwa/sw.js";
 import { UpdateBanner } from "./pwa/UpdateBanner.js";
+import type { SessionBucket } from "@minions/shared";
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
+type FilterBucket = "all" | SessionBucket;
 
 function makeApi(conn: Connection) {
   return {
@@ -61,6 +63,7 @@ export function App(): ReactElement {
   const [urlState, setUrlStateLocal] = useState(() => parseUrl());
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
+  const [filterBucket, setFilterBucket] = useState<FilterBucket>("all");
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
@@ -135,8 +138,10 @@ export function App(): ReactElement {
             currentView={view as ViewKind}
             filterStatus={filterStatus}
             filterMode={filterMode}
+            filterBucket={filterBucket}
             onFilterStatus={setFilterStatus}
             onFilterMode={setFilterMode}
+            onFilterBucket={setFilterBucket}
             onOpenAudit={() => setAuditOpen(true)}
             onOpenMemory={() => setMemoryOpen(true)}
             onOpenRuntime={() => setRuntimeOpen(true)}
@@ -149,6 +154,7 @@ export function App(): ReactElement {
             view={view as ViewKind}
             filterStatus={filterStatus}
             filterMode={filterMode}
+            filterBucket={filterBucket}
             sessionSlug={sessionSlug ?? null}
             api={api}
           />
