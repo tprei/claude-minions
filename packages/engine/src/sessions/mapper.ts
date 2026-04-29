@@ -3,6 +3,7 @@ import type {
   SessionStatus,
   SessionMode,
   ShipStage,
+  PermissionTier,
   AttentionFlag,
   QuickAction,
   SessionStats,
@@ -65,6 +66,7 @@ export interface SessionRow {
   loop_id: string | null;
   variant_of: string | null;
   metadata: string;
+  permission_tier: string | null;
 }
 
 export interface TranscriptRow {
@@ -109,6 +111,7 @@ export function rowToSession(row: SessionRow, childSlugs: string[] = []): Sessio
     mode: row.mode as SessionMode,
     status: row.status as SessionStatus,
     shipStage: row.ship_stage ? (row.ship_stage as ShipStage) : undefined,
+    permissionTier: row.permission_tier ? (row.permission_tier as PermissionTier) : undefined,
     repoId: row.repo_id ?? undefined,
     branch: row.branch ?? undefined,
     baseBranch: row.base_branch ?? undefined,
@@ -143,6 +146,7 @@ export function sessionToRow(s: Session): SessionRow {
     mode: s.mode,
     status: s.status,
     ship_stage: s.shipStage ?? null,
+    permission_tier: s.permissionTier ?? null,
     repo_id: s.repoId ?? null,
     branch: s.branch ?? null,
     base_branch: s.baseBranch ?? null,

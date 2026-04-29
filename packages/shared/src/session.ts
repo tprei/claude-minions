@@ -26,6 +26,9 @@ export type SessionMode = (typeof SESSION_MODES)[number];
 
 export type ShipStage = "think" | "plan" | "dag" | "verify" | "done";
 
+export const PERMISSION_TIERS = ["read", "worktree", "full"] as const;
+export type PermissionTier = (typeof PERMISSION_TIERS)[number];
+
 export interface QuickAction {
   id: string;
   label: string;
@@ -77,6 +80,7 @@ export interface Session {
   mode: SessionMode;
   status: SessionStatus;
   shipStage?: ShipStage;
+  permissionTier?: PermissionTier;
   repoId?: string;
   branch?: string;
   baseBranch?: string;

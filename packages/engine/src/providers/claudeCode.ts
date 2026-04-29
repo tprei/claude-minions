@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs/promises";
 import readline from "node:readline";
+import type { PermissionTier } from "@minions/shared";
 import type {
   AgentProvider,
   ProviderHandle,
@@ -11,6 +12,26 @@ import type {
   ParseStreamState,
 } from "./provider.js";
 import { EngineError } from "../errors.js";
+
+function appendPermissionFlags(
+  args: string[],
+  tier: PermissionTier | undefined,
+  worktree: string,
+): void {
+  switch (tier) {
+    case "read":
+      args.push("--permission-mode", "plan");
+      return;
+    case "worktree":
+      args.push("--permission-mode", "acceptEdits");
+      args.push("--add-dir", worktree);
+      return;
+    case "full":
+    case undefined:
+      args.push("--dangerously-skip-permissions");
+      return;
+  }
+}
 
 type NdjsonLine = Record<string, unknown>;
 
@@ -263,11 +284,7 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
     "--verbose",
   ];
 
-  if (opts.allowWriteTools === false) {
-    args.push("--permission-mode", "plan");
-  } else {
-    args.push("--dangerously-skip-permissions");
-  }
+  appendPermissionFlags(args, opts.permissionTier, opts.worktree);
 
   if (opts.modelHint) {
     args.push("--model", opts.modelHint);
@@ -292,11 +309,7 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
 export function buildResumeArgs(opts: ProviderResumeOpts): string[] {
   const args = ["--output-format", "stream-json", "--print", "--verbose"];
 
-  if (opts.allowWriteTools === false) {
-    args.push("--permission-mode", "plan");
-  } else {
-    args.push("--dangerously-skip-permissions");
-  }
+  appendPermissionFlags(args, opts.permissionTier, opts.worktree);
 
   if (opts.mcpConfigPath) {
     args.push("--mcp-config", opts.mcpConfigPath);

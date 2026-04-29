@@ -13,6 +13,7 @@ import type {
   Checkpoint,
   Screenshot,
   WorkspaceDiff,
+  PermissionTier,
 } from "@minions/shared";
 import type { EventBus } from "../bus/eventBus.js";
 import type { Logger } from "../logger.js";
@@ -55,18 +56,21 @@ interface RepoRow {
   default_branch: string;
 }
 
-function deriveAllowWriteTools(
+export function derivePermissionTier(
   mode: SessionMode,
   shipStage: import("@minions/shared").ShipStage | null,
-): boolean | undefined {
+): PermissionTier {
+  if (mode === "think") {
+    return "read";
+  }
   if (mode === "ship") {
     const stage = shipStage ?? "think";
-    return !READ_ONLY_STAGES.has(stage);
+    return READ_ONLY_STAGES.has(stage) ? "read" : "full";
   }
-  if (mode === "think") {
-    return false;
+  if (mode === "dag-task") {
+    return "worktree";
   }
-  return undefined;
+  return "full";
 }
 
 function resolveBridgeScript(): string {
@@ -160,11 +164,13 @@ export class SessionRegistry {
         stats_cache_read_tokens, stats_cache_creation_tokens,
         stats_cost_usd, stats_duration_ms, stats_tool_calls,
         provider, model_hint, created_at, updated_at, started_at, completed_at,
-        last_turn_at, dag_id, dag_node_id, loop_id, variant_of, metadata
+        last_turn_at, dag_id, dag_node_id, loop_id, variant_of, metadata,
+        permission_tier
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?,
+        ?
       )
     `);
 
@@ -318,6 +324,9 @@ export class SessionRegistry {
     }
     const providerName = ctx.env.provider;
     const title = req.title ?? req.prompt.slice(0, 80);
+    const initialShipStage: import("@minions/shared").ShipStage | null =
+      mode === "ship" ? "think" : null;
+    const permissionTier = derivePermissionTier(mode, initialShipStage);
 
     this.insertSession.run(
       slug, title, req.prompt, mode, "pending",
@@ -330,6 +339,7 @@ export class SessionRegistry {
       now, now, null, null, null,
       null, null, null, null,
       JSON.stringify(req.metadata ?? {}),
+      permissionTier,
     );
 
     if (mode === "ship") {
@@ -505,7 +515,10 @@ export class SessionRegistry {
 
     const mode: SessionMode = req.mode ?? "task";
     const initialShipStage: import("@minions/shared").ShipStage = "think";
-    const allowWriteTools = deriveAllowWriteTools(mode, mode === "ship" ? initialShipStage : null);
+    const permissionTier = derivePermissionTier(
+      mode,
+      mode === "ship" ? initialShipStage : null,
+    );
 
     const handle = await provider.spawn({
       sessionSlug: slug,
@@ -515,7 +528,7 @@ export class SessionRegistry {
       env,
       preamble,
       mcpConfigPath,
-      allowWriteTools,
+      permissionTier,
     });
 
     this.handles.set(slug, handle);
@@ -651,6 +664,11 @@ export class SessionRegistry {
       env["ANTHROPIC_API_KEY"] = process.env["ANTHROPIC_API_KEY"];
     }
 
+    const permissionTier = derivePermissionTier(
+      row.mode as SessionMode,
+      row.ship_stage as import("@minions/shared").ShipStage | null,
+    );
+
     let handle: ProviderHandle;
     try {
       const mcpConfigPath = await this.writeMcpConfig(slug, row.worktree_path);
@@ -662,6 +680,7 @@ export class SessionRegistry {
         env,
         mcpConfigPath,
         additionalPrompt,
+        permissionTier,
       });
     } catch (err) {
       this.replyQueue.release(claim.claimToken);
@@ -738,7 +757,7 @@ export class SessionRegistry {
           ? await this.writeMcpConfig(slug, worktreePath)
           : undefined;
 
-        const allowWriteTools = deriveAllowWriteTools(
+        const permissionTier = derivePermissionTier(
           row.mode as SessionMode,
           row.ship_stage as import("@minions/shared").ShipStage | null,
         );
@@ -749,7 +768,7 @@ export class SessionRegistry {
           externalId: providerState?.external_id ?? undefined,
           env,
           mcpConfigPath,
-          allowWriteTools,
+          permissionTier,
         });
 
         this.handles.set(slug, handle);
