@@ -47,3 +47,13 @@ export interface DAGSplitRequest {
   nodeId: string;
   newNodes: { title: string; prompt: string; dependsOn: string[] }[];
 }
+
+export const RETRYABLE_DAG_NODE_STATUSES: ReadonlySet<DAGNodeStatus> = new Set([
+  "failed",
+  "ci-failed",
+  "rebase-conflict",
+]);
+
+export function isRetryableDagNodeStatus(status: DAGNodeStatus): boolean {
+  return RETRYABLE_DAG_NODE_STATUSES.has(status);
+}
