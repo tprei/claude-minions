@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { runChecks } from "./runner.js";
 
 describe("runChecks", () => {
-  it("returns pending with empty checks when no configs", async () => {
+  it("returns passed with empty checks when no configs (no gates means no failures)", async () => {
     const result = await runChecks([], tmpdir());
-    assert.equal(result.status, "pending");
+    assert.equal(result.status, "passed");
     assert.deepEqual(result.checks, []);
   });
 
