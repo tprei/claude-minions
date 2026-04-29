@@ -22,7 +22,6 @@ import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { UpgradeNotice } from "../components/UpgradeNotice.js";
-import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Sheet } from "../components/Sheet.js";
 import { cx } from "../util/classnames.js";
 import { PANEL_DAG_CANVAS, usePanelLayout } from "../util/panelLayout.js";
@@ -337,7 +336,7 @@ interface Props {
 }
 
 function DagCanvasChrome({ children }: { children: ReactNode }) {
-  const { size, collapsed, breakpoint, setSize, toggleCollapsed, setCollapsed } = usePanelLayout(
+  const { collapsed, breakpoint, toggleCollapsed, setCollapsed } = usePanelLayout(
     PANEL_DAG_CANVAS,
     {
       defaultSize: DAG_DEFAULT_WIDTH,
@@ -368,18 +367,11 @@ function DagCanvasChrome({ children }: { children: ReactNode }) {
         </button>
       </div>
       {showInline && (
-        <div className="flex flex-1 min-h-0">
-          <div
-            data-testid="panel-dag-canvas-body"
-            className="flex flex-col min-w-0 overflow-hidden"
-            style={{ width: size }}
-          >
-            {children}
-          </div>
-          <ResizeHandle
-            direction="horizontal"
-            onDrag={(delta) => setSize((s) => s + delta)}
-          />
+        <div
+          data-testid="panel-dag-canvas-body"
+          className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden"
+        >
+          {children}
         </div>
       )}
       {showSheet && (
