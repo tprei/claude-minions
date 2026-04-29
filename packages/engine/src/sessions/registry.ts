@@ -516,14 +516,19 @@ export class SessionRegistry {
     this.pipeHandle(slug, handle, providerName);
   }
 
-  private pipeHandle(slug: string, handle: ProviderHandle, providerName: string): void {
+  private pipeHandle(
+    slug: string,
+    handle: ProviderHandle,
+    providerName: string,
+    startTurn = 0,
+  ): void {
     const { log, ctx } = this.deps;
 
     const onExternalId = (externalId: string) => {
       this.upsertProviderState.run(slug, providerName, externalId, 0, 0, "{}", nowIso());
     };
 
-    this.collector.collect(slug, handle, onExternalId).catch((err) => {
+    this.collector.collect(slug, handle, onExternalId, startTurn).catch((err) => {
       log.error("transcript collector error", { slug, err: String(err) });
     });
 
@@ -634,7 +639,7 @@ export class SessionRegistry {
     const updatedRow = this.getSessionRow(slug)!;
     this.emitUpdated(this.buildSession(updatedRow));
 
-    this.pipeHandle(slug, handle, providerName);
+    this.pipeHandle(slug, handle, providerName, updatedRow.stats_turns);
     return true;
   }
 
