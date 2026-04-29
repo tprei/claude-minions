@@ -3,6 +3,7 @@ import { cx } from "../util/classnames.js";
 import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Sheet } from "../components/Sheet.js";
+import { parseUrl } from "../routing/parseUrl.js";
 
 const MOBILE_QUERY = "(max-width: 767px)";
 
@@ -67,7 +68,8 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
   }, []);
 
   const sidebarNode = sidebar({ closeMobile });
-  const chatPrimary = Boolean(chatSurface) && isSessionOpen;
+  const view = parseUrl().view;
+  const chatPrimary = Boolean(chatSurface) && isSessionOpen && view !== "dag";
 
   return (
     <div className="h-full flex flex-col bg-bg overflow-hidden">
