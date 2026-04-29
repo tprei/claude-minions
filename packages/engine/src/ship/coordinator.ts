@@ -1,4 +1,4 @@
-import type { ShipStage } from "@minions/shared";
+import type { ShipStage, TranscriptEvent } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { Logger } from "../logger.js";
 import type Database from "better-sqlite3";
@@ -14,7 +14,17 @@ import {
 import { parseDagFromTranscript } from "../dag/parser.js";
 import { EngineError } from "../errors.js";
 
-const THINK_MIN_ASSISTANT_TEXT_LENGTH = 200;
+const THINK_MIN_ASSISTANT_TEXT_LENGTH = 80;
+
+function findStageStartSeq(events: TranscriptEvent[], stage: ShipStage): number {
+  let seq = -1;
+  for (const e of events) {
+    if (e.kind !== "status") continue;
+    const data = e.data;
+    if (data && data["toStage"] === stage) seq = e.seq;
+  }
+  return seq;
+}
 
 const STAGE_ORDER: ShipStage[] = ["think", "plan", "dag", "verify", "done"];
 
@@ -277,9 +287,16 @@ export class ShipCoordinator {
 
   private hasSubstantialAssistantText(slug: string): boolean {
     const events = this.ctx.sessions.transcript(slug);
-    return events.some(
-      (e) => e.kind === "assistant_text" && e.text.length > THINK_MIN_ASSISTANT_TEXT_LENGTH,
-    );
+    const stage = this.getStage(slug) ?? "think";
+    const stageStartSeq = findStageStartSeq(events, stage);
+    let totalLength = 0;
+    for (const e of events) {
+      if (e.seq <= stageStartSeq) continue;
+      if (e.kind !== "assistant_text") continue;
+      totalLength += e.text.length;
+      if (totalLength > THINK_MIN_ASSISTANT_TEXT_LENGTH) return true;
+    }
+    return false;
   }
 
   private hasParseableDagBlock(slug: string): boolean {
