@@ -11,14 +11,10 @@ const TERMINAL_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionSta
   "cancelled",
 ]);
 
-const TERMINAL_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
+const SUCCESS_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
   "done",
   "landed",
   "skipped",
-  "failed",
-  "ci-failed",
-  "rebase-conflict",
-  "cancelled",
 ]);
 
 const FAILED_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
@@ -26,6 +22,11 @@ const FAILED_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["st
   "ci-failed",
   "rebase-conflict",
   "cancelled",
+]);
+
+const TERMINAL_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
+  ...SUCCESS_NODE_STATUSES,
+  ...FAILED_NODE_STATUSES,
 ]);
 
 export class DagScheduler {
@@ -58,8 +59,9 @@ export class DagScheduler {
 
     if (runningCount >= maxConcurrent) return;
 
-    const doneStatuses = new Set<DAGNode["status"]>(["done", "landed"]);
-    const doneIds = new Set(dag.nodes.filter((n) => doneStatuses.has(n.status)).map((n) => n.id));
+    const doneIds = new Set(
+      dag.nodes.filter((n) => SUCCESS_NODE_STATUSES.has(n.status)).map((n) => n.id),
+    );
 
     const pending = dag.nodes.filter((n) => n.status === "pending");
 
@@ -154,7 +156,14 @@ export class DagScheduler {
     if (!allTerminal) return;
 
     const anyFailed = dag.nodes.some((n) => FAILED_NODE_STATUSES.has(n.status));
-    this.repo.update(dagId, { status: anyFailed ? "failed" : "completed" });
+    const allSuccess = dag.nodes.every((n) => SUCCESS_NODE_STATUSES.has(n.status));
+    if (allSuccess) {
+      this.repo.update(dagId, { status: "completed" });
+      return;
+    }
+    if (anyFailed) {
+      this.repo.update(dagId, { status: "failed" });
+    }
   }
 
   private resolveMaxConcurrent(): number {

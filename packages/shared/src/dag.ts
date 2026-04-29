@@ -24,7 +24,7 @@ export interface DAGNode {
   pr?: { number: number; url: string };
   startedAt?: string;
   completedAt?: string;
-  failedReason?: string;
+  failedReason?: string | null;
   metadata: Record<string, unknown>;
 }
 

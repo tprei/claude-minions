@@ -295,6 +295,47 @@ describe("DagScheduler", () => {
     });
   }
 
+  test("checkCompletion marks DAG completed when every node is landed", async () => {
+    const nodeA = makeNode("A", "landed");
+    const nodeB = makeNode("B", "landed", ["A"]);
+    const nodeC = makeNode("C", "landed", ["B"]);
+
+    const dag = makeDag("dag1", [nodeA, nodeB, nodeC]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 0, "no new sessions spawned for an all-landed DAG");
+    const finalDag = repo.get("dag1");
+    assert.equal(finalDag?.status, "completed", "all-landed DAG must aggregate to completed");
+  });
+
+  test("checkCompletion marks DAG completed for a mix of landed and done success-terminal nodes", async () => {
+    const nodeA = makeNode("A", "done");
+    const nodeB = makeNode("B", "landed", ["A"]);
+    const nodeC = makeNode("C", "skipped", ["B"]);
+
+    const dag = makeDag("dag1", [nodeA, nodeB, nodeC]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+    await scheduler.tick("dag1");
+
+    const finalDag = repo.get("dag1");
+    assert.equal(
+      finalDag?.status,
+      "completed",
+      "DAG must be completed when every node is in a success-terminal state",
+    );
+  });
+
   test("stacked PRs: A bases on dag.baseBranch, B (depends on A) bases on A's session branch", async () => {
     const nodeA = makeNode("A", "pending");
     const nodeB = makeNode("B", "pending", ["A"]);
