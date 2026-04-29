@@ -4,6 +4,7 @@ import type {
   SessionStatus,
   SessionMode,
   ShipStage,
+  PermissionTier,
   AttentionFlag,
   QuickAction,
   SessionStats,
@@ -53,6 +54,7 @@ interface SessionRow {
   loop_id: string | null;
   variant_of: string | null;
   metadata: string;
+  permission_tier: string | null;
 }
 
 export interface PageCursor {
@@ -99,6 +101,7 @@ function rowToSession(row: SessionRow, childSlugs: string[]): Session {
     mode: row.mode as SessionMode,
     status: row.status as SessionStatus,
     shipStage: row.ship_stage ? (row.ship_stage as ShipStage) : undefined,
+    permissionTier: row.permission_tier ? (row.permission_tier as PermissionTier) : undefined,
     repoId: row.repo_id ?? undefined,
     branch: row.branch ?? undefined,
     baseBranch: row.base_branch ?? undefined,
@@ -169,10 +172,12 @@ export class SessionRepo {
         stats_turns, stats_input_tokens, stats_output_tokens, stats_cache_read_tokens,
         stats_cache_creation_tokens, stats_cost_usd, stats_duration_ms, stats_tool_calls,
         provider, model_hint, created_at, updated_at, started_at, completed_at,
-        last_turn_at, dag_id, dag_node_id, loop_id, variant_of, metadata
+        last_turn_at, dag_id, dag_node_id, loop_id, variant_of, metadata,
+        permission_tier
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?
       )`
     );
     this.stmtUpdateStatus = db.prepare(
@@ -331,7 +336,8 @@ export class SessionRepo {
       session.dagNodeId ?? null,
       session.loopId ?? null,
       session.variantOf ?? null,
-      JSON.stringify(session.metadata)
+      JSON.stringify(session.metadata),
+      session.permissionTier ?? null
     );
   }
 

@@ -1,3 +1,5 @@
+import type { PermissionTier } from "@minions/shared";
+
 export interface ProviderSpawnOpts {
   sessionSlug: string;
   worktree: string;
@@ -8,7 +10,7 @@ export interface ProviderSpawnOpts {
   attachments?: { name: string; mimeType: string; dataBase64: string }[];
   mcpConfigPath?: string;
   additionalPrompt?: string;
-  allowWriteTools?: boolean;
+  permissionTier?: PermissionTier;
 }
 
 export interface ProviderResumeOpts {
@@ -18,7 +20,7 @@ export interface ProviderResumeOpts {
   env: Record<string, string>;
   mcpConfigPath?: string;
   additionalPrompt?: string;
-  allowWriteTools?: boolean;
+  permissionTier?: PermissionTier;
 }
 
 export interface ProviderHandle {

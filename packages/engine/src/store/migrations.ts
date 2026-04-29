@@ -318,4 +318,15 @@ CREATE INDEX idx_reply_queue_claim ON reply_queue(claim_token);
 `,
 };
 
-export const migrations: Migration[] = [m001_initial, m002_reply_queue_state];
+const m003_session_permission_tier: Migration = {
+  name: "003_session_permission_tier",
+  sql: `
+ALTER TABLE sessions ADD COLUMN permission_tier TEXT;
+`,
+};
+
+export const migrations: Migration[] = [
+  m001_initial,
+  m002_reply_queue_state,
+  m003_session_permission_tier,
+];

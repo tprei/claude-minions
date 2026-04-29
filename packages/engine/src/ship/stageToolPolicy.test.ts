@@ -23,7 +23,7 @@ describe("READ_ONLY_STAGES policy", () => {
   test("write-permission policy: dag transitions allow writes", () => {
     const stage: ShipStage = "dag";
     const allowWrites = !READ_ONLY_STAGES.has(stage);
-    assert.equal(allowWrites, true, "transitioning to dag must spawn/resume with allowWriteTools=true");
+    assert.equal(allowWrites, true, "transitioning to dag must spawn/resume with permissionTier='full'");
   });
 
   test("write-permission policy: think and plan deny writes", () => {
