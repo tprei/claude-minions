@@ -43,7 +43,7 @@ function isWithinCooldown(record: SpawnRecord, failureRaisedAt: string): boolean
 export const failedCiNoFix: Rule = {
   id: "failedCiNoFix",
   description:
-    "When a session has an open PR with CI failed and no fix-CI child, spawn a fix-CI subsession. Re-spawns allowed for repeat failures past a 5-minute cooldown.",
+    "When a session (task or ship) has an open PR with CI failed and no fix-CI child, spawn a fix-CI subsession. Re-spawns allowed for repeat failures past a 5-minute cooldown.",
 
   async onSessionUpdated(session, client) {
     if (session.pr && (session.pr.state === "closed" || session.pr.state === "merged")) {

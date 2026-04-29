@@ -224,6 +224,10 @@ const PR_STATE_PILL: Record<"open" | "closed" | "merged", string> = {
 };
 
 function OperationalHeader({ session, onClose }: { session: Session; onClose: () => void }) {
+  const conn = useRootStore((s) => s.getActiveConnection());
+  const [landing, setLanding] = useState(false);
+  const [landError, setLandError] = useState<string | null>(null);
+
   function navTo(view: "list" | "dag", slug?: string | null, dagId?: string) {
     const activeId = useConnectionStore.getState().activeId;
     if (!activeId) return;
@@ -231,11 +235,47 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
     const nextQuery = dagId ? { ...query, dag: dagId } : query;
     setUrlState({ connectionId: activeId, view, sessionSlug: slug ?? null, query: nextQuery });
   }
+
+  const canLand =
+    !!conn &&
+    session.status === "completed" &&
+    !!session.branch &&
+    !session.pr;
+
+  const handleLand = async () => {
+    if (!conn || landing) return;
+    setLanding(true);
+    setLandError(null);
+    try {
+      await postCommand(conn, {
+        kind: "land",
+        sessionSlug: session.slug,
+        strategy: "squash",
+        force: false,
+      });
+    } catch (e) {
+      setLandError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLanding(false);
+    }
+  };
+
   const shortParent = session.parentSlug ? session.parentSlug.slice(0, 8) : null;
   return (
     <div className="flex flex-col gap-1 px-3 py-2 border-b border-border">
       <div className="flex items-center gap-2 min-w-0">
         <span className="text-sm font-medium text-fg truncate flex-1">{session.title}</span>
+        {canLand && (
+          <button
+            type="button"
+            onClick={() => void handleLand()}
+            disabled={landing}
+            className={cx("btn-primary text-xs px-2 py-1", landing && "opacity-50 cursor-not-allowed")}
+            title={`Land branch ${session.branch} (squash)`}
+          >
+            {landing ? "Landing…" : "Land"}
+          </button>
+        )}
         <button
           type="button"
           onClick={onClose}
@@ -245,6 +285,11 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
           ×
         </button>
       </div>
+      {landError && (
+        <p className="text-[10px] text-err truncate" title={landError}>
+          Land failed: {landError}
+        </p>
+      )}
       <div className="flex items-center flex-wrap gap-1.5 text-[10px]">
         <span className="pill bg-bg-elev text-fg-muted font-mono">{session.mode}</span>
         {session.shipStage && (

@@ -1,10 +1,43 @@
 import type { Session } from "@minions/shared";
-import { simpleGit } from "simple-git";
+import { simpleGit, type StatusResult } from "simple-git";
 import type { EngineContext } from "../../context.js";
 import { newEventId } from "../../util/ids.js";
 import { nowIso } from "../../util/time.js";
 
 const STRIPPED_ENV_KEYS = ["GIT_EDITOR", "EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER", "PAGER"] as const;
+
+export const INJECTED_ASSET_PATHS = [
+  "AGENTS.md",
+  "CLAUDE.md",
+  "instructions.md",
+  ".cursor/",
+  ".minions/",
+] as const;
+
+function isInjectedAssetPath(p: string): boolean {
+  for (const injected of INJECTED_ASSET_PATHS) {
+    if (injected.endsWith("/")) {
+      const dir = injected.slice(0, -1);
+      if (p === dir || p.startsWith(injected)) return true;
+    } else if (p === injected) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function commitablePathsFromStatus(status: StatusResult): string[] {
+  const candidates = [...status.not_added, ...status.modified, ...status.created];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of candidates) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    if (isInjectedAssetPath(p)) continue;
+    out.push(p);
+  }
+  return out;
+}
 
 export function buildAutoCommitEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -32,16 +65,9 @@ export function autoCommitHandler(ctx: EngineContext): (session: Session) => Pro
 
     try {
       const status = await git.status();
-      const hasChanges =
-        status.files.length > 0 ||
-        status.not_added.length > 0 ||
-        status.modified.length > 0 ||
-        status.created.length > 0 ||
-        status.deleted.length > 0 ||
-        status.renamed.length > 0 ||
-        status.staged.length > 0;
+      const toAdd = commitablePathsFromStatus(status);
 
-      if (!hasChanges) {
+      if (toAdd.length === 0) {
         ctx.audit.record(
           "completion",
           "session.auto-commit",
@@ -51,7 +77,7 @@ export function autoCommitHandler(ctx: EngineContext): (session: Session) => Pro
         return;
       }
 
-      await git.add(".");
+      await git.add(toAdd);
       await git.commit(`session:${session.slug} ${session.title}`);
       const sha = (await git.revparse(["HEAD"])).trim();
 

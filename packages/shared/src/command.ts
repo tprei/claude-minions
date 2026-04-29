@@ -111,6 +111,11 @@ export interface DagForceLandCommand {
   nodeId: string;
 }
 
+export interface ResumeSessionCommand {
+  kind: "resume-session";
+  sessionSlug: string;
+}
+
 export type Command =
   | ReplyCommand
   | StopCommand
@@ -129,7 +134,8 @@ export type Command =
   | DoneCommand
   | DagRetryCommand
   | DagCancelCommand
-  | DagForceLandCommand;
+  | DagForceLandCommand
+  | ResumeSessionCommand;
 
 export type CommandKind = Command["kind"];
 

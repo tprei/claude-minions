@@ -2,6 +2,7 @@ import type { EngineContext } from "../../context.js";
 import type { Logger } from "../../logger.js";
 import { CompletionDispatcher, buildCompletionHandlers } from "../dispatcher.js";
 import { autoCommitHandler } from "./autoCommit.js";
+import { autoLandHandler } from "./autoLand.js";
 
 export function wireCompletionHandlers(ctx: EngineContext, log: Logger): () => void {
   const dispatcher = new CompletionDispatcher(
@@ -18,6 +19,7 @@ export function wireCompletionHandlers(ctx: EngineContext, log: Logger): () => v
   );
 
   dispatcher.register(autoCommitHandler(ctx));
+  dispatcher.register(autoLandHandler(ctx));
 
   const handlers = buildCompletionHandlers(ctx, log);
   for (const handler of handlers) {
