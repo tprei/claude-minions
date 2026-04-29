@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { simpleGit } from "simple-git";
-import type { AuditEvent, RuntimeOverrides, Session, ServerEvent } from "@minions/shared";
+import type { AuditEvent, PRSummary, RuntimeOverrides, Session, ServerEvent } from "@minions/shared";
 import type { EngineContext } from "../../context.js";
 import { autoLandHandler } from "./autoLand.js";
 
@@ -15,27 +15,27 @@ interface AuditRecord {
   detail?: Record<string, unknown>;
 }
 
-interface LandCall {
+interface OpenForReviewCall {
   slug: string;
-  strategy?: "merge" | "squash" | "rebase";
-  force?: boolean;
 }
 
 interface MockCtx {
   ctx: EngineContext;
   audits: AuditRecord[];
   emitted: ServerEvent[];
-  landCalls: LandCall[];
+  openForReviewCalls: OpenForReviewCall[];
+  landCalls: { slug: string }[];
   setOverride: (overrides: RuntimeOverrides) => void;
-  setLandImpl: (impl: (call: LandCall) => Promise<void>) => void;
+  setOpenForReviewImpl: (impl: (call: OpenForReviewCall) => Promise<PRSummary | null>) => void;
 }
 
 function makeCtx(): MockCtx {
   const audits: AuditRecord[] = [];
   const emitted: ServerEvent[] = [];
-  const landCalls: LandCall[] = [];
+  const openForReviewCalls: OpenForReviewCall[] = [];
+  const landCalls: { slug: string }[] = [];
   let overrides: RuntimeOverrides = { autoLandOnCompletion: true };
-  let landImpl: (call: LandCall) => Promise<void> = async () => {};
+  let openForReviewImpl: (call: OpenForReviewCall) => Promise<PRSummary | null> = async () => null;
 
   const ctx = {
     audit: {
@@ -57,10 +57,13 @@ function makeCtx(): MockCtx {
       },
     },
     landing: {
-      async land(slug: string, strategy?: "merge" | "squash" | "rebase", force?: boolean): Promise<void> {
-        const call: LandCall = { slug, strategy, force };
-        landCalls.push(call);
-        await landImpl(call);
+      async land(slug: string): Promise<void> {
+        landCalls.push({ slug });
+      },
+      async openForReview(slug: string): Promise<PRSummary | null> {
+        const call: OpenForReviewCall = { slug };
+        openForReviewCalls.push(call);
+        return openForReviewImpl(call);
       },
       async retryRebase(): Promise<void> {},
     },
@@ -70,12 +73,13 @@ function makeCtx(): MockCtx {
     ctx,
     audits,
     emitted,
+    openForReviewCalls,
     landCalls,
     setOverride(next: RuntimeOverrides): void {
       overrides = next;
     },
-    setLandImpl(impl: (call: LandCall) => Promise<void>): void {
-      landImpl = impl;
+    setOpenForReviewImpl(impl: (call: OpenForReviewCall) => Promise<PRSummary | null>): void {
+      openForReviewImpl = impl;
     },
   };
 }
@@ -147,7 +151,7 @@ describe("autoLandHandler — skip conditions", () => {
     const m = makeCtx();
     const handler = autoLandHandler(m.ctx);
     await handler(makeSession({ slug: "s1", status: "running" }));
-    assert.equal(m.landCalls.length, 0);
+    assert.equal(m.openForReviewCalls.length, 0);
     assert.equal(m.audits.length, 0);
   });
 
@@ -155,7 +159,7 @@ describe("autoLandHandler — skip conditions", () => {
     const m = makeCtx();
     const handler = autoLandHandler(m.ctx);
     await handler(makeSession({ slug: "s2", mode: "ship" }));
-    assert.equal(m.landCalls.length, 0);
+    assert.equal(m.openForReviewCalls.length, 0);
     assert.equal(m.audits.length, 0);
   });
 
@@ -165,7 +169,7 @@ describe("autoLandHandler — skip conditions", () => {
     await handler(makeSession({ slug: "s3", worktreePath: undefined }));
     await handler(makeSession({ slug: "s4", branch: undefined }));
     await handler(makeSession({ slug: "s5", repoId: undefined }));
-    assert.equal(m.landCalls.length, 0);
+    assert.equal(m.openForReviewCalls.length, 0);
   });
 
   test("skips when autoLandOnCompletion is false", async () => {
@@ -173,7 +177,7 @@ describe("autoLandHandler — skip conditions", () => {
     m.setOverride({ autoLandOnCompletion: false });
     const handler = autoLandHandler(m.ctx);
     await handler(makeSession({ slug: "s6" }));
-    assert.equal(m.landCalls.length, 0);
+    assert.equal(m.openForReviewCalls.length, 0);
     assert.equal(m.audits.length, 0);
   });
 
@@ -183,10 +187,10 @@ describe("autoLandHandler — skip conditions", () => {
       const m = makeCtx();
       const handler = autoLandHandler(m.ctx);
       await handler(makeSession({ slug: "s7", worktreePath: fx.worktreePath }));
-      assert.equal(m.landCalls.length, 0, "landing.land should not be called");
+      assert.equal(m.openForReviewCalls.length, 0, "landing.openForReview should not be called");
       assert.equal(m.audits.length, 1);
       assert.equal(m.audits[0]?.action, "session.auto-land");
-      assert.equal(m.audits[0]?.detail?.["landed"], false);
+      assert.equal(m.audits[0]?.detail?.["pushedAndOpened"], false);
       assert.equal(m.audits[0]?.detail?.["reason"], "no commits ahead of baseBranch");
     } finally {
       await fx.cleanup();
@@ -195,36 +199,39 @@ describe("autoLandHandler — skip conditions", () => {
 });
 
 describe("autoLandHandler — happy path", () => {
-  test("calls landing.land with squash + records success audit when commits ahead", async () => {
+  test("calls landing.openForReview + records success audit when commits ahead, never merges", async () => {
     const fx = await makeRepoWithCommitsAhead(2);
     try {
       const m = makeCtx();
       const handler = autoLandHandler(m.ctx);
       await handler(makeSession({ slug: "s8", worktreePath: fx.worktreePath }));
-      assert.equal(m.landCalls.length, 1);
-      assert.equal(m.landCalls[0]?.slug, "s8");
-      assert.equal(m.landCalls[0]?.strategy, "squash");
-      assert.equal(m.landCalls[0]?.force, false);
-      const successAudit = m.audits.find((a) => a.detail?.["landed"] === true);
+      assert.equal(m.openForReviewCalls.length, 1);
+      assert.equal(m.openForReviewCalls[0]?.slug, "s8");
+      assert.equal(m.landCalls.length, 0, "auto-land must not call landing.land (no merge)");
+      const successAudit = m.audits.find((a) => a.detail?.["pushedAndOpened"] === true);
       assert.ok(successAudit, "expected a success audit record");
-      assert.equal(successAudit?.detail?.["strategy"], "squash");
       assert.equal(successAudit?.detail?.["baseBranch"], "main");
+      assert.equal(
+        successAudit?.detail?.["strategy"],
+        undefined,
+        "audit must not advertise a merge strategy — auto-land does not merge",
+      );
     } finally {
       await fx.cleanup();
     }
   });
 
-  test("records failure audit + warn status when landing.land throws", async () => {
+  test("records failure audit + warn status when landing.openForReview throws", async () => {
     const fx = await makeRepoWithCommitsAhead(1);
     try {
       const m = makeCtx();
-      m.setLandImpl(async () => {
+      m.setOpenForReviewImpl(async () => {
         throw new Error("boom");
       });
       const handler = autoLandHandler(m.ctx);
       await handler(makeSession({ slug: "s9", worktreePath: fx.worktreePath }));
-      assert.equal(m.landCalls.length, 1);
-      const failureAudit = m.audits.find((a) => a.detail?.["landed"] === false);
+      assert.equal(m.openForReviewCalls.length, 1);
+      const failureAudit = m.audits.find((a) => a.detail?.["pushedAndOpened"] === false);
       assert.ok(failureAudit, "expected a failure audit record");
       assert.equal(failureAudit?.detail?.["error"], "boom");
       const warnEvent = m.emitted.find(

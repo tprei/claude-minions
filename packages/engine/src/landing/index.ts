@@ -161,6 +161,22 @@ export class LandingManager {
     await this.restack.restackChildren(slug);
   }
 
+  async openForReview(slug: string): Promise<PRSummary | null> {
+    const session = this.ctx.sessions.get(slug);
+    if (!session) throw new EngineError("not_found", `session not found: ${slug}`);
+    if (!session.worktreePath) {
+      throw new EngineError("bad_request", `session ${slug} has no worktree`);
+    }
+    if (!session.branch) {
+      throw new EngineError("bad_request", `session ${slug} has no branch`);
+    }
+
+    await this.ensurePushedAndPRed(slug);
+
+    const refreshed = this.ctx.sessions.get(slug);
+    return refreshed?.pr ?? null;
+  }
+
   async ensurePushedAndPRed(slug: string): Promise<void> {
     const session = this.ctx.sessions.get(slug);
     if (!session) throw new EngineError("not_found", `session not found: ${slug}`);
@@ -325,6 +341,10 @@ export function createLandingSubsystem(
   const api: EngineContext["landing"] = {
     async land(slug: string, strategy?: "merge" | "squash" | "rebase", force?: boolean): Promise<void> {
       await manager.land(slug, strategy, force);
+    },
+
+    async openForReview(slug: string): Promise<PRSummary | null> {
+      return manager.openForReview(slug);
     },
 
     async retryRebase(slug: string): Promise<void> {
