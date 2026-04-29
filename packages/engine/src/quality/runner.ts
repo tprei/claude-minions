@@ -25,7 +25,7 @@ export async function runChecks(
   timeoutMs = 5 * 60 * 1000,
 ): Promise<RunChecksResult> {
   if (configs.length === 0) {
-    return { checks: [], status: "pending" };
+    return { checks: [], status: "passed" };
   }
 
   const limit = pLimit(2);

@@ -272,6 +272,27 @@ describe("DagTerminalHandler", () => {
     assert.equal(getNode("n1")?.status, "landed");
   });
 
+  test("no configured quality gate (empty configs → passed) lands successfully", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode } = makeMockRepo(dag);
+    const { ctx, landCalls } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+      readinessStatus: "ready",
+    });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(makeSession("sess-1"));
+
+    assert.equal(landCalls.length, 1, "land called when no quality gate is configured");
+    assert.equal(getNode("n1")?.status, "landed");
+  });
+
   test("failed quality report blocks landing", async () => {
     const node = makeNode("n1", "running", "sess-1");
     const dag = makeDag("dag-1", [node], "root-1");
