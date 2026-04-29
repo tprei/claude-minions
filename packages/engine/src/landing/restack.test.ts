@@ -85,6 +85,7 @@ function makeHarness(sessions: Session[]): RestackHarness {
       screenshotPath: () => "",
       checkpoints: () => [],
       restoreCheckpoint: async () => {},
+      updateBucket: () => {},
     },
     landing: {
       land: async () => {},

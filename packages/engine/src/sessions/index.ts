@@ -33,6 +33,7 @@ export function createSessionsSubsystem(deps: SubsystemDeps): SubsystemResult<En
     screenshotPath: (slug, filename) => registry.screenshotPath(slug, filename),
     checkpoints: (slug) => registry.checkpoints(slug),
     restoreCheckpoint: (slug, id) => registry.restoreCheckpoint(slug, id),
+    updateBucket: (slug, bucket) => registry.updateBucket(slug, bucket),
   };
 
   const registerRoutes = (app: FastifyInstance): void => {

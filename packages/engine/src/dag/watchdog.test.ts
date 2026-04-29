@@ -201,6 +201,7 @@ function makeMockCtx(
       screenshotPath: () => "",
       checkpoints: () => [],
       restoreCheckpoint: async () => {},
+      updateBucket: () => {},
     },
     runtime: {
       schema: () => ({ groups: [], fields: [] }),

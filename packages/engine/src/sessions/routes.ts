@@ -3,8 +3,10 @@ import fs from "node:fs";
 import {
   SESSION_STATUSES,
   SESSION_MODES,
+  SESSION_BUCKETS,
   type SessionStatus,
   type SessionMode,
+  type SessionBucket,
   type ListEnvelope,
   type Session,
 } from "@minions/shared";
@@ -14,6 +16,7 @@ import type { PageCursor } from "../store/repos/sessionRepo.js";
 
 const STATUS_SET: ReadonlySet<string> = new Set(SESSION_STATUSES);
 const MODE_SET: ReadonlySet<string> = new Set(SESSION_MODES);
+const BUCKET_SET: ReadonlySet<string> = new Set(SESSION_BUCKETS);
 
 interface ListSessionsQuery {
   status?: string;
@@ -105,6 +108,23 @@ export function registerSessionsRoutes(app: FastifyInstance, ctx: EngineContext)
   app.post("/api/sessions", async (req: FastifyRequest<{ Body: import("@minions/shared").CreateSessionRequest }>, reply) => {
     const session = await ctx.sessions.create(req.body);
     return reply.code(201).send(session);
+  });
+
+  app.patch("/api/sessions/:slug", async (req: FastifyRequest<{
+    Params: { slug: string };
+    Body: { bucket?: SessionBucket | null };
+  }>, reply) => {
+    const session = ctx.sessions.get(req.params.slug);
+    if (!session) throw new EngineError("not_found", `Session ${req.params.slug} not found`);
+    const body = req.body ?? {};
+    if ("bucket" in body) {
+      const b = body.bucket;
+      if (b !== null && b !== undefined && !BUCKET_SET.has(b)) {
+        throw new EngineError("bad_request", `Invalid bucket: ${b}`, { allowed: [...BUCKET_SET] });
+      }
+      ctx.sessions.updateBucket(req.params.slug, b ?? null);
+    }
+    return reply.send(ctx.sessions.get(req.params.slug));
   });
 
   app.delete("/api/sessions/:slug", async (req: FastifyRequest<{ Params: { slug: string } }>, reply) => {

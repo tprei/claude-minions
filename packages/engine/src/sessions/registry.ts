@@ -36,6 +36,7 @@ import { Screenshots, type ScreenshotSource } from "./screenshots.js";
 import { Checkpoints } from "./checkpoints.js";
 import { computeDiff } from "./diff.js";
 import { rowToSession, rowToTranscriptEvent, type SessionRow, type TranscriptRow } from "./mapper.js";
+import { inferBucket } from "./inferBucket.js";
 import { SessionRepo, type ListSessionsOptions, type ListSessionsResult } from "../store/repos/sessionRepo.js";
 import { workspacePaths } from "../workspace/paths.js";
 import { ensureBareClone } from "../workspace/cloner.js";
@@ -290,6 +291,13 @@ export class SessionRegistry {
     return rows.map(rowToTranscriptEvent);
   }
 
+  updateBucket(slug: string, bucket: import("@minions/shared").SessionBucket | null): void {
+    const row = this.getSessionRow(slug);
+    if (!row) throw new EngineError("not_found", `Session ${slug} not found`);
+    this.repo.setBucket(slug, bucket);
+    this.emitUpdated(this.buildSession(this.getSessionRow(slug)!));
+  }
+
   private countRunningByClass(): RunningByClass {
     const counts = emptyRunningByClass();
     const rows = this.listAdmittedSession.all() as Array<{ mode: string }>;
@@ -306,6 +314,7 @@ export class SessionRegistry {
     const slug = newSlug();
     const now = nowIso();
     const mode: SessionMode = req.mode ?? "task";
+    const bucket = req.bucket ?? inferBucket({ prompt: req.prompt, mode, metadata: req.metadata });
 
     const cls = classifyMode(mode);
     const runningByClass = this.countRunningByClass();
@@ -340,7 +349,7 @@ export class SessionRegistry {
       null, null, null, null,
       JSON.stringify(req.metadata ?? {}),
       permissionTier,
-      null,
+      bucket,
     );
 
     if (mode === "ship") {
