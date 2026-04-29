@@ -1,12 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Session } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS, EMPTY_TRANSCRIPTS } from "../store/sessionStore.js";
 import { useRootStore } from "../store/root.js";
-import { postCommand, postCommandOptimistic, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript } from "../transport/rest.js";
-import { setActiveConnIdResolver } from "../store/optimistic.js";
+import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
 import { Diff } from "../components/Diff.js";
-import { Tabs, type Tab } from "./Tabs.js";
+import { type Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
 import { QuickActions } from "./quickActions.js";
 import { RecoveryFooter } from "./RecoveryFooter.js";
@@ -22,8 +21,6 @@ import { useConnectionStore } from "../connections/store.js";
 import type { Attachment } from "./attachments.js";
 import type { Command, WorkspaceDiff, Checkpoint, Screenshot } from "@minions/shared";
 import { getLayout, setLayout, subscribe as subscribePanelLayout } from "../util/panelLayout.js";
-
-setActiveConnIdResolver(() => useConnectionStore.getState().activeId);
 
 const SURFACE_TABS: Tab[] = [
   { id: "transcript", label: "Transcript" },
@@ -286,6 +283,70 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
   );
 }
 
+interface SurfaceTablistProps {
+  tabs: Tab[];
+  active: string;
+  onChange: (id: string) => void;
+}
+
+function SurfaceTablist({ tabs, active, onChange }: SurfaceTablistProps) {
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+
+  const activate = useCallback(
+    (id: string) => {
+      onChange(id);
+      queueMicrotask(() => refs.current[id]?.focus());
+    },
+    [onChange],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLButtonElement>, idx: number) => {
+      let nextIdx = -1;
+      if (e.key === "ArrowRight") nextIdx = (idx + 1) % tabs.length;
+      else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + tabs.length) % tabs.length;
+      else if (e.key === "Home") nextIdx = 0;
+      else if (e.key === "End") nextIdx = tabs.length - 1;
+      if (nextIdx < 0) return;
+      e.preventDefault();
+      const next = tabs[nextIdx];
+      if (next) activate(next.id);
+    },
+    [tabs, activate],
+  );
+
+  return (
+    <div role="tablist" aria-label="Session surface" className="flex flex-wrap border-b border-border">
+      {tabs.map((tab, idx) => {
+        const isActive = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            ref={(el) => {
+              refs.current[tab.id] = el;
+            }}
+            type="button"
+            role="tab"
+            id={`surface-tab-${tab.id}`}
+            aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
+            onClick={() => onChange(tab.id)}
+            onKeyDown={(e) => handleKeyDown(e, idx)}
+            className={cx(
+              "px-3 py-2 text-xs transition-colors whitespace-nowrap",
+              isActive
+                ? "text-fg border-b-2 border-accent -mb-px"
+                : "text-fg-subtle hover:text-fg-muted",
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 interface PanelProps {
   session: Session;
   activeTab: string;
@@ -324,28 +385,14 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
       const uploaded = attachments
         .filter((a) => a.url)
         .map((a) => ({ name: a.name, mimeType: a.mimeType, url: a.url! }));
-      const slug = session.slug;
-      const connId = conn.id;
-      await postCommandOptimistic(
-        conn,
-        {
-          kind: "reply",
-          sessionSlug: slug,
-          text,
-          ...(uploaded.length > 0 ? { attachments: uploaded } : {}),
-        },
-        {
-          description: "Reply",
-          apply: () => {},
-          rollback: () => {},
-          awaitCommit: (commit) => useSessionStore.subscribe((s) => {
-            const cur = s.byConnection.get(connId)?.sessions.get(slug);
-            if (cur && cur.lastTurnAt && cur.lastTurnAt !== session.lastTurnAt) commit();
-          }),
-        },
-      );
+      await postCommand(conn, {
+        kind: "reply",
+        sessionSlug: session.slug,
+        text,
+        ...(uploaded.length > 0 ? { attachments: uploaded } : {}),
+      });
     },
-    [session.slug, session.lastTurnAt, conn],
+    [session.slug, conn],
   );
 
   const handleRecoveryAction = useCallback(
@@ -358,30 +405,8 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
 
   const handleStop = useCallback(async () => {
     if (!conn) return;
-    const slug = session.slug;
-    const connId = conn.id;
-    const prevStatus = session.status;
-    const prevUpdatedAt = session.updatedAt;
-    let rollbackOptimistic: (() => void) | null = null;
-    await postCommandOptimistic(
-      conn,
-      { kind: "stop", sessionSlug: slug },
-      {
-        description: "Stop session",
-        apply: () => {
-          rollbackOptimistic = useSessionStore
-            .getState()
-            .applyOptimisticSession(connId, slug, (prev) => ({ ...prev, status: "cancelled" }));
-        },
-        rollback: () => { rollbackOptimistic?.(); },
-        awaitCommit: (commit) => useSessionStore.subscribe((s) => {
-          const cur = s.byConnection.get(connId)?.sessions.get(slug);
-          if (!cur) return;
-          if (cur.updatedAt !== prevUpdatedAt && cur.status !== prevStatus) commit();
-        }),
-      },
-    );
-  }, [conn, session.slug, session.status, session.updatedAt]);
+    await postCommand(conn, { kind: "stop", sessionSlug: session.slug });
+  }, [conn, session.slug]);
 
   const inputDisabled = !conn || session.status === "completed" || session.status === "cancelled" || session.status === "failed";
   const isRunning = session.status === "running";
@@ -394,8 +419,12 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
       <OperationalHeader session={session} onClose={onClose} />
-      <Tabs tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <SurfaceTablist tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
+      <div
+        role="tabpanel"
+        aria-labelledby={`surface-tab-${activeTab}`}
+        className="flex-1 min-h-0 flex flex-col overflow-hidden"
+      >
         {activeTab === "transcript" && <Transcript events={events} />}
         {activeTab === "diff" && <DiffPanel session={session} />}
         {activeTab === "pr" && <PRPanel session={session} />}

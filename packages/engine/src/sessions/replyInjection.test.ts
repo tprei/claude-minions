@@ -286,6 +286,63 @@ describe("SessionRegistry.reply (queue contract)", () => {
     assert.deepEqual(pendingReplyPayloads(db, slug), [], "queue is drained after delivery");
   });
 
+  test("crash between claim and confirm: recoverInFlight makes the row deliverable exactly once", async () => {
+    const slug = "sess-crash";
+    const worktree = path.join(workspaceDir, slug);
+    fs.mkdirSync(worktree, { recursive: true });
+    insertSession(db, slug, "running", worktree, REPLY_TEST_PROVIDER_NAME);
+
+    db.prepare(
+      `INSERT INTO provider_state(session_slug, provider, external_id, last_seq, last_turn, data, updated_at)
+       VALUES (?, ?, ?, 0, 0, '{}', datetime('now'))`,
+    ).run(slug, REPLY_TEST_PROVIDER_NAME, "ext-crash");
+
+    await registry.resumeAllActive();
+    assert.equal(captured.resumes.length, 1, "initial resume from boot");
+
+    const tag = "CRASH-TAG-7K2";
+    await registry.reply(slug, `please retry ${tag}`);
+
+    const replyQueue = (registry as unknown as {
+      replyQueue: import("./replyQueue.js").ReplyQueue;
+    }).replyQueue;
+
+    const stolen = replyQueue.claim(slug);
+    assert.ok(stolen, "claim should pick up the queued reply");
+    assert.equal(stolen.entries.length, 1);
+
+    const stalePast = new Date(Date.now() - 60_000).toISOString();
+    db.prepare(`UPDATE reply_queue SET claimed_at = ? WHERE claim_token = ?`).run(
+      stalePast,
+      stolen.claimToken,
+    );
+
+    assert.equal(
+      replyQueue.claim(slug),
+      null,
+      "in-flight row blocks any fresh claim before recovery",
+    );
+
+    const released = replyQueue.recoverInFlight(30_000);
+    assert.equal(released, 1, "stale claim should be released back to pending");
+
+    const firstExit = exitControls[0];
+    assert.ok(firstExit);
+    firstExit(0);
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(captured.resumes.length, 2, "drain hook resumes once with the recovered row");
+    const additional = captured.resumes[1]?.opts.additionalPrompt ?? "";
+    assert.ok(
+      additional.includes(tag),
+      `recovered reply must reach additionalPrompt exactly once (got: ${additional})`,
+    );
+
+    assert.deepEqual(pendingReplyPayloads(db, slug), [], "queue empty after confirm");
+    assert.equal(replyQueue.claim(slug), null, "no further entries to deliver");
+  });
+
   test("two consecutive replies are joined into a single additionalPrompt on next turn", async () => {
     const slug = "sess-join";
     const worktree = path.join(workspaceDir, slug);
