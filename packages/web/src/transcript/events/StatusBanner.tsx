@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { StatusEvent } from "@minions/shared";
-import { MarkdownText } from "../markdown.js";
+import { MarkdownView } from "../../markdown/MarkdownView.js";
 import { cx } from "../../util/classnames.js";
 
 const LEVEL_STYLES = {
@@ -45,7 +45,7 @@ export function StatusBanner({ event }: Props) {
       <div className="flex items-start gap-2">
         <span>{LEVEL_ICONS[event.level]}</span>
         <div className="flex-1 min-w-0">
-          <MarkdownText text={visibleText} />
+          <MarkdownView text={visibleText} />
           {collapsible && (
             <button
               type="button"
