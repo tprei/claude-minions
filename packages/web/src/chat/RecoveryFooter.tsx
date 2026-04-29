@@ -172,10 +172,14 @@ function CheckpointButton({ session }: CheckpointButtonProps) {
 export function RecoveryFooter({ session, onAction }: Props) {
   const conn = useRootStore((s) => s.getActiveConnection());
   const [readiness, setReadiness] = useState<MergeReadiness | null>(null);
+  const [continueText, setContinueText] = useState("");
+  const [continuePending, setContinuePending] = useState(false);
+  const [continueErr, setContinueErr] = useState<string | null>(null);
 
   const visible =
     session.status === "failed" ||
     session.status === "cancelled" ||
+    session.status === "completed" ||
     session.attention.length > 0;
 
   useEffect(() => {
@@ -192,6 +196,23 @@ export function RecoveryFooter({ session, onAction }: Props) {
   const canRetry = session.status === "failed" || session.status === "cancelled";
   const canResume = session.status === "waiting_input";
   const canAbort = session.status === "running" || session.status === "pending" || session.status === "waiting_input";
+  const canContinue = session.status === "completed";
+
+  const handleContinue = async () => {
+    const text = continueText.trim();
+    if (!text || continuePending) return;
+    setContinuePending(true);
+    setContinueErr(null);
+    try {
+      await onAction({ kind: "reply", sessionSlug: session.slug, text });
+      await onAction({ kind: "resume-session", sessionSlug: session.slug });
+      setContinueText("");
+    } catch (e) {
+      setContinueErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setContinuePending(false);
+    }
+  };
 
   const tone = readiness ? readinessTone(readiness) : null;
   const flagMsg = session.attention[0]?.message;
@@ -248,6 +269,43 @@ export function RecoveryFooter({ session, onAction }: Props) {
           </a>
         )}
       </div>
+      {canContinue && (
+        <div className="flex flex-col gap-1">
+          <textarea
+            value={continueText}
+            onChange={(e) => setContinueText(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                void handleContinue();
+              }
+            }}
+            placeholder="Continue this session… (⌘/Ctrl+Enter to send)"
+            rows={2}
+            disabled={continuePending}
+            className="w-full text-xs bg-bg-soft border border-border rounded px-2 py-1 resize-y focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+          <div className="flex items-center justify-end gap-2">
+            {continueErr && (
+              <span className="text-[10px] text-err truncate" title={continueErr}>
+                Continue failed: {continueErr}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleContinue()}
+              disabled={continuePending || continueText.trim().length === 0}
+              className={cx(
+                "btn-primary text-xs px-2 py-1",
+                (continuePending || continueText.trim().length === 0) && "opacity-50 cursor-not-allowed",
+              )}
+              title="Reply and resume the session"
+            >
+              {continuePending ? "Continuing…" : "Continue"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

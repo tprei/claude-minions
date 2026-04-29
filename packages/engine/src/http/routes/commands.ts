@@ -232,6 +232,11 @@ function validateCommand(body: unknown): Command {
         dagId: assertString(b["dagId"], "dagId"),
         nodeId: assertString(b["nodeId"], "nodeId"),
       };
+    case "resume-session":
+      return {
+        kind: "resume-session",
+        sessionSlug: assertString(b["sessionSlug"], "sessionSlug"),
+      };
     default:
       throw new EngineError("bad_request", `Unknown command kind: ${String(kind)}`);
   }
@@ -346,5 +351,10 @@ async function dispatchCommand(cmd: Command, ctx: EngineContext): Promise<Comman
     case "dag.force-land":
       await ctx.dags.forceLand(cmd.dagId, cmd.nodeId);
       return { ok: true };
+
+    case "resume-session": {
+      const kicked = await ctx.sessions.kickReplyQueue(cmd.sessionSlug);
+      return { ok: true, data: { kicked } };
+    }
   }
 }

@@ -139,6 +139,15 @@ const fields: RuntimeField[] = [
     applies: "live",
   },
   {
+    key: "autoLandOnCompletion",
+    label: "Auto-land on completion",
+    description: "Automatically push and open a PR for task sessions that complete with new commits",
+    type: "boolean",
+    default: true,
+    group: "execution",
+    applies: "live",
+  },
+  {
     key: "admissionTotalSlots",
     label: "Admission total slots",
     description: "Maximum total concurrent sessions across all classes",
