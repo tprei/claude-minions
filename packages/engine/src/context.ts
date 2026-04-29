@@ -64,6 +64,7 @@ export interface EngineContext {
     land: (slug: string, strategy?: "merge" | "squash" | "rebase", force?: boolean) => Promise<void>;
     openForReview: (slug: string) => Promise<import("@minions/shared").PRSummary | null>;
     retryRebase: (slug: string) => Promise<void>;
+    onUpstreamMerged: (slug: string) => Promise<void>;
   };
 
   loops: {

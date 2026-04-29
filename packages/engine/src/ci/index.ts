@@ -162,7 +162,14 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
       head: prData.headRefName,
       title: prData.title,
     };
+    const previousPrState = session.pr?.state ?? null;
     sessionRepo.setPr(slug, refreshedPr);
+
+    if (previousPrState === "open" && refreshedPr.state === "merged") {
+      await ctx.landing.onUpstreamMerged(slug).catch((err) => {
+        log.warn("onUpstreamMerged failed", { slug, err: (err as Error).message });
+      });
+    }
 
     const failed = checks.filter((c) => c.bucket === "fail");
     const fresh = ctx.sessions.get(slug);
