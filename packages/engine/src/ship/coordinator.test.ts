@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import type {
+  AssistantTextEvent,
   DAG,
   MergeReadiness,
   Session,
@@ -18,6 +19,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { ShipCoordinator } from "./coordinator.js";
+import { createDagSubsystem } from "../dag/index.js";
 
 function makeTempDb(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "minions-test-"));
@@ -128,12 +130,16 @@ function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): EngineConte
       effective: () => ({}),
       update: async () => {},
     },
-    dags: opts.dags !== undefined ? ({
-      list: () => opts.dags!,
-      get: (id: string) => opts.dags!.find((d) => d.id === id) ?? null,
+    dags: ({
+      list: () => opts.dags ?? [],
+      get: (id: string) => opts.dags?.find((d) => d.id === id) ?? null,
       splitNode: async () => { throw new Error("not implemented"); },
       onSessionTerminal: async () => {},
-    } as unknown as EngineContext["dags"]) : ({} as EngineContext["dags"]),
+      retry: async () => {},
+      cancel: async () => {},
+      forceLand: async () => {},
+      tryCreateFromTranscript: async () => ({ created: false }),
+    } as unknown as EngineContext["dags"]),
     ship: {} as EngineContext["ship"],
     landing: {} as EngineContext["landing"],
     loops: {} as EngineContext["loops"],
@@ -205,7 +211,11 @@ describe("ShipCoordinator", () => {
     await coordinator.advance(sessionSlug);
     await coordinator.advance(sessionSlug);
 
-    assert.equal(statusEvents.length, 4, "four status events total after four advances");
+    assert.equal(
+      statusEvents.length,
+      5,
+      "four stage-transition events plus one verify_summary emitted on dag→verify",
+    );
 
     const stageRow2 = db
       .prepare("SELECT stage FROM ship_state WHERE session_slug = ?")
@@ -425,6 +435,119 @@ describe("ShipCoordinator", () => {
       .prepare("SELECT status FROM sessions WHERE slug = ?")
       .get(sessionSlug) as { status: string } | undefined;
     assert.notEqual(sessionRow?.status, "waiting_input");
+  });
+
+  test("advance to dag with parseable transcript block creates a DAG and sets parent.dagId", async () => {
+    const db = makeTempDb();
+
+    const sessionSlug = "ship-dag-create";
+    const session = makeShipSession(sessionSlug);
+    insertSession(db, session);
+
+    const dagBlock = JSON.stringify({
+      title: "ship dag",
+      goal: "build it",
+      nodes: [{ title: "root", prompt: "do root", dependsOn: [] }],
+    });
+    const transcriptEv: AssistantTextEvent = {
+      id: "tev-0",
+      sessionSlug,
+      seq: 0,
+      turn: 0,
+      timestamp: nowIso(),
+      kind: "assistant_text",
+      text: `\`\`\`dag\n${dagBlock}\n\`\`\``,
+    };
+    db.prepare(
+      `INSERT INTO transcript_events(id, session_slug, seq, turn, kind, body, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      transcriptEv.id,
+      transcriptEv.sessionSlug,
+      transcriptEv.seq,
+      transcriptEv.turn,
+      transcriptEv.kind,
+      JSON.stringify(transcriptEv),
+      transcriptEv.timestamp,
+    );
+
+    const ctx = makeMockCtx(db, { transcript: [transcriptEv] }) as unknown as EngineContext & {
+      _sessions: Map<string, Session>;
+    };
+    ctx._sessions.set(sessionSlug, session);
+
+    const setDagIdCalls: { slug: string; dagId: string }[] = [];
+    (ctx.sessions.setDagId as unknown as (slug: string, dagId: string) => void) =
+      (slug: string, dagId: string) => {
+        setDagIdCalls.push({ slug, dagId });
+        db.prepare(`UPDATE sessions SET dag_id = ? WHERE slug = ?`).run(dagId, slug);
+      };
+
+    let counter = 0;
+    (ctx.sessions.create as unknown as (req: import("@minions/shared").CreateSessionRequest) => Promise<Session>) =
+      async (req) => {
+        const slug = `mock-child-${++counter}`;
+        return {
+          slug,
+          title: req.title ?? slug,
+          prompt: req.prompt,
+          mode: req.mode ?? "task",
+          status: "running",
+          attention: [],
+          quickActions: [],
+          stats: {
+            turns: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            costUsd: 0,
+            durationMs: 0,
+            toolCalls: 0,
+          },
+          provider: "mock",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          childSlugs: [],
+          metadata: (req.metadata ?? {}) as Record<string, unknown>,
+        };
+      };
+
+    const dagSub = createDagSubsystem({
+      ctx,
+      log: createLogger("error"),
+      env: {} as Parameters<typeof createDagSubsystem>[0]["env"],
+      db,
+      bus: ctx.bus,
+      mutex: ctx.mutex,
+      workspaceDir: "/tmp",
+    });
+    ctx.dags = dagSub.api;
+
+    const coordinator = new ShipCoordinator(db, ctx, createLogger("error"));
+    await coordinator.advance(sessionSlug, "dag");
+
+    const dags = ctx.dags.list();
+    assert.equal(dags.length, 1, "DAG was created during ship advance");
+    const dag = dags[0]!;
+    assert.equal(dag.rootSessionSlug, sessionSlug);
+    assert.equal(dag.nodes.length, 1);
+
+    assert.equal(setDagIdCalls.length, 1, "setDagId called once");
+    assert.equal(setDagIdCalls[0]!.slug, sessionSlug);
+    assert.equal(setDagIdCalls[0]!.dagId, dag.id);
+
+    const dagIdRow = db
+      .prepare(`SELECT dag_id FROM sessions WHERE slug = ?`)
+      .get(sessionSlug) as { dag_id: string | null };
+    assert.equal(dagIdRow.dag_id, dag.id, "session.dag_id persisted");
+
+    const sessionRow = db
+      .prepare(`SELECT status FROM sessions WHERE slug = ?`)
+      .get(sessionSlug) as { status: string };
+    assert.equal(sessionRow.status, "waiting_input", "parent stays waiting after dag advance");
+
+    if (dagSub.onShutdown) await dagSub.onShutdown();
   });
 
   test("reconcileOnBoot skips terminated ship sessions", async () => {

@@ -138,6 +138,14 @@ export class ShipCoordinator {
 
     if (target === "dag") {
       this.ctx.sessions.markWaitingInput(slug, "waiting for DAG completion");
+      try {
+        await this.ctx.dags.tryCreateFromTranscript(slug);
+      } catch (e) {
+        this.log.error("dags.tryCreateFromTranscript failed during ship advance", {
+          slug,
+          message: (e as Error).message,
+        });
+      }
     } else {
       const directive = stageDirective(target);
       await this.ctx.sessions.reply(
