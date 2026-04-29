@@ -31,7 +31,7 @@ const SURFACE_TABS: Tab[] = [
   { id: "dag", label: "DAG status" },
 ];
 
-const MIN_WIDTH = 280;
+const MIN_WIDTH = 200;
 const MAX_WIDTH = 720;
 const DEFAULT_WIDTH = 380;
 const CHAT_PANEL = "chat";

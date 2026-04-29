@@ -347,6 +347,23 @@ export class SessionRegistry {
     const session = this.buildSession(sessionRow);
     bus.emit({ kind: "session_created", session });
 
+    const seedEventId = newEventId();
+    const seedBody = JSON.stringify({ text: req.prompt, source: "operator" });
+    db.prepare(
+      `INSERT INTO transcript_events(id, session_slug, seq, turn, kind, body, timestamp)
+       VALUES (?, ?, 0, 0, 'user_message', ?, ?)`,
+    ).run(seedEventId, slug, seedBody, now);
+    const seedEvent = rowToTranscriptEvent({
+      id: seedEventId,
+      session_slug: slug,
+      seq: 0,
+      turn: 0,
+      kind: "user_message",
+      body: seedBody,
+      timestamp: now,
+    });
+    bus.emit({ kind: "transcript_event", sessionSlug: slug, event: seedEvent });
+
     ctx.audit.record("operator", "session.create", { kind: "session", id: slug });
 
     try {
