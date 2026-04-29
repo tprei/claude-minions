@@ -308,4 +308,14 @@ CREATE TABLE provider_state (
 `,
 };
 
-export const migrations: Migration[] = [m001_initial];
+const m002_reply_queue_state: Migration = {
+  name: "002_reply_queue_state",
+  sql: `
+ALTER TABLE reply_queue ADD COLUMN claim_token TEXT;
+ALTER TABLE reply_queue ADD COLUMN claimed_at  TEXT;
+
+CREATE INDEX idx_reply_queue_claim ON reply_queue(claim_token);
+`,
+};
+
+export const migrations: Migration[] = [m001_initial, m002_reply_queue_state];

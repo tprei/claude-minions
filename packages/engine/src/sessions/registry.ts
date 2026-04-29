@@ -565,13 +565,16 @@ export class SessionRegistry {
   }
 
   private async continueWithQueuedReplies(slug: string, providerName: string): Promise<boolean> {
-    const pending = this.replyQueue.drain(slug);
-    if (pending.length === 0) return false;
+    const claim = this.replyQueue.claim(slug);
+    if (!claim) return false;
 
     const row = this.getSessionRow(slug);
-    if (!row || !row.worktree_path) return false;
+    if (!row || !row.worktree_path) {
+      this.replyQueue.release(claim.claimToken);
+      return false;
+    }
 
-    const additionalPrompt = pending.map((p) => p.payload).join("\n\n");
+    const additionalPrompt = claim.entries.map((p) => p.payload).join("\n\n");
     const providerState = this.getProviderState.get(slug) as ProviderStateRow | undefined;
 
     const provider = getProvider(providerName);
@@ -587,16 +590,24 @@ export class SessionRegistry {
       env["ANTHROPIC_API_KEY"] = process.env["ANTHROPIC_API_KEY"];
     }
 
-    const mcpConfigPath = await this.writeMcpConfig(slug, row.worktree_path);
+    let handle: ProviderHandle;
+    try {
+      const mcpConfigPath = await this.writeMcpConfig(slug, row.worktree_path);
 
-    const handle = await provider.resume({
-      sessionSlug: slug,
-      worktree: row.worktree_path,
-      externalId: providerState?.external_id ?? undefined,
-      env,
-      mcpConfigPath,
-      additionalPrompt,
-    });
+      handle = await provider.resume({
+        sessionSlug: slug,
+        worktree: row.worktree_path,
+        externalId: providerState?.external_id ?? undefined,
+        env,
+        mcpConfigPath,
+        additionalPrompt,
+      });
+    } catch (err) {
+      this.replyQueue.release(claim.claimToken);
+      throw err;
+    }
+
+    this.replyQueue.confirm(claim.claimToken);
 
     this.handles.set(slug, handle);
 
@@ -608,7 +619,7 @@ export class SessionRegistry {
       "system",
       "session.reply.delivered",
       { kind: "session", id: slug },
-      { count: pending.length, provider: providerName },
+      { count: claim.entries.length, provider: providerName },
     );
 
     this.updateSession.run("running", nowIso(), nowIso(), null, row.worktree_path, row.branch ?? null, slug);
@@ -621,6 +632,12 @@ export class SessionRegistry {
 
   async resumeAllActive(): Promise<void> {
     const { log, ctx } = this.deps;
+
+    const recovered = this.replyQueue.recoverInFlight(30_000);
+    if (recovered > 0) {
+      log.info("released stale reply queue claims at boot", { recovered });
+    }
+
     const rows = this.listActiveSession.all() as SessionRow[];
 
     for (const row of rows) {
