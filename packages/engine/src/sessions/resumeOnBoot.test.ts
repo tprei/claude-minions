@@ -217,6 +217,7 @@ function makeCtx(args: {
       screenshotPath: () => "",
       checkpoints: () => [],
       restoreCheckpoint: async () => {},
+      updateBucket: () => {},
     },
     features: () => features,
     repos: () => repos,
