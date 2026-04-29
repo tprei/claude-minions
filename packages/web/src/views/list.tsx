@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import type { Session, SessionStatus, SessionMode } from "@minions/shared";
+import type { Session, SessionStatus, SessionMode, SessionBucket } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
@@ -43,13 +43,15 @@ function toggleSet<T>(set: Set<T>, val: T): Set<T> {
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
+type FilterBucket = "all" | SessionBucket;
 
 interface Props {
   filterStatus?: FilterStatus;
   filterMode?: FilterMode;
+  filterBucket?: FilterBucket;
 }
 
-export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
+export function ListView({ filterStatus = "all", filterMode = "all", filterBucket = "all" }: Props) {
   const activeId = useConnectionStore((s) => s.activeId);
   const sessionsMap = useSessionStore(
     (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
@@ -83,6 +85,9 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
     if (filterMode !== "all") {
       list = list.filter((s) => s.mode === filterMode);
     }
+    if (filterBucket !== "all") {
+      list = list.filter((s) => s.bucket === filterBucket);
+    }
     if (statusFilter.size > 0) {
       list = list.filter((s) => statusFilter.has(s.status));
     }
@@ -99,7 +104,7 @@ export function ListView({ filterStatus = "all", filterMode = "all" }: Props) {
       );
     }
     return list;
-  }, [sessions, filterStatus, filterMode, statusFilter, modeFilter, search]);
+  }, [sessions, filterStatus, filterMode, filterBucket, statusFilter, modeFilter, search]);
 
   const navigate = (slug: string) => {
     const { query } = parseUrl();
