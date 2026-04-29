@@ -22,12 +22,18 @@ async function main(): Promise<void> {
 
   async function shutdown(signal: string): Promise<void> {
     log.info("received signal, shutting down", { signal });
+    const hardExit = setTimeout(() => {
+      log.warn("shutdown exceeded 1s budget, forcing exit");
+      process.exit(0);
+    }, 1000);
     try {
       await ctx?.shutdown();
       log.info("shutdown complete");
+      clearTimeout(hardExit);
       process.exit(0);
     } catch (err) {
       log.error("shutdown error", { message: (err as Error).message });
+      clearTimeout(hardExit);
       process.exit(1);
     }
   }
