@@ -29,15 +29,15 @@ export class CiBabysitter {
     }
   }
 
-  private async pollAll(): Promise<void> {
-    const sessions = this.ctx.sessions.list().filter(
-      (s) =>
-        s.pr &&
-        s.pr.state === "open" &&
-        s.status !== "failed" &&
-        s.status !== "completed" &&
-        s.status !== "cancelled",
-    );
+  async pollAll(): Promise<void> {
+    const sessions = this.ctx.sessions.list().filter((s) => {
+      if (!s.pr || s.pr.state !== "open") return false;
+      if (s.status === "failed" || s.status === "cancelled") return false;
+      const ciTerminal = s.attention.some(
+        (a) => a.kind === "ci_failed" || a.kind === "ci_passed",
+      );
+      return !ciTerminal;
+    });
 
     if (sessions.length === 0) {
       this.cursor = 0;

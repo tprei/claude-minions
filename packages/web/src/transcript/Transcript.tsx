@@ -204,6 +204,10 @@ interface Props {
   events: TranscriptEvent[];
 }
 
+interface WrapperProps extends Props {
+  wrap?: boolean;
+}
+
 function TranscriptInner({ events }: Props) {
   const [tab, setTab] = useState<TranscriptTab>("transcript");
 
@@ -245,7 +249,12 @@ function WrapperHeader({ collapsed, onToggle }: WrapperHeaderProps) {
   );
 }
 
-export function Transcript({ events }: Props) {
+export function Transcript({ events, wrap = false }: WrapperProps) {
+  if (!wrap) return <TranscriptInner events={events} />;
+  return <TranscriptStandalone events={events} />;
+}
+
+function TranscriptStandalone({ events }: Props) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     const stored = getLayout(PANEL_TRANSCRIPT);
     return stored ? stored.collapsed : false;

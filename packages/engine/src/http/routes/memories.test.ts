@@ -2,7 +2,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
-import type { Memory, MemoryReviewCommand } from "@minions/shared";
+import { MEMORY_BODY_MAX_LEN, type CreateMemoryRequest, type Memory, type MemoryReviewCommand } from "@minions/shared";
 import type { EngineContext } from "../../context.js";
 import { EngineError, isEngineError } from "../../errors.js";
 import { registerMemoryRoutes } from "./memories.js";
@@ -128,5 +128,97 @@ describe("PATCH /api/memories/:id/review", () => {
     const res = await patchReview({ decision: "approve", reason: 123 });
     assert.equal(res.status, 400);
     assert.equal(calls.length, 0);
+  });
+});
+
+describe("POST /api/memories — body length cap", () => {
+  let app: FastifyInstance;
+  let baseUrl: string;
+  let createCalls: CreateMemoryRequest[];
+
+  before(async () => {
+    createCalls = [];
+    const ctx = {
+      memory: {
+        list: () => [],
+        get: () => null,
+        create: async (req: CreateMemoryRequest) => {
+          createCalls.push(req);
+          return fakeMemory("created");
+        },
+        update: async (id: string) => fakeMemory(id),
+        review: async (id: string) => fakeMemory(id),
+        delete: async () => {},
+        renderPreamble: () => "",
+      },
+    } as unknown as EngineContext;
+
+    app = Fastify({ logger: false });
+    app.setErrorHandler(async (err, _req, reply) => {
+      if (isEngineError(err)) {
+        await reply.status(err.status).send(err.toJSON());
+        return;
+      }
+      const e = err as Error;
+      await reply.status(500).send({ error: "internal", message: e.message });
+    });
+    registerMemoryRoutes(app, ctx);
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Fastify did not return a network address");
+    }
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  after(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    createCalls.length = 0;
+  });
+
+  async function postMemory(body: unknown): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${baseUrl}/api/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let parsed: unknown = text;
+    if (text.length > 0) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // keep raw text
+      }
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  it("accepts a body of exactly MEMORY_BODY_MAX_LEN chars (201)", async () => {
+    const res = await postMemory({
+      kind: "user",
+      scope: "global",
+      title: "ok",
+      body: "a".repeat(MEMORY_BODY_MAX_LEN),
+    });
+    assert.equal(res.status, 201);
+    assert.equal(createCalls.length, 1);
+  });
+
+  it("rejects a body of MEMORY_BODY_MAX_LEN+1 chars with 400 and does not call create", async () => {
+    const res = await postMemory({
+      kind: "user",
+      scope: "global",
+      title: "too long",
+      body: "a".repeat(MEMORY_BODY_MAX_LEN + 1),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(createCalls.length, 0);
+    const errBody = res.body as { error?: string; message?: string };
+    assert.equal(errBody.error, "bad_request");
+    assert.match(String(errBody.message), /2048/);
   });
 });

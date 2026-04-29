@@ -22,6 +22,7 @@ export function createSessionsSubsystem(deps: SubsystemDeps): SubsystemResult<En
     transcript: (slug, sinceSeq) => registry.transcript(slug, sinceSeq),
     stop: (slug, reason) => registry.stop(slug, reason),
     close: (slug, removeWorktree) => registry.close(slug, removeWorktree),
+    delete: (slug) => registry.delete(slug),
     reply: (slug, text, attachments) => registry.reply(slug, text, attachments),
     resumeAllActive: () => registry.resumeAllActive(),
     diff: (slug) => registry.diff(slug),

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { EngineContext } from "../../context.js";
 import { EngineError } from "../../errors.js";
 import type { CreateMemoryRequest, MemoryReviewCommand, MemoryStatus, MemoryKind } from "@minions/shared";
+import { MemoryValidationError, validateMemoryBody } from "@minions/shared";
 
 const REVIEW_DECISIONS: ReadonlyArray<MemoryReviewCommand["decision"]> = [
   "approve",
@@ -68,6 +69,14 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: EngineContext): 
     const body = req.body as CreateMemoryRequest | undefined;
     if (!body || typeof body.title !== "string" || typeof body.body !== "string") {
       throw new EngineError("bad_request", "title and body are required");
+    }
+    try {
+      validateMemoryBody(body.body);
+    } catch (e) {
+      if (e instanceof MemoryValidationError) {
+        throw new EngineError("bad_request", e.message);
+      }
+      throw e;
     }
     const memory = await ctx.memory.create(body);
     await reply.status(201).send(memory);

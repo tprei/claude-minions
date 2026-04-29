@@ -15,6 +15,7 @@ export function createVariantsSubsystem(deps: SubsystemDeps): SubsystemResult<Va
     req: CreateVariantsRequest,
   ): Promise<{ parentSlug: string; childSlugs: string[] }> {
     const count = Math.max(1, Math.min(req.count, 10));
+    const childCount = count - 1;
 
     const parentSession = await ctx.sessions.create({
       mode: "task",
@@ -27,33 +28,35 @@ export function createVariantsSubsystem(deps: SubsystemDeps): SubsystemResult<Va
     const parentSlug = parentSession.slug;
 
     const childSlugs: string[] = [];
-    const childPromises: Promise<void>[] = [];
-
-    for (let i = 0; i < count; i++) {
-      const p = ctx.sessions.create({
-        mode: "task",
-        prompt: req.prompt,
-        repoId: req.repoId,
-        baseBranch: req.baseBranch,
-        modelHint: req.modelHint,
-        parentSlug,
-        metadata: { variantOf: parentSlug, variantIndex: i },
-      }).then((s) => {
-        childSlugs.push(s.slug);
-      });
-      childPromises.push(p);
+    if (childCount > 0) {
+      const childPromises: Promise<void>[] = [];
+      for (let i = 0; i < childCount; i++) {
+        const p = ctx.sessions.create({
+          mode: "task",
+          prompt: req.prompt,
+          repoId: req.repoId,
+          baseBranch: req.baseBranch,
+          modelHint: req.modelHint,
+          parentSlug,
+          metadata: { variantOf: parentSlug, variantIndex: i },
+        }).then((s) => {
+          childSlugs.push(s.slug);
+        });
+        childPromises.push(p);
+      }
+      await Promise.all(childPromises);
     }
-
-    await Promise.all(childPromises);
 
     log.info("variants spawned", { parentSlug, childSlugs, count });
 
-    listenForVariantCompletions(parentSlug, childSlugs, bus, (done) => {
-      log.info("all variants done, running judge", { parentSlug, done });
-      runJudge(ctx, parentSlug, done, req.judgeRubric, log).catch((err) => {
-        log.error("judge error", { parentSlug, err: (err as Error).message });
+    if (childCount > 0) {
+      listenForVariantCompletions(parentSlug, childSlugs, bus, (done) => {
+        log.info("all variants done, running judge", { parentSlug, done });
+        runJudge(ctx, parentSlug, done, req.judgeRubric, log).catch((err) => {
+          log.error("judge error", { parentSlug, err: (err as Error).message });
+        });
       });
-    });
+    }
 
     return { parentSlug, childSlugs };
   }

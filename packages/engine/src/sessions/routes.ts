@@ -108,7 +108,7 @@ export function registerSessionsRoutes(app: FastifyInstance, ctx: EngineContext)
   });
 
   app.delete("/api/sessions/:slug", async (req: FastifyRequest<{ Params: { slug: string } }>, reply) => {
-    await ctx.sessions.close(req.params.slug, true);
+    await ctx.sessions.delete(req.params.slug);
     return reply.send({ ok: true });
   });
 
