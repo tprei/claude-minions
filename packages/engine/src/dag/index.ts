@@ -6,7 +6,7 @@ import { DagRepo } from "./model.js";
 import { DagScheduler } from "./scheduler.js";
 import { DagTerminalHandler } from "./onTerminal.js";
 import { registerDagRoutes } from "./routes.js";
-import { parseDagFromTranscript } from "./parser.js";
+import { parseDagFromTranscript, extractDagBlocks } from "./parser.js";
 import { newSlug, newEventId } from "../util/ids.js";
 import { nowIso } from "../util/time.js";
 import { EngineError } from "../errors.js";
@@ -148,11 +148,8 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
     const blocks: string[] = [];
     for (const ev of events) {
       if (ev.kind !== "assistant_text") continue;
-      DAG_FENCE_DETECT_RE.lastIndex = 0;
-      let m: RegExpExecArray | null;
-      while ((m = DAG_FENCE_DETECT_RE.exec(ev.text)) !== null) {
-        const body = m[1];
-        if (body) blocks.push(body.trim());
+      for (const body of extractDagBlocks(ev.text)) {
+        blocks.push(body.trim());
       }
     }
     return blocks;

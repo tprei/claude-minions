@@ -12,21 +12,13 @@ export interface ParsedDag {
   nodes: ParsedDagNode[];
 }
 
-const DAG_FENCE_RE = /```dag\s*\n([\s\S]*?)```/g;
+const DAG_FENCE_OPEN_RE = /```dag[ \t]*\r?\n/g;
 
 function tryParseJson(raw: string): unknown {
   try {
     return JSON.parse(raw);
   } catch {
-    const unescaped = raw
-      .replace(/\\n/g, "\n")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"');
-    try {
-      return JSON.parse(unescaped);
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -46,16 +38,67 @@ function isValidParsedDag(value: unknown): value is ParsedDag {
   return true;
 }
 
+function findJsonObjectEnd(text: string, startIndex: number): number | null {
+  if (text[startIndex] !== "{") return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = startIndex; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      depth++;
+      continue;
+    }
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return null;
+}
+
+export function extractDagBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  DAG_FENCE_OPEN_RE.lastIndex = 0;
+  let openMatch: RegExpExecArray | null;
+  while ((openMatch = DAG_FENCE_OPEN_RE.exec(text)) !== null) {
+    const afterOpen = openMatch.index + openMatch[0].length;
+    let i = afterOpen;
+    while (i < text.length && (text[i] === " " || text[i] === "\t" || text[i] === "\r" || text[i] === "\n")) i++;
+    if (text[i] !== "{") continue;
+    const objEnd = findJsonObjectEnd(text, i);
+    if (objEnd === null) continue;
+    let j = objEnd;
+    while (j < text.length && (text[j] === " " || text[j] === "\t" || text[j] === "\r" || text[j] === "\n")) j++;
+    if (text.slice(j, j + 3) !== "```") continue;
+    blocks.push(text.slice(i, objEnd));
+    DAG_FENCE_OPEN_RE.lastIndex = j + 3;
+  }
+  return blocks;
+}
+
 export function parseDagFromTranscript(events: TranscriptEvent[]): ParsedDag | null {
   for (const event of events) {
     if (event.kind !== "assistant_text") continue;
-    const text = event.text;
-    DAG_FENCE_RE.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = DAG_FENCE_RE.exec(text)) !== null) {
-      const block = match[1];
-      if (!block) continue;
-      const parsed = tryParseJson(block.trim());
+    const blocks = extractDagBlocks(event.text);
+    for (const block of blocks) {
+      const parsed = tryParseJson(block);
       if (!isValidParsedDag(parsed)) continue;
       return {
         title: parsed.title,
