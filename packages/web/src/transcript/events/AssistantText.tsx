@@ -1,5 +1,5 @@
 import type { AssistantTextEvent } from "@minions/shared";
-import { MarkdownText } from "../markdown.js";
+import { MarkdownView } from "../../markdown/MarkdownView.js";
 import { cx } from "../../util/classnames.js";
 
 function formatTs(ts: string): string {
@@ -30,7 +30,7 @@ export function AssistantText({ event }: Props) {
             {formatTs(event.timestamp)}
           </span>
         </div>
-        <MarkdownText text={event.text} />
+        <MarkdownView text={event.text} />
       </div>
     </div>
   );
