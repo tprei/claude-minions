@@ -215,12 +215,6 @@ function validateCommand(body: unknown): Command {
         kind: "done",
         sessionSlug: assertString(b["sessionSlug"], "sessionSlug"),
       };
-    case "dag.retry":
-      return {
-        kind: "dag.retry",
-        dagId: assertString(b["dagId"], "dagId"),
-        nodeId: assertString(b["nodeId"], "nodeId"),
-      };
     case "dag.cancel":
       return {
         kind: "dag.cancel",
@@ -338,10 +332,6 @@ async function dispatchCommand(cmd: Command, ctx: EngineContext): Promise<Comman
     case "done":
       await ctx.sessions.stop(cmd.sessionSlug);
       await ctx.landing.land(cmd.sessionSlug);
-      return { ok: true };
-
-    case "dag.retry":
-      await ctx.dags.retry(cmd.dagId, cmd.nodeId);
       return { ok: true };
 
     case "dag.cancel":

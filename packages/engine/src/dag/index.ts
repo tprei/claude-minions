@@ -1,9 +1,10 @@
+import { isRetryableDagNodeStatus } from "@minions/shared";
 import type { DAG, DAGNodeStatus, DAGSplitRequest, StatusEvent } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { Logger } from "../logger.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { DagRepo } from "./model.js";
-import { DagScheduler } from "./scheduler.js";
+import { DagScheduler, SUCCESS_NODE_STATUSES } from "./scheduler.js";
 import { DagTerminalHandler } from "./onTerminal.js";
 import { registerDagRoutes } from "./routes.js";
 import { parseDagFromTranscript, extractDagBlocks } from "./parser.js";
@@ -308,23 +309,59 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
       if (!dag) throw new EngineError("not_found", `dag not found: ${dagId}`);
       const node = repo.getNode(nodeId);
       if (!node) throw new EngineError("not_found", `dag node not found: ${nodeId}`);
+      if (dag.status === "cancelled") {
+        throw new EngineError("conflict", `cannot retry node in cancelled dag: ${dagId}`);
+      }
+      if (!isRetryableDagNodeStatus(node.status)) {
+        throw new EngineError("conflict", `node is not in a retryable status: ${node.status}`);
+      }
+      for (const depId of node.dependsOn) {
+        const depNode = repo.getNode(depId);
+        if (!depNode || !SUCCESS_NODE_STATUSES.has(depNode.status)) {
+          const status = depNode?.status ?? "missing";
+          throw new EngineError(
+            "conflict",
+            `upstream dep ${depId} is not landed/completed: ${status}`,
+          );
+        }
+      }
+
       const from = node.status;
+      const oldSessionSlug = node.sessionSlug;
+
+      if (oldSessionSlug) {
+        const old = ctx.sessions.get(oldSessionSlug);
+        const terminal =
+          old && (old.status === "completed" || old.status === "failed" || old.status === "cancelled");
+        if (old && !terminal) {
+          try {
+            await ctx.sessions.stop(oldSessionSlug, "dag-node-retry");
+          } catch (err) {
+            log.warn("failed to stop zombie session for dag node retry", {
+              dagId,
+              nodeId,
+              sessionSlug: oldSessionSlug,
+              err: (err as Error).message,
+            });
+          }
+        }
+      }
+
       repo.updateNode(nodeId, {
         status: "pending",
         sessionSlug: undefined,
         startedAt: undefined,
         completedAt: undefined,
-        failedReason: undefined,
+        failedReason: null,
       });
-      if (dag.status !== "active") {
-        repo.update(dagId, { status: "active" });
-      }
+
       ctx.audit.record(
         "operator",
-        "dag.retry",
-        { kind: "dag", id: dagId },
-        { nodeId, from, to: "pending" },
+        "dag.node.retry",
+        { kind: "dag-node", id: nodeId },
+        { dagId, from, to: "pending", oldSessionSlug: oldSessionSlug ?? null },
       );
+
       await scheduler.tick(dagId);
     },
 
