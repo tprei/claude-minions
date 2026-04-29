@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import type { AuditEvent, RepoBinding, Session } from "@minions/shared";
+import type { AuditEvent, PRSummary, RepoBinding, Session } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { EventBus } from "../bus/eventBus.js";
 import type { DagRepo } from "../dag/model.js";
@@ -89,6 +89,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
     },
     landing: {
       land: async () => {},
+      openForReview: async () => null,
       retryRebase: async () => {},
     },
     bus: {
@@ -210,6 +211,67 @@ describe("LandingManager.ensurePushedAndPRed", () => {
     assert.ok(auditActions.includes("landing.push.start"), "push start recorded");
     assert.ok(auditActions.includes("landing.push.failed"), "push failure recorded");
     assert.ok(!auditActions.includes("landing.pr.ensure.start"), "PR start not recorded");
+  });
+
+  test("openForReview pushes branch + opens PR but never merges", async () => {
+    const session = buildSession("worker");
+    const h = makeHarness({ session });
+    const sessionMap = new Map<string, Session>([[session.slug, session]]);
+    h.ctx.sessions.get = (slug) => sessionMap.get(slug) ?? null;
+
+    const summary: PRSummary = {
+      number: 42,
+      url: "https://github.com/acme/repo/pull/42",
+      state: "open",
+      draft: false,
+      base: "main",
+      head: session.branch ?? "minions/worker",
+      title: session.title,
+    };
+
+    const pushBranch: PushBranchFn = async () => {
+      h.callOrder.push("push");
+    };
+    const ensurePullRequest: EnsurePullRequestFn = async () => {
+      h.callOrder.push("pr");
+      sessionMap.set(session.slug, { ...session, pr: summary });
+      return summary;
+    };
+
+    const manager = makeManager(h, pushBranch, ensurePullRequest);
+    const result = await manager.openForReview("worker");
+
+    assert.deepEqual(h.callOrder, ["push", "pr"], "push then PR, no merge step in between or after");
+    assert.equal(result?.number, 42);
+    assert.equal(result?.state, "open");
+    assert.notEqual(result?.state, "merged", "openForReview must not merge");
+
+    const auditActions = h.audit.map((e) => e.action);
+    assert.ok(auditActions.includes("landing.push.complete"), "push complete recorded");
+    assert.ok(auditActions.includes("landing.pr.ensure.complete"), "PR ensure complete recorded");
+    assert.ok(
+      !auditActions.some((a) => a.startsWith("landing.merge")),
+      "no merge audit events should be emitted",
+    );
+  });
+
+  test("openForReview throws when push fails and never opens a PR", async () => {
+    const session = buildSession("worker");
+    const h = makeHarness({ session });
+
+    const pushBranch: PushBranchFn = async () => {
+      h.callOrder.push("push");
+      throw new Error("push exploded");
+    };
+    const ensurePullRequest: EnsurePullRequestFn = async () => {
+      h.callOrder.push("pr");
+      return null;
+    };
+
+    const manager = makeManager(h, pushBranch, ensurePullRequest);
+
+    await assert.rejects(() => manager.openForReview("worker"), /push exploded/);
+    assert.deepEqual(h.callOrder, ["push"], "PR not opened after push failure");
   });
 
   test("skips push and PR when remote is offline (file path)", async () => {

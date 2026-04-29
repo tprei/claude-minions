@@ -36,7 +36,7 @@ export function autoLandHandler(ctx: EngineContext): (session: Session) => Promi
         "completion",
         "session.auto-land",
         { kind: "session", id: session.slug },
-        { landed: false, error: `commits-ahead probe failed: ${message}` },
+        { pushedAndOpened: false, error: `commits-ahead probe failed: ${message}` },
       );
       return;
     }
@@ -46,7 +46,7 @@ export function autoLandHandler(ctx: EngineContext): (session: Session) => Promi
         "completion",
         "session.auto-land",
         { kind: "session", id: session.slug },
-        { landed: false, reason: "no commits ahead of baseBranch" },
+        { pushedAndOpened: false, reason: "no commits ahead of baseBranch" },
       );
       return;
     }
@@ -54,21 +54,21 @@ export function autoLandHandler(ctx: EngineContext): (session: Session) => Promi
     emitStatus(ctx, session.slug, `auto-land: pushing branch and opening PR (${ahead} commit${ahead === 1 ? "" : "s"} ahead of ${baseBranch})`);
 
     try {
-      await ctx.landing.land(session.slug, "squash", false);
+      await ctx.landing.openForReview(session.slug);
       ctx.audit.record(
         "completion",
         "session.auto-land",
         { kind: "session", id: session.slug },
-        { landed: true, strategy: "squash", baseBranch },
+        { pushedAndOpened: true, baseBranch },
       );
-      emitStatus(ctx, session.slug, "auto-land: PR opened and merge attempted");
+      emitStatus(ctx, session.slug, "auto-land: branch pushed and PR opened — CI babysitter takes over from here");
     } catch (err) {
       const message = (err as Error).message;
       ctx.audit.record(
         "completion",
         "session.auto-land",
         { kind: "session", id: session.slug },
-        { landed: false, error: message },
+        { pushedAndOpened: false, error: message },
       );
       emitStatus(ctx, session.slug, `auto-land failed: ${message}`, "warn");
     }

@@ -88,6 +88,7 @@ function makeHarness(sessions: Session[]): RestackHarness {
     },
     landing: {
       land: async () => {},
+      openForReview: async () => null,
       retryRebase: async (slug: string) => {
         retryCalls.push(slug);
         const delay = retryDelays.get(slug);
