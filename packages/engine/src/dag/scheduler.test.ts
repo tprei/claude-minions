@@ -128,6 +128,8 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
           status: "running",
           attention: [],
           quickActions: [],
+          branch: `minions/${slug}`,
+          baseBranch: req.baseBranch,
           stats: {
             turns: 0,
             inputTokens: 0,
@@ -147,7 +149,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
         spawnedSessions.push(session);
         return session;
       },
-      get: () => null,
+      get: (slug: string) => spawnedSessions.find((s) => s.slug === slug) ?? null,
       list: () => [],
       listPaged: () => ({ items: [] }),
       listWithTranscript: () => [],
@@ -292,4 +294,46 @@ describe("DagScheduler", () => {
       assert.equal(finalDag?.status, "failed", `DAG should be failed when node is ${terminal}`);
     });
   }
+
+  test("stacked PRs: A bases on dag.baseBranch, B (depends on A) bases on A's session branch", async () => {
+    const nodeA = makeNode("A", "pending");
+    const nodeB = makeNode("B", "pending", ["A"]);
+
+    const dag = makeDag("dag1", [nodeA, nodeB]);
+    dag.baseBranch = "main";
+
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 1, "only A spawns first");
+    const aSession = spawnedSessions[0];
+    assert.ok(aSession, "A session exists");
+    assert.equal(aSession.baseBranch, "main", "root node A bases on dag.baseBranch (main)");
+
+    const aNode = repo.getNode("A");
+    assert.equal(aNode?.sessionSlug, aSession.slug, "A node points at its session");
+
+    repo.updateNode("A", { status: "done" });
+
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 2, "B spawns after A done");
+    const bSession = spawnedSessions[1];
+    assert.ok(bSession, "B session exists");
+    assert.equal(
+      bSession.baseBranch,
+      aSession.branch,
+      "B bases on A's session branch (stacked PR), not main",
+    );
+    assert.equal(
+      bSession.baseBranch,
+      `minions/${aSession.slug}`,
+      "B's base matches the minions/<A-slug> branch convention",
+    );
+  });
 });

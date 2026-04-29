@@ -1,14 +1,23 @@
 import { spawn } from "node:child_process";
 import simpleGit from "simple-git";
+import type { PRSummary } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import type { Logger } from "../logger.js";
 import type { DagRepo } from "../dag/model.js";
 import { RestackManager } from "./restack.js";
 import { formatStackComment } from "./stackComment.js";
-import { pushBranch } from "./push.js";
-import { ensurePullRequest } from "./openPR.js";
+import { pushBranch as defaultPushBranch } from "./push.js";
+import { ensurePullRequest as defaultEnsurePullRequest, type EnsurePullRequestArgs } from "./openPR.js";
 import { EngineError } from "../errors.js";
+
+export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
+export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
+
+export interface LandingManagerDeps {
+  pushBranch?: PushBranchFn;
+  ensurePullRequest?: EnsurePullRequestFn;
+}
 
 function isOnlineRemote(remote: string): boolean {
   return /^(https?:\/\/|ssh:\/\/|git:\/\/|git@)/.test(remote);
@@ -33,13 +42,20 @@ function runGh(args: string[], opts: { cwd: string; log: Logger }): Promise<stri
   });
 }
 
-class LandingManager {
+export class LandingManager {
+  private readonly pushBranch: PushBranchFn;
+  private readonly ensurePullRequest: EnsurePullRequestFn;
+
   constructor(
     private readonly ctx: EngineContext,
     private readonly dagRepo: DagRepo,
     private readonly restack: RestackManager,
     private readonly log: Logger,
-  ) {}
+    deps: LandingManagerDeps = {},
+  ) {
+    this.pushBranch = deps.pushBranch ?? defaultPushBranch;
+    this.ensurePullRequest = deps.ensurePullRequest ?? defaultEnsurePullRequest;
+  }
 
   async land(slug: string, strategy: "merge" | "squash" | "rebase" = "squash", force = false): Promise<void> {
     const session = this.ctx.sessions.get(slug);
@@ -158,6 +174,12 @@ class LandingManager {
 
     if (!session.repoId) {
       this.log.info("ensurePushedAndPRed skipped: session has no repoId", { slug });
+      this.ctx.audit.record(
+        "system",
+        "landing.push_and_pr.skipped",
+        { kind: "session", id: slug },
+        { reason: "no-repo-id" },
+      );
       return;
     }
 
@@ -167,6 +189,12 @@ class LandingManager {
         slug,
         repoId: session.repoId,
       });
+      this.ctx.audit.record(
+        "system",
+        "landing.push_and_pr.skipped",
+        { kind: "session", id: slug },
+        { reason: "no-remote", repoId: session.repoId },
+      );
       return;
     }
 
@@ -175,11 +203,62 @@ class LandingManager {
         slug,
         remote: repo.remote,
       });
+      this.ctx.audit.record(
+        "system",
+        "landing.push_and_pr.skipped",
+        { kind: "session", id: slug },
+        { reason: "offline-remote", remote: repo.remote },
+      );
       return;
     }
 
-    await pushBranch(session.worktreePath, session.branch, this.log);
-    await ensurePullRequest({ ctx: this.ctx, slug, log: this.log });
+    this.ctx.audit.record(
+      "system",
+      "landing.push.start",
+      { kind: "session", id: slug },
+      { branch: session.branch, baseBranch: session.baseBranch ?? null },
+    );
+    try {
+      await this.pushBranch(session.worktreePath, session.branch, this.log);
+    } catch (err) {
+      this.ctx.audit.record(
+        "system",
+        "landing.push.failed",
+        { kind: "session", id: slug },
+        { branch: session.branch, error: (err as Error).message },
+      );
+      throw err;
+    }
+    this.ctx.audit.record(
+      "system",
+      "landing.push.complete",
+      { kind: "session", id: slug },
+      { branch: session.branch },
+    );
+
+    this.ctx.audit.record(
+      "system",
+      "landing.pr.ensure.start",
+      { kind: "session", id: slug },
+      { branch: session.branch, baseBranch: session.baseBranch ?? null },
+    );
+    try {
+      await this.ensurePullRequest({ ctx: this.ctx, slug, log: this.log });
+    } catch (err) {
+      this.ctx.audit.record(
+        "system",
+        "landing.pr.ensure.failed",
+        { kind: "session", id: slug },
+        { branch: session.branch, error: (err as Error).message },
+      );
+      throw err;
+    }
+    this.ctx.audit.record(
+      "system",
+      "landing.pr.ensure.complete",
+      { kind: "session", id: slug },
+      { branch: session.branch },
+    );
   }
 
   async retryRebase(slug: string): Promise<void> {
