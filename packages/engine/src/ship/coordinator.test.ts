@@ -108,6 +108,13 @@ function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): EngineConte
       stop: async () => {},
       close: async () => {},
       reply: async (_slug: string, _text: string) => {},
+      markWaitingInput: (slug: string, _reason?: string) => {
+        const s = sessions.get(slug);
+        if (s) sessions.set(slug, { ...s, status: "waiting_input" });
+        db.prepare(`UPDATE sessions SET status = 'waiting_input' WHERE slug = ?`).run(slug);
+      },
+      kickReplyQueue: async () => false,
+      setDagId: () => {},
       resumeAllActive: async () => {},
       diff: async (slug: string) => ({ sessionSlug: slug, patch: "", stats: [], truncated: false, byteSize: 0, generatedAt: new Date().toISOString() }),
       screenshots: async () => [],
@@ -327,6 +334,58 @@ describe("ShipCoordinator", () => {
       "plan",
       "three short assistant_text events totaling ~102 chars trigger think→plan",
     );
+  });
+
+  test("advance to dag marks session waiting_input", async () => {
+    const db = makeTempDb();
+    const ctx = makeMockCtx(db) as unknown as EngineContext & { _sessions: Map<string, Session> };
+
+    const sessionSlug = "ship-dag-wait";
+    const session = makeShipSession(sessionSlug);
+    insertSession(db, session);
+    ctx._sessions.set(sessionSlug, session);
+
+    (ctx.sessions.reply as unknown as (slug: string, text: string) => Promise<void>) =
+      async () => {};
+
+    const coordinator = new ShipCoordinator(db, ctx, createLogger("error"));
+
+    await coordinator.advance(sessionSlug, "dag");
+
+    const stageRow = db
+      .prepare("SELECT stage FROM ship_state WHERE session_slug = ?")
+      .get(sessionSlug) as { stage: string } | undefined;
+    assert.equal(stageRow?.stage, "dag");
+
+    const sessionRow = db
+      .prepare("SELECT status FROM sessions WHERE slug = ?")
+      .get(sessionSlug) as { status: string } | undefined;
+    assert.equal(sessionRow?.status, "waiting_input", "parent session marked waiting_input on dag stage");
+
+    const inMemory = ctx.sessions.get(sessionSlug);
+    assert.equal(inMemory?.status, "waiting_input", "in-memory session reflects waiting_input");
+  });
+
+  test("advance to plan does not mark session waiting_input", async () => {
+    const db = makeTempDb();
+    const ctx = makeMockCtx(db) as unknown as EngineContext & { _sessions: Map<string, Session> };
+
+    const sessionSlug = "ship-plan-no-wait";
+    const session = makeShipSession(sessionSlug);
+    insertSession(db, session);
+    ctx._sessions.set(sessionSlug, session);
+
+    (ctx.sessions.reply as unknown as (slug: string, text: string) => Promise<void>) =
+      async () => {};
+
+    const coordinator = new ShipCoordinator(db, ctx, createLogger("error"));
+
+    await coordinator.advance(sessionSlug, "plan");
+
+    const sessionRow = db
+      .prepare("SELECT status FROM sessions WHERE slug = ?")
+      .get(sessionSlug) as { status: string } | undefined;
+    assert.notEqual(sessionRow?.status, "waiting_input");
   });
 
   test("reconcileOnBoot skips terminated ship sessions", async () => {

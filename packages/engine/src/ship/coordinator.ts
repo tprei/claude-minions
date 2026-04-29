@@ -142,6 +142,10 @@ export class ShipCoordinator {
       `[Ship stage: ${target}]\n\n${directive}`,
     );
 
+    if (target === "dag") {
+      this.ctx.sessions.markWaitingInput(slug, "waiting for DAG completion");
+    }
+
     this.log.info("ship stage advanced", { slug, from: currentStage, to: target });
 
     if (target === "verify") {
