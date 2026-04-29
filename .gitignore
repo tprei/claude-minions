@@ -30,3 +30,7 @@ packages/web/dev-dist/
 /data/
 .env.deploy
 /packages/web/.e2e-workspace/
+
+# dogfood Playwright screenshots
+*.png
+/.codex
