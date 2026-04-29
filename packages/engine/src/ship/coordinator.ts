@@ -136,14 +136,14 @@ export class ShipCoordinator {
       this.ctx.bus.emit({ kind: "session_updated", session: updatedSession });
     }
 
-    const directive = stageDirective(target);
-    await this.ctx.sessions.reply(
-      slug,
-      `[Ship stage: ${target}]\n\n${directive}`,
-    );
-
     if (target === "dag") {
       this.ctx.sessions.markWaitingInput(slug, "waiting for DAG completion");
+    } else {
+      const directive = stageDirective(target);
+      await this.ctx.sessions.reply(
+        slug,
+        `[Ship stage: ${target}]\n\n${directive}`,
+      );
     }
 
     this.log.info("ship stage advanced", { slug, from: currentStage, to: target });
