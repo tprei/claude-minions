@@ -29,5 +29,8 @@ export function parseUrl(): ParsedUrl {
     return { connectionId, view, sessionSlug, query };
   }
 
-  return { connectionId: null, view: "list", sessionSlug: undefined, query };
+  const rawView = segments[0] ?? "list";
+  const view: ViewKind = isViewKind(rawView) ? rawView : "list";
+  const sessionSlug = isViewKind(rawView) ? segments[1] : segments[0];
+  return { connectionId: null, view, sessionSlug, query };
 }
