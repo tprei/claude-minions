@@ -174,9 +174,24 @@ export function registerSessionsRoutes(app: FastifyInstance, ctx: EngineContext)
         throw new EngineError("bad_request", "invalid filename");
       }
       const filePath = ctx.sessions.screenshotPath(req.params.slug, filename);
+      try {
+        await fs.promises.stat(filePath);
+      } catch (err) {
+        const errno = err as NodeJS.ErrnoException;
+        if (errno.code === "ENOENT") {
+          return reply.code(404).send({ error: "not_found", message: "Screenshot not found" });
+        }
+        return reply.code(500).send({ error: "internal", message: String(err) });
+      }
       const stream = fs.createReadStream(filePath);
-      stream.on("error", () => {
-        reply.code(404).send({ error: "not_found", message: "Screenshot not found" });
+      stream.on("error", (err) => {
+        if (reply.raw.headersSent || reply.raw.writableEnded) return;
+        const errno = err as NodeJS.ErrnoException;
+        if (errno.code === "ENOENT") {
+          reply.code(404).send({ error: "not_found", message: "Screenshot not found" });
+        } else {
+          reply.code(500).send({ error: "internal", message: String(err) });
+        }
       });
       return reply.type("image/png").send(stream);
     },
