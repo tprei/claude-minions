@@ -115,17 +115,6 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.featuresPending = () => featuresPending.map((f) => ({ ...f }));
   ctx.repos = () => repoRepo.list();
 
-  ctx.shutdown = async () => {
-    for (const hook of shutdownHooks.slice().reverse()) {
-      try {
-        await hook();
-      } catch (e) {
-        engineLog.error("shutdown hook error", { message: (e as Error).message });
-      }
-    }
-    db.close();
-  };
-
   const app = await buildHttpServer(ctx);
   await registerRoutes(app, ctx);
   attachSseRoute(app, ctx);
@@ -139,9 +128,53 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   if (addr && typeof addr === "object") {
     env.port = addr.port;
   }
-  shutdownHooks.push(async () => {
-    await app.close();
-  });
+
+  ctx.shutdown = async () => {
+    let listenerTimer: NodeJS.Timeout | undefined;
+    try {
+      app.server.closeAllConnections();
+      await Promise.race([
+        app.close(),
+        new Promise<void>((_, reject) => {
+          listenerTimer = setTimeout(
+            () => reject(new Error("listener close timed out after 500ms")),
+            500,
+          );
+        }),
+      ]);
+    } catch (e) {
+      engineLog.warn("listener close did not complete cleanly", { message: (e as Error).message });
+    } finally {
+      if (listenerTimer) clearTimeout(listenerTimer);
+    }
+
+    let cleanupTimer: NodeJS.Timeout | undefined;
+    const cleanup = (async () => {
+      for (const hook of shutdownHooks.slice().reverse()) {
+        try {
+          await hook();
+        } catch (e) {
+          engineLog.error("shutdown hook error", { message: (e as Error).message });
+        }
+      }
+    })();
+    try {
+      await Promise.race([
+        cleanup,
+        new Promise<void>((resolve) => {
+          cleanupTimer = setTimeout(resolve, 300);
+        }),
+      ]);
+    } finally {
+      if (cleanupTimer) clearTimeout(cleanupTimer);
+    }
+
+    try {
+      db.close();
+    } catch (e) {
+      engineLog.error("db close error", { message: (e as Error).message });
+    }
+  };
   engineLog.info("engine listening", { port: env.port, host: env.host });
 
   ctx.resource.start();
