@@ -56,7 +56,7 @@ export class DagTerminalHandler {
     }
 
     try {
-      await this.ctx.landing.land(session.slug, "squash", false);
+      await this.ctx.landing.land(session.slug, "squash", true);
       this.repo.updateNode(node.id, {
         status: "landed",
         completedAt: new Date().toISOString(),
