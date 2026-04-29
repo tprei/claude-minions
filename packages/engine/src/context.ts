@@ -41,6 +41,7 @@ export interface EngineContext {
     screenshotPath: (slug: string, filename: string) => string;
     checkpoints: (slug: string) => import("@minions/shared").Checkpoint[];
     restoreCheckpoint: (slug: string, id: string) => Promise<void>;
+    updateBucket: (slug: string, bucket: import("@minions/shared").SessionBucket | null) => void;
   };
 
   dags: {
