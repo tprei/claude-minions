@@ -55,32 +55,6 @@ export class DagTerminalHandler {
       return;
     }
 
-    let readiness: import("@minions/shared").MergeReadiness;
-    try {
-      readiness = await this.ctx.readiness.compute(session.slug);
-    } catch (err) {
-      this.log.error("readiness compute failed in dag terminal handler", {
-        sessionSlug: session.slug,
-        err: (err as Error).message,
-      });
-      this.repo.updateNode(node.id, {
-        status: "ci-failed",
-        failedReason: "readiness check error",
-        completedAt: new Date().toISOString(),
-      });
-      return;
-    }
-
-    if (readiness.status !== "ready") {
-      this.repo.updateNode(node.id, {
-        status: "ci-failed",
-        failedReason: `readiness ${readiness.status}`,
-        completedAt: new Date().toISOString(),
-      });
-      this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
-      return;
-    }
-
     try {
       await this.ctx.landing.land(session.slug, "squash", false);
       this.repo.updateNode(node.id, {
@@ -139,7 +113,7 @@ export class DagTerminalHandler {
       ...parent.attention,
       {
         kind: "ci_failed" as const,
-        message: `DAG node ${nodeId} failed readiness/quality checks`,
+        message: `DAG node ${nodeId} failed quality checks`,
         raisedAt: new Date().toISOString(),
       },
     ];

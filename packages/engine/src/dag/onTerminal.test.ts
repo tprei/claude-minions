@@ -3,9 +3,7 @@ import assert from "node:assert/strict";
 import type {
   DAG,
   DAGNode,
-  MergeReadiness,
   QualityReport,
-  ReadinessStatus,
   ServerEvent,
   Session,
 } from "@minions/shared";
@@ -114,8 +112,6 @@ function makeMockRepo(dag: DAG): MockRepo {
 
 interface MockCtxOptions {
   qualityReport: QualityReport | null;
-  readinessStatus?: ReadinessStatus;
-  readinessThrows?: boolean;
   parentSession?: Session;
   onLand?: (slug: string) => Promise<void> | void;
 }
@@ -138,14 +134,8 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
       },
     },
     readiness: {
-      compute: async (slug: string): Promise<MergeReadiness> => {
-        if (opts.readinessThrows) throw new Error("boom");
-        return {
-          sessionSlug: slug,
-          status: opts.readinessStatus ?? "ready",
-          checks: [],
-          computedAt: new Date().toISOString(),
-        };
+      compute: async (): Promise<never> => {
+        throw new Error("readiness.compute must not be called for dag-task sessions");
       },
       summary: () => ({ total: 0, ready: 0, blocked: 0, pending: 0, unknown: 0, bySession: [] }),
     },
@@ -200,56 +190,7 @@ describe("DagTerminalHandler", () => {
     assert.ok(emitted.some((e) => e.kind === "session_updated"), "should raise ci_failed flag on parent");
   });
 
-  test("pending readiness blocks landing and marks node ci-failed", async () => {
-    const node = makeNode("n1", "running", "sess-1");
-    const dag = makeDag("dag-1", [node], "root-1");
-    const { repo, getNode, patches } = makeMockRepo(dag);
-    const parent = makeSession("root-1");
-    const { ctx, landCalls, emitted } = makeMockCtx({
-      qualityReport: {
-        sessionSlug: "sess-1",
-        status: "passed",
-        checks: [],
-        createdAt: new Date().toISOString(),
-      },
-      readinessStatus: "pending",
-      parentSession: parent,
-    });
-
-    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
-    await handler.handle(makeSession("sess-1"));
-
-    assert.equal(landCalls.length, 0, "land must not be called when readiness is pending");
-    assert.equal(getNode("n1")?.status, "ci-failed");
-    const lastPatch = patches.at(-1);
-    assert.match(lastPatch?.patch.failedReason ?? "", /readiness pending/);
-    assert.ok(emitted.some((e) => e.kind === "session_updated"), "should raise ci_failed flag on parent");
-  });
-
-  test("blocked readiness blocks landing", async () => {
-    const node = makeNode("n1", "running", "sess-1");
-    const dag = makeDag("dag-1", [node], "root-1");
-    const { repo, getNode } = makeMockRepo(dag);
-    const parent = makeSession("root-1");
-    const { ctx, landCalls } = makeMockCtx({
-      qualityReport: {
-        sessionSlug: "sess-1",
-        status: "passed",
-        checks: [],
-        createdAt: new Date().toISOString(),
-      },
-      readinessStatus: "blocked",
-      parentSession: parent,
-    });
-
-    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
-    await handler.handle(makeSession("sess-1"));
-
-    assert.equal(landCalls.length, 0);
-    assert.equal(getNode("n1")?.status, "ci-failed");
-  });
-
-  test("ready readiness with passed quality lands and marks node landed", async () => {
+  test("dag-task with passed quality lands without invoking PR readiness", async () => {
     const node = makeNode("n1", "running", "sess-1");
     const dag = makeDag("dag-1", [node], "root-1");
     const { repo, getNode } = makeMockRepo(dag);
@@ -260,7 +201,6 @@ describe("DagTerminalHandler", () => {
         checks: [],
         createdAt: new Date().toISOString(),
       },
-      readinessStatus: "ready",
     });
 
     const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
@@ -283,7 +223,6 @@ describe("DagTerminalHandler", () => {
         checks: [],
         createdAt: new Date().toISOString(),
       },
-      readinessStatus: "ready",
     });
 
     const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
