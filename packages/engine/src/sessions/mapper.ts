@@ -67,6 +67,7 @@ export interface SessionRow {
   variant_of: string | null;
   metadata: string;
   permission_tier: string | null;
+  bucket: string | null;
 }
 
 export interface TranscriptRow {
@@ -135,6 +136,7 @@ export function rowToSession(row: SessionRow, childSlugs: string[] = []): Sessio
     loopId: row.loop_id ?? undefined,
     variantOf: row.variant_of ?? undefined,
     metadata: JSON.parse(row.metadata) as Record<string, unknown>,
+    bucket: (row.bucket as import("@minions/shared").SessionBucket | null) ?? undefined,
   };
 }
 
@@ -182,6 +184,7 @@ export function sessionToRow(s: Session): SessionRow {
     loop_id: s.loopId ?? null,
     variant_of: s.variantOf ?? null,
     metadata: JSON.stringify(s.metadata),
+    bucket: s.bucket ?? null,
   };
 }
 

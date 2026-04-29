@@ -325,8 +325,17 @@ ALTER TABLE sessions ADD COLUMN permission_tier TEXT;
 `,
 };
 
+const m004_session_bucket: Migration = {
+  name: "004_session_bucket",
+  sql: `
+ALTER TABLE sessions ADD COLUMN bucket TEXT;
+CREATE INDEX idx_sessions_bucket ON sessions(bucket);
+`,
+};
+
 export const migrations: Migration[] = [
   m001_initial,
   m002_reply_queue_state,
   m003_session_permission_tier,
+  m004_session_bucket,
 ];
