@@ -34,7 +34,7 @@ export interface QuickAction {
 }
 
 export interface AttentionFlag {
-  kind: "needs_input" | "ci_failed" | "rebase_conflict" | "quota_exhausted" | "judge_review" | "manual_intervention";
+  kind: "needs_input" | "ci_failed" | "ci_pending" | "ci_passed" | "rebase_conflict" | "quota_exhausted" | "judge_review" | "manual_intervention";
   message: string;
   raisedAt: string;
 }
@@ -127,6 +127,11 @@ export interface CreateSessionRequest {
 
 export interface CreateVariantsRequest {
   prompt: string;
+  /**
+   * Total number of worker sessions to spawn (parent counts as 1).
+   * count=1 runs the parent solo with no children; count>=2 runs the
+   * parent plus (count-1) children. Clamped to [1, 10] by the engine.
+   */
   count: number;
   repoId?: string;
   baseBranch?: string;

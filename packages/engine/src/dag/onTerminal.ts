@@ -32,13 +32,23 @@ export class DagTerminalHandler {
     }
 
     const qualityReport = this.ctx.quality.getReport(session.slug);
+    if (qualityReport === null) {
+      this.repo.updateNode(node.id, {
+        status: "ci-failed",
+        failedReason: "quality report missing",
+        completedAt: new Date().toISOString(),
+      });
+      this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
+      return;
+    }
+
     const qualityPassed =
-      qualityReport === null || qualityReport.status === "passed" || qualityReport.status === "partial";
+      qualityReport.status === "passed" || qualityReport.status === "partial";
 
     if (!qualityPassed) {
       this.repo.updateNode(node.id, {
         status: "ci-failed",
-        failedReason: "quality gate failed",
+        failedReason: `quality gate ${qualityReport.status}`,
         completedAt: new Date().toISOString(),
       });
       this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
@@ -61,10 +71,10 @@ export class DagTerminalHandler {
       return;
     }
 
-    if (readiness.status === "blocked") {
+    if (readiness.status !== "ready") {
       this.repo.updateNode(node.id, {
         status: "ci-failed",
-        failedReason: "readiness blocked",
+        failedReason: `readiness ${readiness.status}`,
         completedAt: new Date().toISOString(),
       });
       this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);

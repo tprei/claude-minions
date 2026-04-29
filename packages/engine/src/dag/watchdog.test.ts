@@ -174,6 +174,7 @@ function makeMockCtx(
       transcript: () => [],
       stop: async () => {},
       close: async () => {},
+      delete: async () => {},
       reply: async () => {},
       resumeAllActive: async () => {},
       diff: async (slug) => ({

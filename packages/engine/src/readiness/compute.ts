@@ -51,7 +51,11 @@ export function computeCiCheck(session: Session): ReadinessCheck {
   if (hasFailed) {
     return { id: "ci", label: "CI checks", status: "blocked", detail: "CI checks failed" };
   }
-  return { id: "ci", label: "CI checks", status: "ok" };
+  const hasPassed = session.attention.some((a) => a.kind === "ci_passed");
+  if (hasPassed) {
+    return { id: "ci", label: "CI checks passed", status: "ok" };
+  }
+  return { id: "ci", label: "CI checks", status: "pending", detail: "CI checks in progress" };
 }
 
 export function computeConflictCheck(session: Session): ReadinessCheck {

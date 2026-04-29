@@ -83,6 +83,7 @@ function makeMockCtx(opts: {
       transcript: () => opts.transcriptRef.events,
       stop: async () => {},
       close: async () => {},
+      delete: async () => {},
       reply: async () => {},
       resumeAllActive: async () => {},
       diff: async (slug) => ({

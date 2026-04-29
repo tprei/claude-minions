@@ -29,6 +29,7 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
       transcript: () => [],
       stop: async () => {},
       close: async () => {},
+      delete: async () => {},
       reply: async () => {},
       resumeAllActive: async () => {},
       diff: async () => ({

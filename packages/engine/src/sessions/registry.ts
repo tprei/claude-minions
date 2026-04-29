@@ -825,6 +825,34 @@ export class SessionRegistry {
     }
   }
 
+  async delete(slug: string): Promise<void> {
+    const { db, bus } = this.deps;
+    const row = this.getSessionRow(slug);
+    if (!row) {
+      throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+
+    const handle = this.handles.get(slug);
+    if (handle) {
+      handle.kill("SIGKILL");
+      this.handles.delete(slug);
+    }
+
+    const tx = db.transaction((s: string) => {
+      db.prepare(`DELETE FROM transcript_events WHERE session_slug = ?`).run(s);
+      db.prepare(`DELETE FROM reply_queue WHERE session_slug = ?`).run(s);
+      db.prepare(`DELETE FROM screenshots WHERE session_slug = ?`).run(s);
+      db.prepare(`DELETE FROM checkpoints WHERE session_slug = ?`).run(s);
+      db.prepare(`DELETE FROM provider_state WHERE session_slug = ?`).run(s);
+      db.prepare(`DELETE FROM sessions WHERE slug = ?`).run(s);
+    });
+    tx(slug);
+
+    this.prevSessionState.delete(slug);
+
+    bus.emit({ kind: "session_deleted", slug });
+  }
+
   async diff(slug: string): Promise<WorkspaceDiff> {
     const row = this.getSessionRow(slug);
     if (!row) {
