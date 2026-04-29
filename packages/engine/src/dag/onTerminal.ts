@@ -89,6 +89,7 @@ export class DagTerminalHandler {
       });
       this.log.info("dag node landed", { dagId: dag.id, nodeId: node.id, sessionSlug: session.slug });
       await this.scheduler.tick(dag.id);
+      await this.maybeReleaseShipParent(dag.id);
     } catch (err) {
       const message = (err as Error).message;
       if (message.includes("rebase") || message.includes("conflict")) {
@@ -109,6 +110,25 @@ export class DagTerminalHandler {
           err: message,
         });
       }
+    }
+  }
+
+  private async maybeReleaseShipParent(dagId: string): Promise<void> {
+    try {
+      const refreshed = this.repo.get(dagId);
+      if (!refreshed) return;
+      if (refreshed.status !== "completed") return;
+      const rootSlug = refreshed.rootSessionSlug;
+      if (!rootSlug) return;
+      const parent = this.ctx.sessions.get(rootSlug);
+      if (!parent || parent.mode !== "ship" || parent.shipStage !== "dag") return;
+      await this.ctx.ship.advance(rootSlug, "verify");
+      await this.ctx.sessions.kickReplyQueue(rootSlug);
+    } catch (err) {
+      this.log.error("failed to release ship parent after dag completion", {
+        dagId,
+        err: (err as Error).message,
+      });
     }
   }
 

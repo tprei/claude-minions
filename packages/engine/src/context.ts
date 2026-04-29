@@ -32,6 +32,9 @@ export interface EngineContext {
     close: (slug: string, removeWorktree?: boolean) => Promise<void>;
     delete: (slug: string) => Promise<void>;
     reply: (slug: string, text: string, attachments?: import("@minions/shared").AttachmentInput[]) => Promise<void>;
+    setDagId: (slug: string, dagId: string) => void;
+    markWaitingInput: (slug: string, reason?: string) => void;
+    kickReplyQueue: (slug: string) => Promise<boolean>;
     resumeAllActive: () => Promise<void>;
     diff: (slug: string) => Promise<import("@minions/shared").WorkspaceDiff>;
     screenshots: (slug: string) => Promise<import("@minions/shared").Screenshot[]>;

@@ -584,6 +584,16 @@ export class SessionRegistry {
         if (continued) return;
       }
 
+      const latestRow = this.getSessionRow(slug);
+      if (latestRow?.status === "waiting_input") {
+        // Subsystem (e.g. ship coordinator) parked the session in waiting_input
+        // while it waits for an external trigger (e.g. DAG completion). Don't
+        // overwrite that with the exit-code-derived status; the session is alive
+        // pending a wake.
+        this.emitUpdated(this.buildSession(latestRow));
+        return;
+      }
+
       const now = nowIso();
       this.updateSessionStatus.run(finalStatus, now, now, slug);
 
@@ -592,6 +602,27 @@ export class SessionRegistry {
     }).catch((err) => {
       log.error("handle waitForExit error", { slug, err: String(err) });
     });
+  }
+
+  markWaitingInput(slug: string, reason?: string): void {
+    const row = this.getSessionRow(slug);
+    if (!row) {
+      throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+    const now = nowIso();
+    this.updateSessionStatus.run("waiting_input", now, null, slug);
+    if (reason) {
+      this.deps.log.debug("session marked waiting_input", { slug, reason });
+    }
+    const updatedRow = this.getSessionRow(slug)!;
+    this.emitUpdated(this.buildSession(updatedRow));
+  }
+
+  async kickReplyQueue(slug: string): Promise<boolean> {
+    if (this.handles.has(slug)) return false;
+    const row = this.getSessionRow(slug);
+    if (!row) return false;
+    return this.continueWithQueuedReplies(slug, row.provider);
   }
 
   private async continueWithQueuedReplies(slug: string, providerName: string): Promise<boolean> {
@@ -822,6 +853,21 @@ export class SessionRegistry {
 
     this.replyQueue.enqueue(slug, payload);
     ctx.audit.record("operator", "session.reply.queued", { kind: "session", id: slug });
+  }
+
+  setDagId(slug: string, dagId: string): void {
+    const { db } = this.deps;
+    const row = this.getSessionRow(slug);
+    if (!row) {
+      throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+    db.prepare(`UPDATE sessions SET dag_id = ?, updated_at = ? WHERE slug = ?`).run(
+      dagId,
+      nowIso(),
+      slug,
+    );
+    const updatedRow = this.getSessionRow(slug)!;
+    this.emitUpdated(this.buildSession(updatedRow));
   }
 
   async stop(slug: string, _reason?: string): Promise<void> {
