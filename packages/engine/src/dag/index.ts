@@ -188,6 +188,14 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
           dagId: created.id,
           nodes: created.nodes.length,
         });
+        ctx.sessions.setDagId(slug, created.id);
+        scheduler.tick(created.id).catch((err: unknown) => {
+          subLog.error("scheduler.tick after dag creation failed", {
+            slug,
+            dagId: created.id,
+            err: (err as Error).message,
+          });
+        });
       } catch (err) {
         subLog.error("failed to create dag from parsed transcript", {
           slug,

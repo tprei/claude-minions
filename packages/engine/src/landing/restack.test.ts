@@ -69,6 +69,9 @@ function makeHarness(sessions: Session[]): RestackHarness {
       close: async () => {},
       delete: async () => {},
       reply: async () => {},
+      setDagId: () => {},
+      markWaitingInput: () => {},
+      kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({
         sessionSlug: slug,
