@@ -7,6 +7,7 @@ import fs from "node:fs";
 import type { AuditEvent, DAG, DAGNode, Session, SessionStatus } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import { EventBus } from "../bus/eventBus.js";
+import { EngineError } from "../errors.js";
 import { KeyedMutex } from "../util/mutex.js";
 import { DagScheduler } from "./scheduler.js";
 import { DagRepo } from "./model.js";
@@ -150,9 +151,15 @@ function makeSession(slug: string, status: SessionStatus): Session {
   };
 }
 
+interface StopCall {
+  slug: string;
+  reason?: string;
+}
+
 function makeMockCtx(
   sessionsBySlug: Map<string, Session>,
   audit: AuditCall[],
+  stopCalls: StopCall[] = [],
 ): EngineContext {
   let counter = 0;
   return {
@@ -172,7 +179,9 @@ function makeMockCtx(
       listPaged: () => ({ items: [] }),
       listWithTranscript: () => [],
       transcript: () => [],
-      stop: async () => {},
+      stop: async (slug: string, reason?: string) => {
+        stopCalls.push({ slug, reason });
+      },
       close: async () => {},
       delete: async () => {},
       reply: async () => {},
@@ -364,10 +373,246 @@ describe("Dag api operator commands", () => {
       assert.equal(after?.status, "running", "scheduler.tick promoted A from pending to running");
       assert.notEqual(after?.sessionSlug, "old-A", "old session slug cleared and replaced by new spawn");
       assert.ok(sessions.size >= 1, "ctx.sessions.create was called");
-      const retryAudit = audit.find((a) => a.action === "dag.retry");
-      assert.ok(retryAudit, "dag.retry audit row written");
+      const retryAudit = audit.find((a) => a.action === "dag.node.retry");
+      assert.ok(retryAudit, "dag.node.retry audit row written");
+      assert.equal(retryAudit?.target?.kind, "dag-node");
+      assert.equal(retryAudit?.target?.id, "A");
+      assert.equal(retryAudit?.detail?.["dagId"], "dag-r1");
       assert.equal(retryAudit?.detail?.["from"], "failed");
       assert.equal(retryAudit?.detail?.["to"], "pending");
+      assert.equal(retryAudit?.detail?.["oldSessionSlug"], "old-A");
+    } finally {
+      await subsystem.onShutdown?.();
+      db.close();
+    }
+  });
+
+  test("retry rejects with conflict when dag is cancelled", async () => {
+    const db = makeTempDb();
+    const bus = new EventBus();
+    const sessions = new Map<string, Session>();
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    ctx.bus = bus;
+    ctx.db = db;
+
+    const dag = makeDag("dag-cx", [makeNode("A", "failed", { sessionSlug: "old-A" })]);
+    const repo = seedDag(db, bus, dag);
+    repo.update("dag-cx", { status: "cancelled" });
+
+    const subsystem = createDagSubsystem({
+      ctx,
+      log: createLogger("error"),
+      env: {} as EngineContext["env"],
+      db,
+      bus,
+      mutex: ctx.mutex,
+      workspaceDir: "/tmp",
+    });
+    ctx.dags = subsystem.api;
+
+    try {
+      await assert.rejects(
+        () => subsystem.api.retry("dag-cx", "A"),
+        (err: unknown) => err instanceof EngineError && err.code === "conflict",
+      );
+    } finally {
+      await subsystem.onShutdown?.();
+      db.close();
+    }
+  });
+
+  test("retry rejects with conflict when node is in a non-retryable status", async () => {
+    const nonRetryable: DAGNode["status"][] = [
+      "running",
+      "landed",
+      "pending",
+      "done",
+      "cancelled",
+    ];
+    for (const status of nonRetryable) {
+      const db = makeTempDb();
+      const bus = new EventBus();
+      const sessions = new Map<string, Session>();
+      const audit: AuditCall[] = [];
+      const ctx = makeMockCtx(sessions, audit);
+      ctx.bus = bus;
+      ctx.db = db;
+
+      const dag = makeDag(`dag-nr-${status}`, [makeNode("A", status)]);
+      seedDag(db, bus, dag);
+
+      const subsystem = createDagSubsystem({
+        ctx,
+        log: createLogger("error"),
+        env: {} as EngineContext["env"],
+        db,
+        bus,
+        mutex: ctx.mutex,
+        workspaceDir: "/tmp",
+      });
+      ctx.dags = subsystem.api;
+
+      try {
+        await assert.rejects(
+          () => subsystem.api.retry(`dag-nr-${status}`, "A"),
+          (err: unknown) => err instanceof EngineError && err.code === "conflict",
+          `expected conflict for status ${status}`,
+        );
+      } finally {
+        await subsystem.onShutdown?.();
+        db.close();
+      }
+    }
+  });
+
+  test("retry rejects with conflict when an upstream dep is not in SUCCESS_NODE_STATUSES", async () => {
+    const badDepStatuses: DAGNode["status"][] = ["pending", "running", "failed"];
+    for (const depStatus of badDepStatuses) {
+      const db = makeTempDb();
+      const bus = new EventBus();
+      const sessions = new Map<string, Session>();
+      const audit: AuditCall[] = [];
+      const ctx = makeMockCtx(sessions, audit);
+      ctx.bus = bus;
+      ctx.db = db;
+
+      const dag = makeDag(`dag-dep-${depStatus}`, [
+        makeNode("A", depStatus),
+        makeNode("B", "failed", { dependsOn: ["A"] }),
+      ]);
+      seedDag(db, bus, dag);
+
+      const subsystem = createDagSubsystem({
+        ctx,
+        log: createLogger("error"),
+        env: {} as EngineContext["env"],
+        db,
+        bus,
+        mutex: ctx.mutex,
+        workspaceDir: "/tmp",
+      });
+      ctx.dags = subsystem.api;
+
+      try {
+        await assert.rejects(
+          () => subsystem.api.retry(`dag-dep-${depStatus}`, "B"),
+          (err: unknown) => err instanceof EngineError && err.code === "conflict",
+          `expected conflict for dep status ${depStatus}`,
+        );
+      } finally {
+        await subsystem.onShutdown?.();
+        db.close();
+      }
+    }
+  });
+
+  test("retry stops a non-terminal old session with reason 'dag-node-retry'", async () => {
+    const db = makeTempDb();
+    const bus = new EventBus();
+    const sessions = new Map<string, Session>();
+    sessions.set("old-A", makeSession("old-A", "running"));
+    const audit: AuditCall[] = [];
+    const stopCalls: StopCall[] = [];
+    const ctx = makeMockCtx(sessions, audit, stopCalls);
+    ctx.bus = bus;
+    ctx.db = db;
+
+    const dag = makeDag("dag-stop", [makeNode("A", "failed", { sessionSlug: "old-A" })]);
+    seedDag(db, bus, dag);
+
+    const subsystem = createDagSubsystem({
+      ctx,
+      log: createLogger("error"),
+      env: {} as EngineContext["env"],
+      db,
+      bus,
+      mutex: ctx.mutex,
+      workspaceDir: "/tmp",
+    });
+    ctx.dags = subsystem.api;
+
+    try {
+      await subsystem.api.retry("dag-stop", "A");
+
+      assert.equal(stopCalls.length, 1, "stop called exactly once");
+      assert.equal(stopCalls[0]?.slug, "old-A");
+      assert.equal(stopCalls[0]?.reason, "dag-node-retry");
+    } finally {
+      await subsystem.onShutdown?.();
+      db.close();
+    }
+  });
+
+  test("retry does not stop an already-terminal old session", async () => {
+    const terminal: SessionStatus[] = ["completed", "failed", "cancelled"];
+    for (const status of terminal) {
+      const db = makeTempDb();
+      const bus = new EventBus();
+      const sessions = new Map<string, Session>();
+      sessions.set("old-A", makeSession("old-A", status));
+      const audit: AuditCall[] = [];
+      const stopCalls: StopCall[] = [];
+      const ctx = makeMockCtx(sessions, audit, stopCalls);
+      ctx.bus = bus;
+      ctx.db = db;
+
+      const dag = makeDag(`dag-noskip-${status}`, [
+        makeNode("A", "failed", { sessionSlug: "old-A" }),
+      ]);
+      seedDag(db, bus, dag);
+
+      const subsystem = createDagSubsystem({
+        ctx,
+        log: createLogger("error"),
+        env: {} as EngineContext["env"],
+        db,
+        bus,
+        mutex: ctx.mutex,
+        workspaceDir: "/tmp",
+      });
+      ctx.dags = subsystem.api;
+
+      try {
+        await subsystem.api.retry(`dag-noskip-${status}`, "A");
+        assert.equal(stopCalls.length, 0, `stop must not be called when old session is ${status}`);
+      } finally {
+        await subsystem.onShutdown?.();
+        db.close();
+      }
+    }
+  });
+
+  test("retry clears failedReason to null", async () => {
+    const db = makeTempDb();
+    const bus = new EventBus();
+    const sessions = new Map<string, Session>();
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    ctx.bus = bus;
+    ctx.db = db;
+
+    const dag = makeDag("dag-fr", [makeNode("A", "failed", { sessionSlug: "old-A" })]);
+    const repo = seedDag(db, bus, dag);
+    repo.updateNode("A", { failedReason: "something went wrong" });
+
+    const subsystem = createDagSubsystem({
+      ctx,
+      log: createLogger("error"),
+      env: {} as EngineContext["env"],
+      db,
+      bus,
+      mutex: ctx.mutex,
+      workspaceDir: "/tmp",
+    });
+    ctx.dags = subsystem.api;
+
+    try {
+      await subsystem.api.retry("dag-fr", "A");
+      const row = db
+        .prepare(`SELECT failed_reason FROM dag_nodes WHERE id = ?`)
+        .get("A") as { failed_reason: string | null };
+      assert.equal(row.failed_reason, null);
     } finally {
       await subsystem.onShutdown?.();
       db.close();

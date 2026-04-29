@@ -94,12 +94,6 @@ export interface DoneCommand {
   sessionSlug: string;
 }
 
-export interface DagRetryCommand {
-  kind: "dag.retry";
-  dagId: string;
-  nodeId: string;
-}
-
 export interface DagCancelCommand {
   kind: "dag.cancel";
   dagId: string;
@@ -132,7 +126,6 @@ export type Command =
   | StackCommand
   | CleanCommand
   | DoneCommand
-  | DagRetryCommand
   | DagCancelCommand
   | DagForceLandCommand
   | ResumeSessionCommand;
