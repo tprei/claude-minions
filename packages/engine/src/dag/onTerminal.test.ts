@@ -114,17 +114,18 @@ interface MockCtxOptions {
   qualityReport: QualityReport | null;
   parentSession?: Session;
   onLand?: (slug: string) => Promise<void> | void;
+  openForReviewError?: Error;
 }
 
 interface MockCtxResult {
   ctx: EngineContext;
   emitted: ServerEvent[];
-  landCalls: { slug: string; force: boolean }[];
+  landCalls: { slug: string }[];
 }
 
 function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
   const emitted: ServerEvent[] = [];
-  const landCalls: { slug: string; force: boolean }[] = [];
+  const landCalls: { slug: string }[] = [];
 
   const ctx = {
     quality: {
@@ -140,9 +141,11 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
       summary: () => ({ total: 0, ready: 0, blocked: 0, pending: 0, unknown: 0, bySession: [] }),
     },
     landing: {
-      land: async (slug: string, _strategy?: "merge" | "squash" | "rebase", force?: boolean) => {
-        landCalls.push({ slug, force: !!force });
+      openForReview: async (slug: string) => {
+        landCalls.push({ slug });
+        if (opts.openForReviewError) throw opts.openForReviewError;
         if (opts.onLand) await opts.onLand(slug);
+        return null;
       },
       retryRebase: async () => {},
     },
@@ -206,9 +209,8 @@ describe("DagTerminalHandler", () => {
     const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
     await handler.handle(makeSession("sess-1"));
 
-    assert.equal(landCalls.length, 1, "land called exactly once");
+    assert.equal(landCalls.length, 1, "openForReview called exactly once");
     assert.equal(landCalls[0]?.slug, "sess-1");
-    assert.equal(landCalls[0]?.force, false);
     assert.equal(getNode("n1")?.status, "landed");
   });
 
@@ -228,8 +230,40 @@ describe("DagTerminalHandler", () => {
     const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
     await handler.handle(makeSession("sess-1"));
 
-    assert.equal(landCalls.length, 1, "land called when no quality gate is configured");
+    assert.equal(landCalls.length, 1, "openForReview called when no quality gate is configured");
     assert.equal(getNode("n1")?.status, "landed");
+  });
+
+  test("transitioning a node to landed clears stale failedReason from a prior attempt", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    node.failedReason = "previous attempt: quality gate failed";
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode, patches } = makeMockRepo(dag);
+    const { ctx } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(makeSession("sess-1"));
+
+    assert.equal(getNode("n1")?.status, "landed");
+    assert.equal(
+      getNode("n1")?.failedReason ?? null,
+      null,
+      "failedReason must be cleared when node lands successfully",
+    );
+    const landedPatch = patches.find((p) => p.patch.status === "landed");
+    assert.ok(landedPatch, "expected a patch transitioning the node to landed");
+    assert.equal(
+      landedPatch.patch.failedReason,
+      null,
+      "the landed patch must explicitly set failedReason to null",
+    );
   });
 
   test("failed quality report blocks landing", async () => {
