@@ -14,7 +14,7 @@ import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
 import { cx } from "../util/classnames.js";
-import type { SlashCommand, SlashContext } from "./slashCommands.js";
+import type { SlashCommand, SlashContext, SlashUiResult } from "./slashCommands.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { useConnectionStore } from "../connections/store.js";
@@ -38,6 +38,27 @@ const CHAT_PANEL = "chat";
 
 function clampWidth(n: number): number {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, n));
+}
+
+export interface SlashUiHandlers {
+  activeId: string | null;
+  openConfig: () => void;
+  openHelp: () => void;
+}
+
+export function dispatchSlashUi(action: SlashUiResult["action"], h: SlashUiHandlers): void {
+  if (action === "help") {
+    h.openHelp();
+    return;
+  }
+  if (action === "config") {
+    h.openConfig();
+    return;
+  }
+  if (!h.activeId) return;
+  const { sessionSlug, query } = parseUrl();
+  const view = action === "loops" ? "loops" : "doctor";
+  setUrlState({ connectionId: h.activeId, view, sessionSlug, query });
 }
 
 function useSessionTranscript(session: Session) {
@@ -352,9 +373,13 @@ interface PanelProps {
   activeTab: string;
   onTabChange: (id: string) => void;
   onClose: () => void;
+  onOpenConfig?: () => void;
+  onOpenHelp?: () => void;
 }
 
-function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) {
+const NOOP = (): void => {};
+
+function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, onOpenHelp }: PanelProps) {
   const events = useSessionTranscript(session);
   const conn = useRootStore((s) => s.getActiveConnection());
 
@@ -368,15 +393,14 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
       } else if (result.kind === "message") {
         await postMessage(conn, { prompt: args.join(" "), mode: result.payload.mode });
       } else if (result.kind === "ui") {
-        const activeId = useConnectionStore.getState().activeId;
-        if (!activeId) return;
-        if (result.action === "loops") {
-          const { sessionSlug, query } = parseUrl();
-          setUrlState({ connectionId: activeId, view: "loops", sessionSlug, query });
-        }
+        dispatchSlashUi(result.action, {
+          activeId: useConnectionStore.getState().activeId,
+          openConfig: onOpenConfig ?? NOOP,
+          openHelp: onOpenHelp ?? NOOP,
+        });
       }
     },
-    [session, conn],
+    [session, conn, onOpenConfig, onOpenHelp],
   );
 
   const handleSubmit = useCallback(
@@ -450,9 +474,11 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose }: PanelProps) 
 interface Props {
   sessionSlug?: string | null;
   primary?: boolean;
+  onOpenConfig?: () => void;
+  onOpenHelp?: () => void;
 }
 
-export function ChatSurface({ sessionSlug, primary = false }: Props) {
+export function ChatSurface({ sessionSlug, primary = false, onOpenConfig, onOpenHelp }: Props) {
   const [open, setOpen] = useState<boolean>(() => {
     const stored = getLayout(CHAT_PANEL);
     return stored ? !stored.collapsed : true;
@@ -512,6 +538,8 @@ export function ChatSurface({ sessionSlug, primary = false }: Props) {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onClose={closeToList}
+          onOpenConfig={onOpenConfig}
+          onOpenHelp={onOpenHelp}
         />
       </div>
     );
@@ -540,6 +568,8 @@ export function ChatSurface({ sessionSlug, primary = false }: Props) {
             activeTab={activeTab}
             onTabChange={setActiveTab}
             onClose={() => setOpen(false)}
+            onOpenConfig={onOpenConfig}
+            onOpenHelp={onOpenHelp}
           />
         </div>
       </Sheet>
@@ -558,6 +588,8 @@ export function ChatSurface({ sessionSlug, primary = false }: Props) {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onClose={() => setOpen(false)}
+          onOpenConfig={onOpenConfig}
+          onOpenHelp={onOpenHelp}
         />
       </div>
     </div>

@@ -26,6 +26,11 @@ import type { ProviderHandle } from "../providers/provider.js";
 import { READ_ONLY_STAGES } from "../ship/stages.js";
 import { TranscriptCollector } from "./transcriptCollector.js";
 import { ReplyQueue } from "./replyQueue.js";
+import {
+  sanitizeAttachmentName,
+  assertAllowedMime,
+  assertWithinSize,
+} from "./attachmentValidator.js";
 import { Screenshots, type ScreenshotSource } from "./screenshots.js";
 import { Checkpoints } from "./checkpoints.js";
 import { computeDiff } from "./diff.js";
@@ -726,21 +731,34 @@ export class SessionRegistry {
       throw new EngineError("not_found", `Session ${slug} not found`);
     }
 
-    const copied: { name: string; mimeType: string; url: string }[] = [];
+    const copied: { name: string; mimeType: string; url?: string }[] = [];
     if (attachments && attachments.length > 0) {
       const sessionUploads = this.paths.uploads(slug);
       await ensureDir(sessionUploads);
       const globalUploads = path.join(workspaceDir, "uploads");
       for (const att of attachments) {
-        if (!att.url || !att.url.startsWith("/api/uploads/")) {
-          throw new EngineError("bad_request", "attachment url must start with /api/uploads/");
+        const safeName = sanitizeAttachmentName(att.name);
+        const safeMime = assertAllowedMime(att.mimeType);
+        const dst = path.join(sessionUploads, safeName);
+
+        if (att.url) {
+          if (!att.url.startsWith("/api/uploads/")) {
+            throw new EngineError("bad_request", "attachment url must start with /api/uploads/");
+          }
+          const filename = att.url.slice("/api/uploads/".length);
+          if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
+            throw new EngineError("bad_request", "attachment url has invalid filename");
+          }
+          await fs.copyFile(path.join(globalUploads, filename), dst);
+          copied.push({ name: safeName, mimeType: safeMime, url: att.url });
+        } else if (att.dataBase64) {
+          const buf = Buffer.from(att.dataBase64, "base64");
+          assertWithinSize(buf.byteLength);
+          await fs.writeFile(dst, buf);
+          copied.push({ name: safeName, mimeType: safeMime });
+        } else {
+          throw new EngineError("bad_request", "attachment must include url or dataBase64");
         }
-        const filename = att.url.slice("/api/uploads/".length);
-        if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
-          throw new EngineError("bad_request", "attachment url has invalid filename");
-        }
-        await fs.copyFile(path.join(globalUploads, filename), path.join(sessionUploads, att.name));
-        copied.push({ name: att.name, mimeType: att.mimeType, url: att.url });
       }
     }
 
