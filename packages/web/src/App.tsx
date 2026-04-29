@@ -155,7 +155,12 @@ export function App(): ReactElement {
         }
         chatSurface={
           activeConn ? (
-            <ChatSurface sessionSlug={sessionSlug ?? null} primary={Boolean(sessionSlug)} />
+            <ChatSurface
+              sessionSlug={sessionSlug ?? null}
+              primary={Boolean(sessionSlug)}
+              onOpenConfig={() => setRuntimeOpen(true)}
+              onOpenHelp={() => setPaletteOpen(true)}
+            />
           ) : undefined
         }
         isSessionOpen={Boolean(sessionSlug)}

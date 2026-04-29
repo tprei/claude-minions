@@ -6,8 +6,9 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ALLOWED_ATTACHMENT_MIME_TYPES, type AllowedAttachmentMimeType } from "@minions/shared";
 import type { EngineContext } from "../../context.js";
 import { ensureDir } from "../../util/fs.js";
+import { MAX_ATTACHMENT_BYTES } from "../../sessions/attachmentValidator.js";
 
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = MAX_ATTACHMENT_BYTES;
 
 const MIME_TO_EXT: Record<AllowedAttachmentMimeType, string> = {
   "image/png": "png",
