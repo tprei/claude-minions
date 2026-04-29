@@ -47,6 +47,7 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
       screenshotPath: () => "",
       checkpoints: () => [],
       restoreCheckpoint: async () => {},
+      updateBucket: () => {},
     },
     runtime,
     audit: {

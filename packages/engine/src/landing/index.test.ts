@@ -92,6 +92,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
       screenshotPath: () => "",
       checkpoints: () => [],
       restoreCheckpoint: async () => {},
+      updateBucket: () => {},
     },
     landing: {
       land: async () => {},
@@ -379,6 +380,7 @@ function makeUpstreamHarness(opts: {
       screenshotPath: () => "",
       checkpoints: () => [],
       restoreCheckpoint: async () => {},
+      updateBucket: () => {},
     },
     landing: {
       land: async () => {},

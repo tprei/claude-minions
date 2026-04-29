@@ -167,6 +167,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
       screenshotPath: () => "",
       checkpoints: () => [],
       restoreCheckpoint: async () => {},
+      updateBucket: () => {},
     },
     runtime: {
       schema: () => ({ groups: [], fields: [] }),
