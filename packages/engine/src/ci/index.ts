@@ -26,6 +26,24 @@ interface GhCheck {
   link: string;
 }
 
+interface GhCheckRunRollup {
+  __typename?: "CheckRun";
+  name?: string;
+  status?: string;
+  conclusion?: string;
+  workflowName?: string;
+  detailsUrl?: string;
+}
+
+interface GhStatusContextRollup {
+  __typename?: "StatusContext";
+  context?: string;
+  state?: string;
+  targetUrl?: string;
+}
+
+type GhRollupEntry = GhCheckRunRollup | GhStatusContextRollup;
+
 interface GhPrView {
   number: number;
   url: string;
@@ -35,6 +53,51 @@ interface GhPrView {
   headRefName: string;
   headRefOid: string;
   title: string;
+  statusCheckRollup: GhRollupEntry[] | null;
+}
+
+const FAIL_CONCLUSIONS = new Set(["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]);
+const FAIL_STATES = new Set(["FAILURE", "ERROR"]);
+
+function isCheckRun(entry: GhRollupEntry): entry is GhCheckRunRollup {
+  if (entry.__typename === "CheckRun") return true;
+  if (entry.__typename === "StatusContext") return false;
+  return "conclusion" in entry || "workflowName" in entry || "detailsUrl" in entry;
+}
+
+export function rollupToChecks(rollup: GhRollupEntry[] | null | undefined): GhCheck[] {
+  if (!rollup) return [];
+  return rollup.map((entry) => {
+    if (isCheckRun(entry)) {
+      const conclusion = (entry.conclusion ?? "").toUpperCase();
+      const status = (entry.status ?? "").toUpperCase();
+      const bucket = FAIL_CONCLUSIONS.has(conclusion)
+        ? "fail"
+        : conclusion === "SUCCESS"
+          ? "pass"
+          : "pending";
+      return {
+        name: entry.name ?? "",
+        state: conclusion || status,
+        bucket,
+        workflow: entry.workflowName ?? "",
+        link: entry.detailsUrl ?? "",
+      };
+    }
+    const state = (entry.state ?? "").toUpperCase();
+    const bucket = FAIL_STATES.has(state)
+      ? "fail"
+      : state === "SUCCESS"
+        ? "pass"
+        : "pending";
+    return {
+      name: entry.context ?? "",
+      state,
+      bucket,
+      workflow: "",
+      link: entry.targetUrl ?? "",
+    };
+  });
 }
 
 function mapPrState(state: string): PRSummary["state"] {
@@ -69,25 +132,14 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     prNumber: number,
   ): Promise<{ pr: GhPrView; checks: GhCheck[] }> {
     const repoSlug = `${owner}/${repo}`;
-    const [prJson, checksJson] = await Promise.all([
-      runGh([
-        "pr", "view", String(prNumber),
-        "--repo", repoSlug,
-        "--json", "number,url,state,isDraft,baseRefName,headRefName,headRefOid,title",
-      ]),
-      runGh([
-        "pr", "checks", String(prNumber),
-        "--repo", repoSlug,
-        "--json", "name,state,bucket,workflow,link",
-        "--watch=false",
-      ]).catch((err) => {
-        log.warn("gh pr checks failed", { prNumber, err: (err as Error).message });
-        return "[]";
-      }),
+    const prJson = await runGh([
+      "pr", "view", String(prNumber),
+      "--repo", repoSlug,
+      "--json", "number,url,state,isDraft,baseRefName,headRefName,headRefOid,title,statusCheckRollup",
     ]);
 
     const pr = JSON.parse(prJson) as GhPrView;
-    const checks = JSON.parse(checksJson) as GhCheck[];
+    const checks = rollupToChecks(pr.statusCheckRollup);
     return { pr, checks };
   }
 
