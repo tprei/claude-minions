@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ToolResultEvent, ToolResultFormat, ToolResultStatus } from "@minions/shared";
-import { Markdown } from "../../components/Markdown.js";
+import { MarkdownView } from "../../markdown/MarkdownView.js";
+import { CodeBlock } from "../../markdown/CodeBlock.js";
 import { Diff } from "../../components/Diff.js";
 import { cx } from "../../util/classnames.js";
 
@@ -83,13 +84,9 @@ export function ToolResult({ event }: Props) {
       </button>
       {expanded && (
         <div className="border-t border-border p-2 font-mono text-xs">
-          {fmt === "markdown" && <Markdown text={event.body} />}
+          {fmt === "markdown" && <MarkdownView text={event.body} />}
           {fmt === "diff" && <Diff text={event.body} wrap />}
-          {fmt === "json" && (
-            <pre className="text-[11px] text-fg-muted whitespace-pre-wrap break-words overflow-x-auto">
-              {event.body}
-            </pre>
-          )}
+          {fmt === "json" && <CodeBlock code={event.body} language="json" />}
           {fmt === "image" && (
             <img
               src={event.body}
@@ -97,9 +94,7 @@ export function ToolResult({ event }: Props) {
               className="max-w-xs rounded border border-border"
             />
           )}
-          {(fmt === "text" || fmt === "binary") && (
-            <pre className="text-fg-muted whitespace-pre-wrap break-words">{event.body}</pre>
-          )}
+          {(fmt === "text" || fmt === "binary") && <CodeBlock code={event.body} />}
         </div>
       )}
     </div>

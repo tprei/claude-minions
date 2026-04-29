@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ToolCallEvent, ToolKind } from "@minions/shared";
+import { CodeBlock } from "../../markdown/CodeBlock.js";
 import { cx } from "../../util/classnames.js";
 
 const KIND_ICONS: Record<ToolKind, string> = {
@@ -65,9 +66,7 @@ export function ToolCall({ event }: Props) {
         </span>
       </button>
       {expanded && (
-        <pre className="font-mono text-[11px] text-fg-muted bg-bg-soft border-t border-border p-2 overflow-x-auto whitespace-pre-wrap break-words">
-          {JSON.stringify(event.input, null, 2)}
-        </pre>
+        <CodeBlock code={JSON.stringify(event.input, null, 2)} language="json" />
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { TranscriptEvent, TranscriptEventKind } from "@minions/shared";
+import { CodeBlock } from "../markdown/CodeBlock.js";
 import { cx } from "../util/classnames.js";
 import { copyAsMarkdown, formatTimestamp } from "./copyAsMarkdown.js";
 
@@ -63,9 +64,7 @@ function TimelineRow({ event, expanded, onToggle }: RowProps) {
         <span className="text-fg-subtle text-[10px] flex-shrink-0">seq {event.seq}</span>
       </button>
       {expanded && (
-        <pre className="bg-bg-elev border-t border-border-soft px-3 py-2 text-[11px] font-mono text-fg-muted overflow-x-auto whitespace-pre-wrap break-all">
-          {JSON.stringify(event, null, 2)}
-        </pre>
+        <CodeBlock code={JSON.stringify(event, null, 2)} language="json" />
       )}
     </div>
   );

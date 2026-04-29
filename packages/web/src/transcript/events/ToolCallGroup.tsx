@@ -6,7 +6,8 @@ import type {
   ToolResultFormat,
   ToolResultStatus,
 } from "@minions/shared";
-import { Markdown } from "../../components/Markdown.js";
+import { MarkdownView } from "../../markdown/MarkdownView.js";
+import { CodeBlock } from "../../markdown/CodeBlock.js";
 import { Diff } from "../../components/Diff.js";
 import { cx } from "../../util/classnames.js";
 
@@ -95,15 +96,9 @@ function detectFormat(event: ToolResultEvent): ToolResultFormat {
 
 function ResultBody({ event }: { event: ToolResultEvent }) {
   const fmt = detectFormat(event);
-  if (fmt === "markdown") return <Markdown text={event.body} />;
+  if (fmt === "markdown") return <MarkdownView text={event.body} />;
   if (fmt === "diff") return <Diff text={event.body} wrap />;
-  if (fmt === "json") {
-    return (
-      <pre className="text-[11px] text-fg-muted bg-bg-soft rounded p-2 border border-border overflow-x-auto whitespace-pre-wrap break-words">
-        {event.body}
-      </pre>
-    );
-  }
+  if (fmt === "json") return <CodeBlock code={event.body} language="json" />;
   if (fmt === "image") {
     return (
       <img
@@ -113,11 +108,7 @@ function ResultBody({ event }: { event: ToolResultEvent }) {
       />
     );
   }
-  return (
-    <pre className="text-sm text-fg-muted bg-bg-soft rounded p-2 border border-border whitespace-pre-wrap break-words">
-      {event.body}
-    </pre>
-  );
+  return <CodeBlock code={event.body} />;
 }
 
 function previewFromInput(input: Record<string, unknown>, fallback: string): string {
@@ -182,9 +173,7 @@ function Row({ item }: { item: ToolCallGroupItem }) {
       </button>
       {open && (
         <div className="px-2 py-1.5 space-y-1.5">
-          <pre className="text-[11px] text-fg-muted bg-bg-soft rounded p-2 border border-border overflow-x-auto whitespace-pre-wrap break-words">
-            {JSON.stringify(call.input, null, 2)}
-          </pre>
+          <CodeBlock code={JSON.stringify(call.input, null, 2)} language="json" />
           {result && <ResultBody event={result} />}
         </div>
       )}
