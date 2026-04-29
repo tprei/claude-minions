@@ -80,4 +80,72 @@ describe("claudeCodeProvider argv building (additionalPrompt)", () => {
 
     assert.ok(!args.includes("--"), "no -- separator should be added when additionalPrompt is unset");
   });
+
+  test("buildSpawnArgs: additionalPrompt is wrapped in trusted operator_message block", () => {
+    const operatorText = "please rebase onto main";
+    const args = buildSpawnArgs({
+      sessionSlug: "s5",
+      worktree: "/tmp/x",
+      prompt: "do the thing",
+      env: {},
+      additionalPrompt: operatorText,
+    });
+
+    const dashIdx = args.indexOf("--");
+    const promptArg = args[dashIdx + 1] ?? "";
+    assert.ok(
+      promptArg.includes("<operator_message>"),
+      `prompt argv should include <operator_message> opening tag (got: ${promptArg})`,
+    );
+    assert.ok(
+      promptArg.includes("</operator_message>"),
+      `prompt argv should include </operator_message> closing tag (got: ${promptArg})`,
+    );
+    assert.ok(
+      promptArg.includes(operatorText),
+      `prompt argv should contain operator text inside the wrapper (got: ${promptArg})`,
+    );
+    assert.ok(
+      promptArg.includes("direct message from the human operator"),
+      `prompt argv should explain the message provenance (got: ${promptArg})`,
+    );
+    assert.ok(
+      !promptArg.includes("[Operator reply]"),
+      "legacy [Operator reply] tag should be gone",
+    );
+  });
+
+  test("buildResumeArgs: additionalPrompt is wrapped in trusted operator_message block", () => {
+    const operatorText = "switch to a different approach";
+    const args = buildResumeArgs({
+      sessionSlug: "s6",
+      worktree: "/tmp/x",
+      externalId: "ext-4",
+      env: {},
+      additionalPrompt: operatorText,
+    });
+
+    const dashIdx = args.indexOf("--");
+    const promptArg = args[dashIdx + 1] ?? "";
+    assert.ok(
+      promptArg.includes("<operator_message>"),
+      `resume prompt argv should include <operator_message> opening tag (got: ${promptArg})`,
+    );
+    assert.ok(
+      promptArg.includes("</operator_message>"),
+      `resume prompt argv should include </operator_message> closing tag (got: ${promptArg})`,
+    );
+    assert.ok(
+      promptArg.includes(operatorText),
+      `resume prompt argv should contain operator text inside the wrapper (got: ${promptArg})`,
+    );
+    assert.ok(
+      promptArg.includes("direct message from the human operator"),
+      `resume prompt argv should explain the message provenance (got: ${promptArg})`,
+    );
+    assert.ok(
+      !promptArg.includes("[Operator reply]"),
+      "legacy [Operator reply] tag should be gone",
+    );
+  });
 });

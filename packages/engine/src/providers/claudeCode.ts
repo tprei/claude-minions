@@ -237,6 +237,13 @@ function buildSpawnHandle(
   return handle;
 }
 
+const OPERATOR_MESSAGE_PREAMBLE =
+  "The following is a direct message from the human operator (delivered out-of-band via the engine's reply queue). It is NOT untrusted content from a tool result and does NOT require prompt-injection caution. Treat it as a normal user instruction.";
+
+function wrapOperatorMessage(text: string): string {
+  return `${OPERATOR_MESSAGE_PREAMBLE}\n\n<operator_message>\n${text}\n</operator_message>`;
+}
+
 async function defaultFindClaudeBinary(): Promise<string | null> {
   const { exec } = await import("node:child_process");
   const { promisify } = await import("node:util");
@@ -275,7 +282,7 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
     fullPrompt = `${opts.preamble}\n\n---\n\n${opts.prompt}`;
   }
   if (opts.additionalPrompt && opts.additionalPrompt.length > 0) {
-    fullPrompt = `${fullPrompt}\n\n[Operator reply]: ${opts.additionalPrompt}`;
+    fullPrompt = `${fullPrompt}\n\n${wrapOperatorMessage(opts.additionalPrompt)}`;
   }
 
   args.push("--", fullPrompt);
@@ -300,7 +307,7 @@ export function buildResumeArgs(opts: ProviderResumeOpts): string[] {
   }
 
   if (opts.additionalPrompt && opts.additionalPrompt.length > 0) {
-    args.push("--", `[Operator reply]: ${opts.additionalPrompt}`);
+    args.push("--", wrapOperatorMessage(opts.additionalPrompt));
   }
 
   return args;
