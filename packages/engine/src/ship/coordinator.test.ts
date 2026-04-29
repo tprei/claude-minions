@@ -212,8 +212,16 @@ describe("ShipCoordinator", () => {
       .get(sessionSlug) as { stage: string } | undefined;
     assert.equal(stageRow2?.stage, "done");
 
-    assert.equal(repliedTexts.length, 4, "four reply calls (one per stage directive)");
+    assert.equal(
+      repliedTexts.length,
+      3,
+      "three reply calls (plan, verify, done — dag stage skips parent directive)",
+    );
     assert.ok(repliedTexts[0]?.includes("[Ship stage: plan]"), "first reply contains plan directive header");
+    assert.ok(
+      repliedTexts.every((t) => !t.includes("[Ship stage: dag]")),
+      "no reply enqueued for dag stage",
+    );
   });
 
   test("advance to specific stage sets it directly", async () => {
@@ -364,6 +372,37 @@ describe("ShipCoordinator", () => {
 
     const inMemory = ctx.sessions.get(sessionSlug);
     assert.equal(inMemory?.status, "waiting_input", "in-memory session reflects waiting_input");
+  });
+
+  test("advance to dag does not enqueue a parent directive", async () => {
+    const db = makeTempDb();
+    const ctx = makeMockCtx(db) as unknown as EngineContext & { _sessions: Map<string, Session> };
+
+    const sessionSlug = "ship-dag-no-reply";
+    const session = makeShipSession(sessionSlug);
+    insertSession(db, session);
+    ctx._sessions.set(sessionSlug, session);
+
+    const repliedTexts: string[] = [];
+    (ctx.sessions.reply as unknown as (slug: string, text: string) => Promise<void>) =
+      async (_slug: string, text: string) => {
+        repliedTexts.push(text);
+      };
+
+    const coordinator = new ShipCoordinator(db, ctx, createLogger("error"));
+
+    await coordinator.advance(sessionSlug, "dag");
+
+    assert.equal(
+      repliedTexts.length,
+      0,
+      "no reply directive enqueued for parent ship session on dag advance",
+    );
+
+    const sessionRow = db
+      .prepare("SELECT status FROM sessions WHERE slug = ?")
+      .get(sessionSlug) as { status: string } | undefined;
+    assert.equal(sessionRow?.status, "waiting_input");
   });
 
   test("advance to plan does not mark session waiting_input", async () => {
