@@ -1,4 +1,4 @@
-import type { DAGNode, SessionStatus } from "@minions/shared";
+import type { DAG, DAGNode, SessionStatus } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { DagRepo } from "./model.js";
 import type { Logger } from "../logger.js";
@@ -82,13 +82,15 @@ export class DagScheduler {
 
     this.repo.updateNode(node.id, { status: "ready" });
 
+    const baseBranch = this.resolveNodeBaseBranch(dag, node);
+
     try {
       const session = await this.ctx.sessions.create({
         prompt: node.prompt,
         mode: "dag-task",
         title: node.title,
         repoId: dag.repoId,
-        baseBranch: dag.baseBranch,
+        baseBranch,
         metadata: { dagId, dagNodeId: node.id },
       });
 
@@ -114,6 +116,34 @@ export class DagScheduler {
         err: (err as Error).message,
       });
     }
+  }
+
+  private resolveNodeBaseBranch(dag: DAG, node: DAGNode): string | undefined {
+    if (node.dependsOn.length === 0) {
+      return dag.baseBranch;
+    }
+    const firstDepId = node.dependsOn[0];
+    if (!firstDepId) return dag.baseBranch;
+    const depNode = this.repo.getNode(firstDepId);
+    if (!depNode || !depNode.sessionSlug) {
+      this.log.warn("dag dep node has no session yet, falling back to dag base branch", {
+        dagId: dag.id,
+        nodeId: node.id,
+        depNodeId: firstDepId,
+      });
+      return dag.baseBranch;
+    }
+    const depSession = this.ctx.sessions.get(depNode.sessionSlug);
+    if (!depSession || !depSession.branch) {
+      this.log.warn("dag dep session has no branch, falling back to dag base branch", {
+        dagId: dag.id,
+        nodeId: node.id,
+        depNodeId: firstDepId,
+        depSessionSlug: depNode.sessionSlug,
+      });
+      return dag.baseBranch;
+    }
+    return depSession.branch;
   }
 
   private checkCompletion(dagId: string): void {
