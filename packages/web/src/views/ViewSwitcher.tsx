@@ -6,6 +6,7 @@ import { DagCanvasView } from "./dagCanvas.js";
 import { ShipPipelineView } from "./shipPipeline.js";
 import { NewSessionView } from "./newSession.js";
 import { DoctorView } from "./doctor.js";
+import { LoopsView } from "./loops.js";
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
@@ -42,6 +43,8 @@ export function ViewSwitcher({ view, filterStatus, filterMode, sessionSlug, api 
       return api ? <NewSessionView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} />;
     case "doctor":
       return api ? <DoctorView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} />;
+    case "loops":
+      return api ? <LoopsView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} />;
     default:
       return <ListView filterStatus={filterStatus} filterMode={filterMode} />;
   }

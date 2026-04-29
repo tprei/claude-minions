@@ -57,6 +57,8 @@ export interface SessionRef {
   childSlugs: string[];
 }
 
+export type PRReviewDecision = "approved" | "changes_requested" | "commented" | "review_required";
+
 export interface PRSummary {
   number: number;
   url: string;
@@ -65,6 +67,7 @@ export interface PRSummary {
   base: string;
   head: string;
   title: string;
+  reviewDecision?: PRReviewDecision | null;
 }
 
 export interface Session {

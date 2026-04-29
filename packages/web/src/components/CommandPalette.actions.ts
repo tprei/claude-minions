@@ -22,6 +22,8 @@ export interface BuildActionsOptions {
   openRuntime: () => void;
   openLoops: () => void;
   openAudit: () => void;
+  openVariants: () => void;
+  openEntrypoints: () => void;
   sessions: Iterable<PaletteSessionRef>;
 }
 
@@ -33,7 +35,16 @@ function navigateTo(activeId: string | null, view: ViewKind): void {
 }
 
 export function buildActions(opts: BuildActionsOptions): PaletteAction[] {
-  const { activeId, openMemory, openRuntime, openLoops, openAudit, sessions } = opts;
+  const {
+    activeId,
+    openMemory,
+    openRuntime,
+    openLoops,
+    openAudit,
+    openVariants,
+    openEntrypoints,
+    sessions,
+  } = opts;
   const actions: PaletteAction[] = [];
 
   actions.push(
@@ -50,6 +61,8 @@ export function buildActions(opts: BuildActionsOptions): PaletteAction[] {
     { id: "drawer:runtime", label: "Open Runtime drawer", group: "Drawers", run: openRuntime },
     { id: "drawer:loops", label: "Open Loops sheet", group: "Drawers", run: openLoops },
     { id: "drawer:audit", label: "Open Audit sheet", group: "Drawers", run: openAudit },
+    { id: "drawer:variants", label: "Open variants", group: "Drawers", hint: "Spawn parallel variants", run: openVariants },
+    { id: "drawer:entrypoints", label: "Open entrypoints", group: "Drawers", hint: "Webhooks and triggers", run: openEntrypoints },
   );
 
   actions.push({

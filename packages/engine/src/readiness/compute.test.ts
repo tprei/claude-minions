@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import type { Session, AttentionFlag, PRSummary } from "@minions/shared";
-import { computeCiCheck } from "./compute.js";
+import { computeCiCheck, computeReviewCheck } from "./compute.js";
 
 function makeSession(pr: PRSummary | undefined, attention: AttentionFlag[] = []): Session {
   const now = new Date().toISOString();
@@ -82,5 +82,34 @@ describe("computeCiCheck", () => {
   test("unrelated attention flags do not green-light CI", () => {
     const r = computeCiCheck(makeSession(openPr, [flag("needs_input"), flag("rebase_conflict")]));
     assert.equal(r.status, "pending");
+  });
+});
+
+describe("computeReviewCheck", () => {
+  test("returns pending when session has no PR", () => {
+    const r = computeReviewCheck(makeSession(undefined));
+    assert.equal(r.status, "pending");
+  });
+
+  test("returns ok when reviewDecision is approved", () => {
+    const pr: PRSummary = { ...openPr, reviewDecision: "approved" };
+    const r = computeReviewCheck(makeSession(pr));
+    assert.equal(r.status, "ok");
+    assert.equal(r.label, "Review approved");
+  });
+
+  test("returns blocked when changes_requested", () => {
+    const pr: PRSummary = { ...openPr, reviewDecision: "changes_requested" };
+    const r = computeReviewCheck(makeSession(pr));
+    assert.equal(r.status, "blocked");
+    assert.equal(r.detail, "Changes requested");
+  });
+
+  test("returns pending when review is awaited (review_required, commented, missing, null)", () => {
+    for (const rd of ["review_required", "commented", undefined, null] as const) {
+      const pr: PRSummary = { ...openPr, reviewDecision: rd };
+      const r = computeReviewCheck(makeSession(pr));
+      assert.equal(r.status, "pending", `expected pending for reviewDecision=${String(rd)}`);
+    }
   });
 });

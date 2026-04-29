@@ -35,6 +35,7 @@ const VIEW_OPTIONS: ViewOption[] = [
   { id: "kanban", label: "Kanban", icon: "⬜" },
   { id: "dag", label: "DAG", icon: "⬡", feature: "dags" },
   { id: "ship", label: "Ship", icon: "🚢", feature: "ship" },
+  { id: "loops", label: "Loops", icon: "↺", feature: "loops" },
   { id: "doctor", label: "Doctor", icon: "🩺" },
 ];
 

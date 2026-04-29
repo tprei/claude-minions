@@ -43,6 +43,9 @@ why in your final message.
 - Never modify the main branch directly or check out a different branch.
 - Never open pull requests from inside this session.
 - Never modify files outside the worktree.
+- Never commit anything from `.minions/` or `.git/` even if `git add .` would
+  otherwise pick it up — those paths may hold orchestrator-generated config or
+  credentials that must not land on a branch.
 
 ## Quality bar
 
