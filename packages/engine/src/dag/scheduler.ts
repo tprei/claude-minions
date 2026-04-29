@@ -11,7 +11,7 @@ const TERMINAL_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionSta
   "cancelled",
 ]);
 
-const SUCCESS_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
+export const SUCCESS_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
   "done",
   "landed",
   "skipped",
