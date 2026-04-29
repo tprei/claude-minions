@@ -1,5 +1,5 @@
 import type { UserMessageEvent } from "@minions/shared";
-import { MarkdownText } from "../markdown.js";
+import { MarkdownView } from "../../markdown/MarkdownView.js";
 import { cx } from "../../util/classnames.js";
 
 const SOURCE_LABELS: Record<NonNullable<UserMessageEvent["source"]>, string> = {
@@ -52,7 +52,7 @@ export function UserMessage({ event }: Props) {
               {formatTs(event.timestamp)}
             </span>
           </div>
-          <MarkdownText text={event.text} />
+          <MarkdownView text={event.text} />
         </div>
         {event.attachments && event.attachments.length > 0 && (
           <div className="flex flex-wrap gap-1 justify-end">
