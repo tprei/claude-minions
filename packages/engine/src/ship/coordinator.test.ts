@@ -1,7 +1,13 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import type { DAG, MergeReadiness, Session, StatusEvent } from "@minions/shared";
+import type {
+  DAG,
+  MergeReadiness,
+  Session,
+  StatusEvent,
+  TranscriptEvent,
+} from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import { EventBus } from "../bus/eventBus.js";
 import { KeyedMutex } from "../util/mutex.js";
@@ -82,6 +88,7 @@ function makeShipSession(slug: string): Session {
 interface MockCtxOpts {
   dags?: DAG[];
   readinessCompute?: (slug: string) => Promise<MergeReadiness | null>;
+  transcript?: TranscriptEvent[];
 }
 
 function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): EngineContext {
@@ -97,7 +104,7 @@ function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): EngineConte
       get: (slug: string) => sessions.get(slug) ?? null,
       list: () => Array.from(sessions.values()),
       listWithTranscript: () => [],
-      transcript: () => [],
+      transcript: () => opts.transcript ?? [],
       stop: async () => {},
       close: async () => {},
       reply: async (_slug: string, _text: string) => {},
@@ -276,6 +283,50 @@ describe("ShipCoordinator", () => {
     const verifySummary = statusEvents.find((e) => e.data?.["kind"] === "verify_summary");
     assert.ok(verifySummary, "verify_summary status event emitted");
     assert.match(verifySummary.text, /Verify summary/);
+  });
+
+  test("think advances when summed short assistant_text events exceed threshold", async () => {
+    const db = makeTempDb();
+
+    const sessionSlug = "ship-think-sum";
+    const session = makeShipSession(sessionSlug);
+    insertSession(db, session);
+
+    db.prepare(
+      `INSERT INTO ship_state(session_slug, stage, notes, updated_at) VALUES (?, ?, '[]', ?)`,
+    ).run(sessionSlug, "think", nowIso());
+    db.prepare(`UPDATE sessions SET ship_stage = ? WHERE slug = ?`).run(
+      "think",
+      sessionSlug,
+    );
+
+    const ts = nowIso();
+    const chunk = "a".repeat(34);
+    const transcript: TranscriptEvent[] = [
+      { id: "ev-0", sessionSlug, seq: 0, turn: 0, timestamp: ts, kind: "assistant_text", text: chunk },
+      { id: "ev-1", sessionSlug, seq: 1, turn: 0, timestamp: ts, kind: "assistant_text", text: chunk },
+      { id: "ev-2", sessionSlug, seq: 2, turn: 0, timestamp: ts, kind: "assistant_text", text: chunk },
+    ];
+
+    const ctx = makeMockCtx(db, { transcript }) as unknown as EngineContext & {
+      _sessions: Map<string, Session>;
+    };
+    ctx._sessions.set(sessionSlug, session);
+
+    (ctx.sessions.reply as unknown as (slug: string, text: string) => Promise<void>) =
+      async () => {};
+
+    const coordinator = new ShipCoordinator(db, ctx, createLogger("error"));
+    await coordinator.onTurnCompleted(sessionSlug);
+
+    const stageRow = db
+      .prepare("SELECT stage FROM ship_state WHERE session_slug = ?")
+      .get(sessionSlug) as { stage: string } | undefined;
+    assert.equal(
+      stageRow?.stage,
+      "plan",
+      "three short assistant_text events totaling ~102 chars trigger think→plan",
+    );
   });
 
   test("reconcileOnBoot skips terminated ship sessions", async () => {
