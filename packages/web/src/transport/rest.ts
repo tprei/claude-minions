@@ -155,6 +155,16 @@ export function getDag(conn: Connection, id: string): Promise<DAG> {
   return apiFetch(conn, `/api/dags/${id}`);
 }
 
+export function retryDagNode(
+  conn: Connection,
+  dagId: string,
+  nodeId: string,
+): Promise<DAG> {
+  return apiFetch(conn, `/api/dags/${dagId}/nodes/${nodeId}/retry`, {
+    method: "POST",
+  });
+}
+
 export function postCommand(conn: Connection, cmd: Command): Promise<CommandResult> {
   return apiFetch(conn, "/api/commands", { method: "POST", body: JSON.stringify(cmd) });
 }
