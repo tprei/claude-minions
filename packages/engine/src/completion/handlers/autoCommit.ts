@@ -4,7 +4,7 @@ import type { EngineContext } from "../../context.js";
 import { newEventId } from "../../util/ids.js";
 import { nowIso } from "../../util/time.js";
 
-const STRIPPED_ENV_KEYS = ["GIT_EDITOR", "EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER"] as const;
+const STRIPPED_ENV_KEYS = ["GIT_EDITOR", "EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER", "PAGER"] as const;
 
 export function buildAutoCommitEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
