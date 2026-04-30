@@ -33,6 +33,7 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
       reply: async () => {},
       setDagId: () => {},
       markWaitingInput: () => {},
+      appendAttention: () => {},
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async () => ({
