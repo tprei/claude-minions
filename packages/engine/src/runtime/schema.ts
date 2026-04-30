@@ -207,6 +207,18 @@ const fields: RuntimeField[] = [
     group: "admission",
     applies: "live",
   },
+  {
+    key: "defaultSessionBudgetUsd",
+    label: "Default session cost cap (USD)",
+    description: "Seeds costBudgetUsd on new sessions that do not specify one. 0 disables.",
+    type: "number",
+    default: 0,
+    min: 0,
+    max: 1000,
+    step: 0.01,
+    group: "budget",
+    applies: "live",
+  },
 ];
 
 export const runtimeConfigSchema: RuntimeConfigSchema = {
@@ -220,6 +232,7 @@ export const runtimeConfigSchema: RuntimeConfigSchema = {
     { id: "variants", label: "Variants" },
     { id: "transport", label: "Transport" },
     { id: "admission", label: "Admission" },
+    { id: "budget", label: "Budget" },
   ],
   fields,
 };

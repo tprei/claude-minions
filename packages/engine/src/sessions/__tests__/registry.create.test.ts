@@ -70,7 +70,9 @@ function makeInMemoryDb(): Database.Database {
   return db;
 }
 
-function makeStubCtx(): EngineContext {
+function makeStubCtx(
+  effective: Record<string, unknown> = {},
+): EngineContext {
   return {
     audit: { record: () => {}, list: () => [] },
     dags: { onSessionTerminal: async () => {} },
@@ -82,7 +84,7 @@ function makeStubCtx(): EngineContext {
       provider: REGISTRY_CREATE_TEST_PROVIDER,
     },
     memory: { renderPreamble: () => "" },
-    runtime: { effective: () => ({}) },
+    runtime: { effective: () => effective },
   } as unknown as EngineContext;
 }
 
@@ -153,5 +155,91 @@ describe("SessionRegistry.create persists costBudgetUsd", () => {
       !("costBudgetUsd" in reread! && reread!.costBudgetUsd === null),
       "costBudgetUsd must not be null on the in-memory Session",
     );
+  });
+});
+
+describe("SessionRegistry.create runtime defaultSessionBudgetUsd fallback", () => {
+  let db: Database.Database;
+  let bus: EventBus;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    db = makeInMemoryDb();
+    bus = new EventBus();
+    workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "registry-create-budget-fallback-"),
+    );
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  test("runtime defaultSessionBudgetUsd seeds session.costBudgetUsd when request omits it", async () => {
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx({ defaultSessionBudgetUsd: 1.25 }),
+    });
+
+    const session = await registry.create({
+      prompt: "fallback task",
+      mode: "task",
+    });
+
+    assert.equal(session.costBudgetUsd, 1.25);
+
+    const row = db
+      .prepare(`SELECT cost_budget_usd FROM sessions WHERE slug = ?`)
+      .get(session.slug) as { cost_budget_usd: number | null };
+    assert.equal(row.cost_budget_usd, 1.25);
+  });
+
+  test("explicit costBudgetUsd in request overrides runtime default", async () => {
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx({ defaultSessionBudgetUsd: 5 }),
+    });
+
+    const session = await registry.create({
+      prompt: "explicit budget",
+      mode: "task",
+      costBudgetUsd: 0.5,
+    });
+
+    assert.equal(session.costBudgetUsd, 0.5);
+
+    const row = db
+      .prepare(`SELECT cost_budget_usd FROM sessions WHERE slug = ?`)
+      .get(session.slug) as { cost_budget_usd: number | null };
+    assert.equal(row.cost_budget_usd, 0.5);
+  });
+
+  test("default of 0 leaves session.costBudgetUsd undefined", async () => {
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx({ defaultSessionBudgetUsd: 0 }),
+    });
+
+    const session = await registry.create({
+      prompt: "disabled fallback",
+      mode: "task",
+    });
+
+    assert.equal(session.costBudgetUsd, undefined);
+
+    const row = db
+      .prepare(`SELECT cost_budget_usd FROM sessions WHERE slug = ?`)
+      .get(session.slug) as { cost_budget_usd: number | null };
+    assert.equal(row.cost_budget_usd, null);
   });
 });
