@@ -165,6 +165,11 @@ function statusInfos(db: Database.Database, slug: string): StatusEvent[] {
     .filter((e) => e.level === "info");
 }
 
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 function insertSessionRow(db: Database.Database, session: Session): void {
   db.prepare(
     `INSERT INTO sessions(slug, title, prompt, mode, status, ship_stage, provider, created_at, updated_at)
@@ -253,7 +258,7 @@ describe("dag transcript subscriber", () => {
     assert.match(infos[0]!.text, /Created DAG .* with 3 nodes/);
   });
 
-  test("malformed fenced block emits a single warning and creates no DAG", () => {
+  test("malformed fenced block emits a single warning and creates no DAG", async () => {
     const text = "Plan:\n\n```dag\n{ this is not json }\n```\n";
     const ev = makeAssistantText(0, text);
     transcriptRef.events.push(ev);
@@ -261,6 +266,7 @@ describe("dag transcript subscriber", () => {
 
     bus.emit({ kind: "transcript_event", sessionSlug: SHIP_SLUG, event: ev });
     bus.emit({ kind: "transcript_event", sessionSlug: SHIP_SLUG, event: ev });
+    await flushMicrotasks();
 
     const dags = api.list();
     assert.equal(dags.length, 0, "no DAG created for malformed block");

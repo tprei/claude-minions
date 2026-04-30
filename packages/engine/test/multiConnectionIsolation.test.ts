@@ -58,7 +58,7 @@ async function createTestEngine(suffix: string): Promise<TestEngine> {
   const workspace = await fs.mkdtemp(
     path.join(os.tmpdir(), `minions-iso-${suffix}-`),
   );
-  const baseEnv = loadEnv({});
+  const baseEnv = loadEnv({ MINIONS_TOKEN: `test-token-${suffix}` });
   const env: EngineEnv = {
     ...baseEnv,
     port,
