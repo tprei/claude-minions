@@ -624,6 +624,7 @@ export class SessionRegistry {
     const env: Record<string, string> = {
       HOME: homeDir,
       MINIONS_SESSION_SLUG: slug,
+      MINIONS_SLUG: slug,
       MINIONS_WORKTREE: worktreePath,
       MINIONS_UPLOADS_DIR: paths.uploads(slug),
       MINIONS_CLAUDE_HOME: homeDir,
@@ -828,6 +829,7 @@ export class SessionRegistry {
     const env: Record<string, string> = {
       HOME: homeDir,
       MINIONS_SESSION_SLUG: slug,
+      MINIONS_SLUG: slug,
       MINIONS_WORKTREE: row.worktree_path,
       MINIONS_UPLOADS_DIR: this.paths.uploads(slug),
       MINIONS_CLAUDE_HOME: homeDir,
@@ -918,6 +920,7 @@ export class SessionRegistry {
         const env: Record<string, string> = {
           HOME: homeDir,
           MINIONS_SESSION_SLUG: slug,
+          MINIONS_SLUG: slug,
           MINIONS_WORKTREE: worktreePath,
           MINIONS_UPLOADS_DIR: this.paths.uploads(slug),
           MINIONS_CLAUDE_HOME: homeDir,
