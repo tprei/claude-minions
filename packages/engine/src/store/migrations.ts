@@ -333,9 +333,17 @@ CREATE INDEX idx_sessions_bucket ON sessions(bucket);
 `,
 };
 
+const m005_session_cost_budget: Migration = {
+  name: "005_session_cost_budget",
+  sql: `
+ALTER TABLE sessions ADD COLUMN cost_budget_usd REAL;
+`,
+};
+
 export const migrations: Migration[] = [
   m001_initial,
   m002_reply_queue_state,
   m003_session_permission_tier,
   m004_session_bucket,
+  m005_session_cost_budget,
 ];
