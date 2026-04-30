@@ -44,7 +44,7 @@ export interface QuickAction {
 }
 
 export interface AttentionFlag {
-  kind: "needs_input" | "ci_failed" | "ci_pending" | "ci_passed" | "rebase_conflict" | "quota_exhausted" | "judge_review" | "manual_intervention";
+  kind: "needs_input" | "ci_failed" | "ci_pending" | "ci_passed" | "rebase_conflict" | "quota_exhausted" | "judge_review" | "manual_intervention" | "budget_exceeded";
   message: string;
   raisedAt: string;
 }
@@ -112,6 +112,7 @@ export interface Session {
   variantOf?: string;
   metadata: Record<string, unknown>;
   bucket?: SessionBucket;
+  costBudgetUsd?: number;
 }
 
 export interface SessionWithTranscript extends Session {
@@ -139,6 +140,7 @@ export interface CreateSessionRequest {
   attachments?: AttachmentInput[];
   metadata?: Record<string, unknown>;
   bucket?: SessionBucket;
+  costBudgetUsd?: number;
 }
 
 export interface CreateVariantsRequest {
