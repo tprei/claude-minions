@@ -183,6 +183,55 @@ export function decideSelfHeal(input: SelfHealInput): SelfHealDecision {
   return { kind: "retry", nextAttempts: attempts + 1, failedNames: buckets.failed };
 }
 
+export type AutoMergeDecision =
+  | { kind: "merge" }
+  | {
+      kind: "skip";
+      reason:
+        | "flag-disabled"
+        | "ineligible-session"
+        | "pr-not-open"
+        | "pr-draft"
+        | "ci-not-clean"
+        | "review-blocking"
+        | "not-mergeable";
+    };
+
+export interface AutoMergeInput {
+  flagEnabled: boolean;
+  prState: PRSummary["state"];
+  prDraft: boolean;
+  ciState: DagNodeCiSummary["state"];
+  failedCount: number;
+  mergeable: string | null;
+  mergeStateStatus: string | null;
+  reviewDecision: string | null;
+  sessionKind: string | undefined;
+  sessionMode: string | undefined;
+}
+
+export function decideAutoMerge(input: AutoMergeInput): AutoMergeDecision {
+  if (!input.flagEnabled) return { kind: "skip", reason: "flag-disabled" };
+  if (input.sessionKind === "fix-ci" || input.sessionMode === "rebase-resolver") {
+    return { kind: "skip", reason: "ineligible-session" };
+  }
+  if (input.prState !== "open") return { kind: "skip", reason: "pr-not-open" };
+  if (input.prDraft) return { kind: "skip", reason: "pr-draft" };
+  if (input.ciState !== "passing" || input.failedCount > 0) {
+    return { kind: "skip", reason: "ci-not-clean" };
+  }
+  if ((input.reviewDecision ?? "").toUpperCase() === "CHANGES_REQUESTED") {
+    return { kind: "skip", reason: "review-blocking" };
+  }
+  if ((input.mergeStateStatus ?? "").toUpperCase() !== "CLEAN") {
+    return { kind: "skip", reason: "ci-not-clean" };
+  }
+  if ((input.mergeable ?? "").toUpperCase() !== "MERGEABLE") {
+    return { kind: "skip", reason: "not-mergeable" };
+  }
+  return { kind: "merge" };
+}
+
 export type CiAttentionUpdate =
   | { kind: "noop" }
   | { kind: "add"; attention: AttentionFlag[] }

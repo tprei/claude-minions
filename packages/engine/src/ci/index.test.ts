@@ -7,6 +7,7 @@ import {
   summarizeChecks,
   bucketChecks,
   decideSelfHeal,
+  decideAutoMerge,
   readAttempts,
   buildSelfHealPrompt,
 } from "./index.js";
@@ -408,6 +409,73 @@ describe("decideSelfHeal", () => {
       buckets: { failed: ["test"], pending: [], passed: [] },
     });
     assert.equal(decision.kind, "exhausted");
+  });
+});
+
+describe("decideAutoMerge", () => {
+  const greenInput = {
+    flagEnabled: true,
+    prState: "open" as const,
+    prDraft: false,
+    ciState: "passing" as const,
+    failedCount: 0,
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "APPROVED",
+    sessionKind: "code" as string | undefined,
+    sessionMode: "default" as string | undefined,
+  };
+
+  test("returns skip:flag-disabled when flag is off", () => {
+    const decision = decideAutoMerge({ ...greenInput, flagEnabled: false });
+    assert.deepEqual(decision, { kind: "skip", reason: "flag-disabled" });
+  });
+
+  test("returns skip:ineligible-session for fix-ci sessions", () => {
+    const decision = decideAutoMerge({ ...greenInput, sessionKind: "fix-ci" });
+    assert.deepEqual(decision, { kind: "skip", reason: "ineligible-session" });
+  });
+
+  test("returns skip:ineligible-session for rebase-resolver mode", () => {
+    const decision = decideAutoMerge({ ...greenInput, sessionMode: "rebase-resolver" });
+    assert.deepEqual(decision, { kind: "skip", reason: "ineligible-session" });
+  });
+
+  test("returns skip:pr-draft when PR is a draft", () => {
+    const decision = decideAutoMerge({ ...greenInput, prDraft: true });
+    assert.deepEqual(decision, { kind: "skip", reason: "pr-draft" });
+  });
+
+  test("returns skip:pr-not-open when PR is merged", () => {
+    const decision = decideAutoMerge({ ...greenInput, prState: "merged" });
+    assert.deepEqual(decision, { kind: "skip", reason: "pr-not-open" });
+  });
+
+  test("returns skip:ci-not-clean when CI is failing", () => {
+    const failing = decideAutoMerge({ ...greenInput, ciState: "failing" });
+    assert.deepEqual(failing, { kind: "skip", reason: "ci-not-clean" });
+    const withFailedCount = decideAutoMerge({ ...greenInput, failedCount: 1 });
+    assert.deepEqual(withFailedCount, { kind: "skip", reason: "ci-not-clean" });
+  });
+
+  test("returns skip:review-blocking when reviewers requested changes", () => {
+    const decision = decideAutoMerge({ ...greenInput, reviewDecision: "CHANGES_REQUESTED" });
+    assert.deepEqual(decision, { kind: "skip", reason: "review-blocking" });
+  });
+
+  test("returns skip:ci-not-clean when mergeStateStatus is BLOCKED", () => {
+    const decision = decideAutoMerge({ ...greenInput, mergeStateStatus: "BLOCKED" });
+    assert.deepEqual(decision, { kind: "skip", reason: "ci-not-clean" });
+  });
+
+  test("returns skip:not-mergeable when mergeable is CONFLICTING", () => {
+    const decision = decideAutoMerge({ ...greenInput, mergeable: "CONFLICTING" });
+    assert.deepEqual(decision, { kind: "skip", reason: "not-mergeable" });
+  });
+
+  test("returns merge when fully green", () => {
+    const decision = decideAutoMerge(greenInput);
+    assert.deepEqual(decision, { kind: "merge" });
   });
 });
 
