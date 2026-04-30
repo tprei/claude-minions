@@ -210,6 +210,15 @@ export function createSession(conn: Connection, req: CreateSessionRequest): Prom
   return apiFetch(conn, "/api/sessions", { method: "POST", body: JSON.stringify(req) });
 }
 
+export interface SessionPlanResponse {
+  plan: string;
+  source: "file" | "transcript";
+}
+
+export function fetchSessionPlan(conn: Connection, slug: string): Promise<SessionPlanResponse> {
+  return apiFetch(conn, `/api/sessions/${slug}/plan`);
+}
+
 export function deleteSession(conn: Connection, slug: string): Promise<OkEnvelope> {
   return apiFetch(conn, `/api/sessions/${slug}`, { method: "DELETE" });
 }
