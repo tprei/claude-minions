@@ -302,7 +302,7 @@ describe("SessionRegistry.create slug suggestions", () => {
       (err: unknown) => {
         assert.ok(err instanceof Error);
         assert.equal(err.name, "EngineError");
-        assert.equal((err as { code: string }).code, "bad_request");
+        assert.equal((err as unknown as { code: string }).code, "bad_request");
         return true;
       },
     );
