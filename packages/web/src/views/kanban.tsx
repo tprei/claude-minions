@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { Session, SessionStatus, SessionMode } from "@minions/shared";
+import { formatCostUsd, formatTokens } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
@@ -190,6 +191,14 @@ function KanbanCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: K
         {session.branch && (
           <span className="pill bg-bg-elev text-fg-muted text-[10px] font-mono truncate max-w-[8rem]">
             {session.branch}
+          </span>
+        )}
+        {session.stats.costUsd > 0 && (
+          <span
+            className="pill bg-emerald-900/40 text-emerald-300 text-[10px] font-mono"
+            title={`${formatTokens(session.stats.inputTokens)} in / ${formatTokens(session.stats.outputTokens)} out`}
+          >
+            {formatCostUsd(session.stats.costUsd)}
           </span>
         )}
       </div>

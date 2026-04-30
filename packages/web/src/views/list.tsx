@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import type { Session, SessionStatus, SessionMode, SessionBucket } from "@minions/shared";
+import { formatCostUsd } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
@@ -59,6 +60,17 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
   const [statusFilter, setStatusFilter] = useState<Set<SessionStatus>>(new Set());
   const [modeFilter, setModeFilter] = useState<Set<SessionMode>>(new Set());
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"updatedAt" | "cost">("updatedAt");
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+
+  const handleSort = (key: "updatedAt" | "cost") => {
+    if (sortBy === key) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortBy(key);
+      setSortDir("desc");
+    }
+  };
 
   const sessions = useMemo(() => Array.from(sessionsMap.values()), [sessionsMap]);
 
@@ -74,9 +86,11 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
   }, [sessions]);
 
   const filtered = useMemo(() => {
-    let list = [...sessions].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    );
+    const cmp = (a: Session, b: Session) =>
+      sortBy === "cost"
+        ? a.stats.costUsd - b.stats.costUsd
+        : new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+    let list = [...sessions].sort((a, b) => (sortDir === "desc" ? cmp(b, a) : cmp(a, b)));
     if (filterStatus === "attention") {
       list = list.filter((s) => s.attention && s.attention.length > 0);
     } else if (filterStatus !== "all") {
@@ -104,7 +118,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
       );
     }
     return list;
-  }, [sessions, filterStatus, filterMode, filterBucket, statusFilter, modeFilter, search]);
+  }, [sessions, filterStatus, filterMode, filterBucket, statusFilter, modeFilter, search, sortBy, sortDir]);
 
   const navigate = (slug: string) => {
     const { query } = parseUrl();
@@ -184,7 +198,21 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
                   <th className="text-left px-4 py-2 font-normal hidden md:table-cell">repo</th>
                   <th className="text-left px-4 py-2 font-normal hidden md:table-cell">branch</th>
                   <th className="text-left px-4 py-2 font-normal hidden sm:table-cell">attention</th>
-                  <th className="text-left px-4 py-2 font-normal">updated</th>
+                  <SortableHeader
+                    label="cost"
+                    sortKey="cost"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={handleSort}
+                    className="hidden lg:table-cell"
+                  />
+                  <SortableHeader
+                    label="updated"
+                    sortKey="updatedAt"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={handleSort}
+                  />
                 </tr>
               </thead>
               <tbody>
@@ -229,6 +257,34 @@ interface RowCardProps {
 
 function shortSlug(slug: string): string {
   return slug.length > 14 ? `${slug.slice(0, 13)}…` : slug;
+}
+
+interface SortableHeaderProps {
+  label: string;
+  sortKey: "updatedAt" | "cost";
+  sortBy: "updatedAt" | "cost";
+  sortDir: "desc" | "asc";
+  onSort: (key: "updatedAt" | "cost") => void;
+  className?: string;
+}
+
+function SortableHeader({ label, sortKey, sortBy, sortDir, onSort, className }: SortableHeaderProps) {
+  const active = sortBy === sortKey;
+  return (
+    <th className={cx("text-left px-4 py-2 font-normal", className)}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={cx(
+          "inline-flex items-center gap-1 cursor-pointer hover:text-fg",
+          active && "text-fg",
+        )}
+      >
+        {label}
+        {active && <span aria-hidden>{sortDir === "desc" ? "↓" : "↑"}</span>}
+      </button>
+    </th>
+  );
 }
 
 function DagPill({ dagId, onOpen }: { dagId: string; onOpen: (dagId: string) => void }) {
@@ -338,7 +394,14 @@ function SessionCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: 
           </span>
         )}
       </div>
-      <div className="text-[10px] text-fg-subtle">{relTime(session.updatedAt)}</div>
+      <div className="flex items-center gap-2 text-[10px] text-fg-subtle">
+        <span>{relTime(session.updatedAt)}</span>
+        {session.stats.costUsd > 0 && (
+          <span className="font-mono text-[10px] text-fg-subtle">
+            {formatCostUsd(session.stats.costUsd)}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -376,6 +439,9 @@ function SessionRow({ session, childSlugs, onClick, onOpenDag, onOpenParent }: R
             {session.attention.length}
           </span>
         )}
+      </td>
+      <td className="px-4 py-2 text-fg-muted text-xs hidden lg:table-cell font-mono whitespace-nowrap">
+        {formatCostUsd(session.stats.costUsd)}
       </td>
       <td className="px-4 py-2 text-fg-subtle text-xs whitespace-nowrap">
         {relTime(session.updatedAt)}
