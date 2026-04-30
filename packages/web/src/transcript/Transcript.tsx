@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useCallback, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import type { TranscriptEvent, ToolResultEvent } from "@minions/shared";
-import { pickComponent } from "./events/index.js";
+import type { TranscriptEvent, ToolCallEvent, ToolResultEvent } from "@minions/shared";
+import { pickComponent, ToolCall } from "./events/index.js";
 import { OrphanedToolResult } from "./events/OrphanedToolResult.js";
+import { ToolCallGroup, type ToolCallGroupItem } from "./events/ToolCallGroup.js";
+import { WorktreePathContext } from "./events/toolFormat.js";
 import { Timeline } from "./Timeline.js";
 import { cx } from "../util/classnames.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
@@ -37,16 +39,84 @@ function TurnSeparator({ turn }: { turn: number }) {
   );
 }
 
-function buildToolCallSet(events: TranscriptEvent[]): Set<string> {
-  const ids = new Set<string>();
-  for (const e of events) {
-    if (e.kind === "tool_call") ids.add(e.toolCallId);
+type RenderUnit =
+  | { kind: "event"; event: TranscriptEvent }
+  | { kind: "single"; call: ToolCallEvent; result?: ToolResultEvent }
+  | { kind: "group"; items: ToolCallGroupItem[] }
+  | { kind: "orphan-result"; event: ToolResultEvent };
+
+function buildEventGroups(visible: TranscriptEvent[]): RenderUnit[] {
+  const resultByCallId = new Map<string, ToolResultEvent>();
+  for (const e of visible) {
+    if (e.kind === "tool_result") {
+      resultByCallId.set(e.toolCallId, e);
+    }
   }
-  return ids;
+
+  const consumed = new Set<string>();
+  const units: RenderUnit[] = [];
+  let i = 0;
+  while (i < visible.length) {
+    const event = visible[i];
+    if (event === undefined) {
+      i++;
+      continue;
+    }
+
+    if (event.kind === "tool_call") {
+      const cluster: ToolCallGroupItem[] = [];
+      let j = i;
+      while (j < visible.length) {
+        const next = visible[j];
+        if (next === undefined) break;
+        if (next.kind !== "tool_call") break;
+        if (next.toolName !== event.toolName) break;
+        if (next.turn !== event.turn) break;
+        const result = resultByCallId.get(next.toolCallId);
+        cluster.push({ call: next, result });
+        consumed.add(next.toolCallId);
+        j++;
+      }
+      if (cluster.length >= 2) {
+        units.push({ kind: "group", items: cluster });
+      } else {
+        const only = cluster[0]!;
+        units.push({ kind: "single", call: only.call, result: only.result });
+      }
+      i = j;
+      continue;
+    }
+
+    if (event.kind === "tool_result") {
+      if (!consumed.has(event.toolCallId)) {
+        units.push({ kind: "orphan-result", event });
+      }
+      i++;
+      continue;
+    }
+
+    units.push({ kind: "event", event });
+    i++;
+  }
+
+  return units;
+}
+
+function unitTurn(unit: RenderUnit): number {
+  switch (unit.kind) {
+    case "event":
+    case "orphan-result":
+      return unit.event.turn;
+    case "single":
+      return unit.call.turn;
+    case "group":
+      return unit.items[0]!.call.turn;
+  }
 }
 
 interface ViewProps {
   events: TranscriptEvent[];
+  worktreePath?: string;
 }
 
 function TranscriptView({ events }: ViewProps) {
@@ -54,7 +124,7 @@ function TranscriptView({ events }: ViewProps) {
   const [autoScroll, setAutoScroll] = useState(true);
 
   const visible = events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events;
-  const toolCallIds = buildToolCallSet(visible);
+  const units = buildEventGroups(visible);
 
   const onScroll = useCallback(() => {
     const el = containerRef.current;
@@ -72,30 +142,27 @@ function TranscriptView({ events }: ViewProps) {
   let lastTurn = -1;
   const rows: ReactNode[] = [];
 
-  for (let i = 0; i < visible.length; i++) {
-    const event = visible[i];
-    if (event === undefined) continue;
+  for (const unit of units) {
+    const turn = unitTurn(unit);
+    const isTurnStarted = unit.kind === "event" && unit.event.kind === "turn_started";
 
-    if (event.turn !== lastTurn && event.kind !== "turn_started") {
-      rows.push(<TurnSeparator key={`sep-${event.turn}`} turn={event.turn} />);
-      lastTurn = event.turn;
-    } else if (event.kind === "turn_started") {
-      lastTurn = event.turn;
+    if (turn !== lastTurn && !isTurnStarted) {
+      rows.push(<TurnSeparator key={`sep-${turn}`} turn={turn} />);
+      lastTurn = turn;
+    } else if (isTurnStarted) {
+      lastTurn = turn;
     }
 
-    let node: ReactNode;
-
-    if (event.kind === "tool_result") {
-      const resultEvent = event as ToolResultEvent;
-      if (!toolCallIds.has(resultEvent.toolCallId)) {
-        node = <OrphanedToolResult key={event.id} event={resultEvent} />;
-      } else {
-        const Comp = pickComponent(event);
-        node = Comp ? <Comp key={event.id} event={event} /> : null;
-      }
+    let node: ReactNode = null;
+    if (unit.kind === "event") {
+      const Comp = pickComponent(unit.event);
+      node = Comp ? <Comp key={unit.event.id} event={unit.event} /> : null;
+    } else if (unit.kind === "single") {
+      node = <ToolCall key={unit.call.id} event={unit.call} result={unit.result} />;
+    } else if (unit.kind === "group") {
+      node = <ToolCallGroup key={unit.items[0]!.call.id} items={unit.items} />;
     } else {
-      const Comp = pickComponent(event);
-      node = Comp ? <Comp key={event.id} event={event} /> : null;
+      node = <OrphanedToolResult key={unit.event.id} event={unit.event} />;
     }
 
     if (node) rows.push(node);
@@ -202,27 +269,34 @@ function TranscriptTabList({
 
 interface Props {
   events: TranscriptEvent[];
+  worktreePath?: string;
 }
 
 interface WrapperProps extends Props {
   wrap?: boolean;
 }
 
-function TranscriptInner({ events }: Props) {
+function TranscriptInner({ events, worktreePath }: Props) {
   const [tab, setTab] = useState<TranscriptTab>("transcript");
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
-      <TranscriptTabList active={tab} onChange={setTab} />
-      <div
-        role="tabpanel"
-        id={`transcript-tabpanel-${tab}`}
-        aria-labelledby={`transcript-tab-${tab}`}
-        className="flex-1 min-h-0 flex flex-col"
-      >
-        {tab === "transcript" ? <TranscriptView events={events} /> : <Timeline events={events} />}
+    <WorktreePathContext.Provider value={worktreePath}>
+      <div className="flex-1 min-h-0 flex flex-col">
+        <TranscriptTabList active={tab} onChange={setTab} />
+        <div
+          role="tabpanel"
+          id={`transcript-tabpanel-${tab}`}
+          aria-labelledby={`transcript-tab-${tab}`}
+          className="flex-1 min-h-0 flex flex-col"
+        >
+          {tab === "transcript" ? (
+            <TranscriptView events={events} worktreePath={worktreePath} />
+          ) : (
+            <Timeline events={events} />
+          )}
+        </div>
       </div>
-    </div>
+    </WorktreePathContext.Provider>
   );
 }
 
@@ -249,12 +323,12 @@ function WrapperHeader({ collapsed, onToggle }: WrapperHeaderProps) {
   );
 }
 
-export function Transcript({ events, wrap = false }: WrapperProps) {
-  if (!wrap) return <TranscriptInner events={events} />;
-  return <TranscriptStandalone events={events} />;
+export function Transcript({ events, worktreePath, wrap = false }: WrapperProps) {
+  if (!wrap) return <TranscriptInner events={events} worktreePath={worktreePath} />;
+  return <TranscriptStandalone events={events} worktreePath={worktreePath} />;
 }
 
-function TranscriptStandalone({ events }: Props) {
+function TranscriptStandalone({ events, worktreePath }: Props) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     const stored = getLayout(PANEL_TRANSCRIPT);
     return stored ? stored.collapsed : false;
@@ -291,7 +365,7 @@ function TranscriptStandalone({ events }: Props) {
         <WrapperHeader collapsed={collapsed} onToggle={toggle} />
         <Sheet open={!collapsed} onClose={() => setCollapsed(true)} title="Transcript">
           <div className="h-[80vh] flex flex-col">
-            <TranscriptInner events={events} />
+            <TranscriptInner events={events} worktreePath={worktreePath} />
           </div>
         </Sheet>
       </div>
@@ -320,7 +394,7 @@ function TranscriptStandalone({ events }: Props) {
       <div className="flex-1 min-w-0 flex flex-col">
         <WrapperHeader collapsed={collapsed} onToggle={toggle} />
         <div data-testid="transcript-body" className="flex-1 min-h-0 flex flex-col">
-          <TranscriptInner events={events} />
+          <TranscriptInner events={events} worktreePath={worktreePath} />
         </div>
       </div>
       <ResizeHandle onDrag={handleDrag} />

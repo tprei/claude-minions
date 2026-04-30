@@ -3,6 +3,7 @@ import type { ToolResultEvent, ToolResultFormat, ToolResultStatus } from "@minio
 import { Markdown } from "../../components/Markdown.js";
 import { Diff } from "../../components/Diff.js";
 import { cx } from "../../util/classnames.js";
+import { formatResultSummary } from "./toolFormat.js";
 
 const STATUS_COLORS: Record<ToolResultStatus, string> = {
   ok: "bg-green-900 text-green-300",
@@ -37,11 +38,6 @@ function formatTs(ts: string): string {
   return d.toTimeString().slice(0, 8);
 }
 
-function previewBody(body: string): string {
-  const firstLine = body.split("\n", 1)[0] ?? "";
-  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
-}
-
 interface Props {
   event: ToolResultEvent;
 }
@@ -64,7 +60,7 @@ export function ToolResult({ event }: Props) {
           <span className="font-mono text-[11px] text-fg-muted shrink-0">{event.toolName}</span>
         )}
         <span className="text-[11px] text-fg-subtle truncate flex-1 min-w-0">
-          {previewBody(event.body)}
+          {formatResultSummary(event.toolName ?? "other", event).text}
         </span>
         {event.truncated && (
           <span className="pill bg-bg-elev text-fg-muted text-[10px] shrink-0">truncated</span>

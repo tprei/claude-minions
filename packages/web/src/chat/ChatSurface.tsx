@@ -494,7 +494,7 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
         aria-labelledby={`surface-tab-${activeTab}`}
         className="flex-1 min-h-0 flex flex-col overflow-hidden"
       >
-        {activeTab === "transcript" && <Transcript events={events} />}
+        {activeTab === "transcript" && <Transcript events={events} worktreePath={session.worktreePath} />}
         {activeTab === "diff" && <DiffPanel session={session} />}
         {activeTab === "pr" && <PRPanel session={session} />}
         {activeTab === "checkpoints" && <CheckpointsPanel session={session} />}
