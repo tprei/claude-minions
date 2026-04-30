@@ -35,6 +35,7 @@ import {
 } from "./attachmentValidator.js";
 import { Screenshots, type ScreenshotSource } from "./screenshots.js";
 import { Checkpoints } from "./checkpoints.js";
+import { writeSessionSettings } from "./writeSessionSettings.js";
 import { computeDiff } from "./diff.js";
 import { rowToSession, rowToTranscriptEvent, type SessionRow, type TranscriptRow } from "./mapper.js";
 import { inferBucket } from "./inferBucket.js";
@@ -632,8 +633,10 @@ export class SessionRegistry {
 
     const homeDir = paths.home(providerName);
     await ensureDir(homeDir);
+    await writeSessionSettings(homeDir, worktreePath);
 
     const env: Record<string, string> = {
+      HOME: homeDir,
       MINIONS_SESSION_SLUG: slug,
       MINIONS_WORKTREE: worktreePath,
       MINIONS_UPLOADS_DIR: paths.uploads(slug),
@@ -843,6 +846,7 @@ export class SessionRegistry {
     const homeDir = this.paths.home(providerName);
 
     const env: Record<string, string> = {
+      HOME: homeDir,
       MINIONS_SESSION_SLUG: slug,
       MINIONS_WORKTREE: row.worktree_path,
       MINIONS_UPLOADS_DIR: this.paths.uploads(slug),
@@ -932,6 +936,7 @@ export class SessionRegistry {
         const homeDir = this.paths.home(providerName);
 
         const env: Record<string, string> = {
+          HOME: homeDir,
           MINIONS_SESSION_SLUG: slug,
           MINIONS_WORKTREE: worktreePath,
           MINIONS_UPLOADS_DIR: this.paths.uploads(slug),
