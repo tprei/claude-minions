@@ -203,6 +203,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
     features: () => [],
     featuresPending: () => [],
     repos: () => [],
+    getRepo: () => null,
     shutdown: async () => {},
   };
 }

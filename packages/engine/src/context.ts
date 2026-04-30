@@ -169,6 +169,7 @@ export interface EngineContext {
   features: () => import("@minions/shared").FeatureFlag[];
   featuresPending: () => { flag: import("@minions/shared").FeatureFlag; reason: string }[];
   repos: () => import("@minions/shared").RepoBinding[];
+  getRepo: (id: string) => import("@minions/shared").RepoBinding | null;
 
   shutdown: () => Promise<void>;
 }

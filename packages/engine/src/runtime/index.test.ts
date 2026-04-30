@@ -82,6 +82,7 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
     features: () => [],
     featuresPending: () => [],
     repos: () => [],
+    getRepo: () => null,
     shutdown: async () => {},
   };
 }

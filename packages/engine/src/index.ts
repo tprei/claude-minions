@@ -125,6 +125,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.features = () => featuresReady.slice();
   ctx.featuresPending = () => featuresPending.map((f) => ({ ...f }));
   ctx.repos = () => repoRepo.list();
+  ctx.getRepo = (id: string) => repoRepo.get(id);
 
   const app = await buildHttpServer(ctx);
   await registerRoutes(app, ctx);

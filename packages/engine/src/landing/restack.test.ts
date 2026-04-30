@@ -148,6 +148,7 @@ function makeHarness(sessions: Session[]): RestackHarness {
     features: () => [],
     featuresPending: () => [],
     repos: () => [],
+    getRepo: () => null,
     shutdown: async () => {},
   };
 
