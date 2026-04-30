@@ -233,6 +233,15 @@ const fields: RuntimeField[] = [
     group: "budget",
     applies: "live",
   },
+  {
+    key: "policyHooksEnabled",
+    label: "Policy hooks enabled",
+    description: "Inject Bash safety hooks and Stop reminder into per-session Claude Code settings",
+    type: "boolean",
+    default: true,
+    group: "execution",
+    applies: "restart",
+  },
 ];
 
 export const runtimeConfigSchema: RuntimeConfigSchema = {
