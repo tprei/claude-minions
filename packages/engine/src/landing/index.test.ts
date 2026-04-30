@@ -6,6 +6,7 @@ import type { EventBus } from "../bus/eventBus.js";
 import type { DagRepo } from "../dag/model.js";
 import {
   LandingManager,
+  type CommitsAheadFn,
   type EditPullRequestBaseFn,
   type EnsurePullRequestFn,
   type PushBranchFn,
@@ -170,11 +171,13 @@ const noopDagRepo: DagRepo = {
 
 const alwaysExistsBranch = async () => true;
 const noopRebase = async () => {};
+const oneCommitAhead: CommitsAheadFn = async () => 1;
 
 function makeManager(
   h: OrderHarness,
   pushBranch: PushBranchFn,
   ensurePullRequest: EnsurePullRequestFn,
+  commitsAhead: CommitsAheadFn = oneCommitAhead,
 ): LandingManager {
   const log = createLogger("error");
   const restack = new RestackManager(h.ctx, noopDagRepo, log, {
@@ -186,6 +189,7 @@ function makeManager(
     ensurePullRequest,
     branchExistsOnRemote: alwaysExistsBranch,
     rebaseOnto: noopRebase,
+    commitsAhead,
   });
 }
 
@@ -303,6 +307,58 @@ describe("LandingManager.ensurePushedAndPRed", () => {
 
     await assert.rejects(() => manager.openForReview("worker"), /push exploded/);
     assert.deepEqual(h.callOrder, ["push"], "PR not opened after push failure");
+  });
+
+  test("skips push and PR when worktree has no commits ahead of base", async () => {
+    const session = buildSession("verifier");
+    const h = makeHarness({ session });
+
+    const pushBranch: PushBranchFn = async () => {
+      h.callOrder.push("push");
+    };
+    const ensurePullRequest: EnsurePullRequestFn = async () => {
+      h.callOrder.push("pr");
+      return null;
+    };
+    const commitsAhead: CommitsAheadFn = async () => 0;
+
+    const manager = makeManager(h, pushBranch, ensurePullRequest, commitsAhead);
+    await manager.ensurePushedAndPRed("verifier");
+
+    assert.deepEqual(h.callOrder, [], "neither push nor PR when no commits ahead");
+    const noChanges = h.audit.find((e) => e.action === "landing.no-changes");
+    assert.ok(noChanges, "landing.no-changes audit emitted");
+    const detail = noChanges?.detail as { branch?: string; baseBranch?: string } | undefined;
+    assert.equal(detail?.branch, session.branch);
+    assert.equal(detail?.baseBranch, session.baseBranch);
+
+    const auditActions = h.audit.map((e) => e.action);
+    assert.ok(!auditActions.includes("landing.push.start"), "push start not recorded");
+    assert.ok(!auditActions.includes("landing.pr.ensure.start"), "PR start not recorded");
+  });
+
+  test("openForReview returns null when worktree has no commits ahead", async () => {
+    const session = buildSession("verifier");
+    const h = makeHarness({ session });
+
+    const pushBranch: PushBranchFn = async () => {
+      h.callOrder.push("push");
+    };
+    const ensurePullRequest: EnsurePullRequestFn = async () => {
+      h.callOrder.push("pr");
+      return null;
+    };
+    const commitsAhead: CommitsAheadFn = async () => 0;
+
+    const manager = makeManager(h, pushBranch, ensurePullRequest, commitsAhead);
+    const result = await manager.openForReview("verifier");
+
+    assert.equal(result, null, "openForReview returns null on no-changes");
+    assert.deepEqual(h.callOrder, [], "no push or PR attempted");
+    assert.ok(
+      h.audit.some((e) => e.action === "landing.no-changes"),
+      "landing.no-changes audit emitted",
+    );
   });
 
   test("skips push and PR when remote is offline (file path)", async () => {
@@ -755,6 +811,7 @@ describe("LandingManager.openForReview live-base re-resolution", () => {
       rebaseOnto,
       pushBranch,
       ensurePullRequest,
+      commitsAhead: oneCommitAhead,
       sessionRepo: h.updater,
     });
 
@@ -851,6 +908,7 @@ describe("LandingManager.openForReview live-base re-resolution", () => {
       rebaseOnto,
       pushBranch,
       ensurePullRequest,
+      commitsAhead: oneCommitAhead,
       sessionRepo: h.updater,
     });
 
@@ -890,6 +948,7 @@ describe("LandingManager.openForReview live-base re-resolution", () => {
       rebaseOnto,
       pushBranch,
       ensurePullRequest,
+      commitsAhead: oneCommitAhead,
       sessionRepo: h.updater,
     });
 

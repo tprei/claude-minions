@@ -8,6 +8,7 @@ import type { DagRepo } from "../dag/model.js";
 import { RestackManager } from "./restack.js";
 import { formatStackComment } from "./stackComment.js";
 import { pushBranch as defaultPushBranch } from "./push.js";
+import { commitsAhead as defaultCommitsAhead, type CommitsAheadFn } from "./commitsAhead.js";
 import { ensurePullRequest as defaultEnsurePullRequest, type EnsurePullRequestArgs } from "./openPR.js";
 import {
   createEditPullRequestBase,
@@ -28,6 +29,7 @@ import type { SessionStateUpdater } from "./sessionStateUpdater.js";
 export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
 export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
 export type { EditPullRequestBaseFn } from "./editPRBase.js";
+export type { CommitsAheadFn } from "./commitsAhead.js";
 
 export type { SessionStateUpdater } from "./sessionStateUpdater.js";
 
@@ -37,6 +39,7 @@ export interface LandingManagerDeps {
   editPullRequestBase?: EditPullRequestBaseFn;
   branchExistsOnRemote?: BranchExistsFn;
   rebaseOnto?: RebaseOntoFn;
+  commitsAhead?: CommitsAheadFn;
   sessionRepo?: SessionStateUpdater | null;
 }
 
@@ -71,6 +74,7 @@ export class LandingManager {
   private readonly editPullRequestBase: EditPullRequestBaseFn;
   private readonly branchExistsOnRemote: BranchExistsFn;
   private readonly rebaseOnto: RebaseOntoFn;
+  private readonly commitsAhead: CommitsAheadFn;
   private readonly sessionRepo: SessionStateUpdater | null;
 
   constructor(
@@ -85,6 +89,7 @@ export class LandingManager {
     this.editPullRequestBase = deps.editPullRequestBase ?? defaultEditPullRequestBase;
     this.branchExistsOnRemote = deps.branchExistsOnRemote ?? defaultBranchExists;
     this.rebaseOnto = deps.rebaseOnto ?? defaultRebaseOnto;
+    this.commitsAhead = deps.commitsAhead ?? defaultCommitsAhead;
     this.sessionRepo = deps.sessionRepo ?? null;
   }
 
@@ -269,6 +274,33 @@ export class LandingManager {
     });
 
     const refreshedAfterBase = this.ctx.sessions.get(slug) ?? session;
+    const baseForCount = refreshedAfterBase.baseBranch ?? session.baseBranch ?? "main";
+
+    let ahead = 0;
+    try {
+      ahead = await this.commitsAhead(session.worktreePath, session.branch, baseForCount);
+    } catch (err) {
+      this.log.warn("commitsAhead probe failed; proceeding with push attempt", {
+        slug,
+        baseBranch: baseForCount,
+        head: session.branch,
+        err: (err as Error).message,
+      });
+    }
+    if (ahead === 0) {
+      this.log.info("ensurePushedAndPRed skipped: no commits ahead of base", {
+        slug,
+        baseBranch: baseForCount,
+        head: session.branch,
+      });
+      this.ctx.audit.record(
+        "system",
+        "landing.no-changes",
+        { kind: "session", id: slug },
+        { branch: session.branch, baseBranch: baseForCount },
+      );
+      return;
+    }
 
     this.ctx.audit.record(
       "system",

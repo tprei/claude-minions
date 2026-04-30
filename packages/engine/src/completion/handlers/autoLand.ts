@@ -1,20 +1,10 @@
 import type { Session } from "@minions/shared";
-import { simpleGit } from "simple-git";
 import type { EngineContext } from "../../context.js";
+import { commitsAhead } from "../../landing/commitsAhead.js";
 import { newEventId } from "../../util/ids.js";
 import { nowIso } from "../../util/time.js";
 
-export async function commitsAhead(
-  worktreePath: string,
-  branch: string,
-  baseBranch: string,
-): Promise<number> {
-  const git = simpleGit(worktreePath);
-  const range = `${baseBranch}..${branch}`;
-  const out = await git.raw(["rev-list", "--count", range]);
-  const n = Number.parseInt(out.trim(), 10);
-  return Number.isFinite(n) ? n : 0;
-}
+export { commitsAhead };
 
 export function autoLandHandler(ctx: EngineContext): (session: Session) => Promise<void> {
   const handler = async (session: Session): Promise<void> => {
