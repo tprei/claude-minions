@@ -12,6 +12,8 @@ import {
   getBreakpoint,
   subscribe as subscribePanelLayout,
 } from "../util/panelLayout.js";
+import { parseUrl } from "../routing/parseUrl.js";
+import { subscribeUrlChanges } from "../routing/urlState.js";
 
 const MAX_EVENTS = 500;
 const NEAR_BOTTOM_THRESHOLD = 120;
@@ -52,6 +54,10 @@ interface ViewProps {
 function TranscriptView({ events }: ViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [targetEventId, setTargetEventId] = useState<string | undefined>(
+    () => parseUrl().query["event"],
+  );
+  const lastAppliedTargetRef = useRef<string | undefined>(undefined);
 
   const visible = events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events;
   const toolCallIds = buildToolCallSet(visible);
@@ -68,6 +74,25 @@ function TranscriptView({ events }: ViewProps) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
   }, [visible, autoScroll]);
+
+  useEffect(() => {
+    return subscribeUrlChanges(() => {
+      setTargetEventId(parseUrl().query["event"]);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!targetEventId) return;
+    if (lastAppliedTargetRef.current === targetEventId) return;
+    if (visible.length === 0) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const el = container.querySelector(`#event-${CSS.escape(targetEventId)}`);
+    if (!el) return;
+    lastAppliedTargetRef.current = targetEventId;
+    setAutoScroll(false);
+    el.scrollIntoView({ block: "center" });
+  }, [targetEventId, visible]);
 
   let lastTurn = -1;
   const rows: ReactNode[] = [];
@@ -88,17 +113,23 @@ function TranscriptView({ events }: ViewProps) {
     if (event.kind === "tool_result") {
       const resultEvent = event as ToolResultEvent;
       if (!toolCallIds.has(resultEvent.toolCallId)) {
-        node = <OrphanedToolResult key={event.id} event={resultEvent} />;
+        node = <OrphanedToolResult event={resultEvent} />;
       } else {
         const Comp = pickComponent(event);
-        node = Comp ? <Comp key={event.id} event={event} /> : null;
+        node = Comp ? <Comp event={event} /> : null;
       }
     } else {
       const Comp = pickComponent(event);
-      node = Comp ? <Comp key={event.id} event={event} /> : null;
+      node = Comp ? <Comp event={event} /> : null;
     }
 
-    if (node) rows.push(node);
+    if (node) {
+      rows.push(
+        <div id={`event-${event.id}`} key={event.id}>
+          {node}
+        </div>,
+      );
+    }
   }
 
   return (
