@@ -141,6 +141,7 @@ export interface CreateSessionRequest {
   prompt: string;
   mode?: SessionMode;
   title?: string;
+  slug?: string;
   repoId?: string;
   baseBranch?: string;
   parentSlug?: string;
