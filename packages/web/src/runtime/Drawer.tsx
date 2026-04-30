@@ -3,6 +3,8 @@ import type { RuntimeConfigResponse, RuntimeOverrides } from "@minions/shared";
 import { AutoForm } from "./autoForm.js";
 import { Banner } from "../components/Banner.js";
 import { useApiMutation } from "../hooks/useApiMutation.js";
+import { useRuntimeStore } from "../store/runtimeStore.js";
+import { useConnectionStore } from "../connections/store.js";
 
 interface Props {
   api: {
@@ -19,6 +21,7 @@ export function RuntimeDrawer({ api, onClose }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [restartPending, setRestartPending] = useState(false);
+  const activeId = useConnectionStore(s => s.activeId);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -27,12 +30,15 @@ export function RuntimeDrawer({ api, onClose }: Props) {
       const res = await api.get("/api/config/runtime") as RuntimeConfigResponse;
       setConfig(res);
       setDraft(res.values);
+      if (activeId) {
+        useRuntimeStore.getState().replace(activeId, res.schema, res.values, res.effective);
+      }
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Failed to load config");
     } finally {
       setLoading(false);
     }
-  }, [api]);
+  }, [api, activeId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -78,6 +84,7 @@ export function RuntimeDrawer({ api, onClose }: Props) {
 
   const saving = saveMutation.loading;
   const mutationError = saveMutation.error;
+  const draftAdmissionUnlimited = draft["admissionUnlimited"] === true;
 
   return (
     <div className="flex flex-col h-full">
@@ -106,6 +113,18 @@ export function RuntimeDrawer({ api, onClose }: Props) {
             >
               ✕
             </button>
+          </div>
+        )}
+
+        {draftAdmissionUnlimited && (
+          <div
+            className="mx-4 mt-3 px-3 py-2 rounded border border-red-500/50 bg-red-900/25 text-red-200 text-xs"
+            role="alert"
+            data-testid="admission-unlimited-drawer-warning"
+          >
+            <span className="font-semibold">Admission caps disabled.</span>{" "}
+            The engine will accept any number of concurrent sessions; only the
+            OS bounds resource usage. Disable when ship load returns to normal.
           </div>
         )}
 

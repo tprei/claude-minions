@@ -132,4 +132,45 @@ describe("checkAdmission", () => {
     const decision = checkAdmission("interactive", emptyRunningByClass(), {});
     assert.equal(decision.admit, true);
   });
+
+  test("admissionUnlimited=true admits regardless of class counts", () => {
+    const runtime: RuntimeOverrides = {
+      admissionUnlimited: true,
+      admissionTotalSlots: 1,
+      admissionReservedInteractive: 0,
+      admissionLoopCap: 0,
+      admissionDagCap: 0,
+      admissionBackgroundCap: 0,
+    };
+    const saturated: RunningByClass = {
+      interactive: 50,
+      autonomous_loop: 50,
+      dag_task: 50,
+      background: 50,
+    };
+    for (const cls of ["interactive", "autonomous_loop", "dag_task", "background"] as const) {
+      const decision = checkAdmission(cls, saturated, runtime);
+      assert.equal(decision.admit, true, `${cls} should be admitted when unlimited=true`);
+    }
+  });
+
+  test("admissionUnlimited=false preserves existing cap behaviour", () => {
+    const runtime: RuntimeOverrides = {
+      admissionUnlimited: false,
+      admissionTotalSlots: 16,
+      admissionReservedInteractive: 2,
+      admissionLoopCap: 2,
+      admissionDagCap: 8,
+      admissionBackgroundCap: 8,
+    };
+    const decision = checkAdmission(
+      "autonomous_loop",
+      counts({ autonomous_loop: 2 }),
+      runtime,
+    );
+    assert.equal(decision.admit, false);
+    if (!decision.admit) {
+      assert.match(decision.reason, /loopCap/);
+    }
+  });
 });

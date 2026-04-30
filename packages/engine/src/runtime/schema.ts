@@ -162,6 +162,16 @@ const fields: RuntimeField[] = [
     applies: "live",
   },
   {
+    key: "admissionUnlimited",
+    label: "Admission unlimited (disable caps)",
+    description:
+      "Disable all admission caps. The engine will accept any number of concurrent sessions; only the OS bounds resource usage. Use only when host has plenty of CPU/RAM.",
+    type: "boolean",
+    default: false,
+    group: "admission",
+    applies: "live",
+  },
+  {
     key: "admissionTotalSlots",
     label: "Admission total slots",
     description: "Maximum total concurrent sessions across all classes",

@@ -101,4 +101,15 @@ describe("runtimeConfigSchema", () => {
     assert.equal(field.min, 0);
     assert.equal(field.applies, "live");
   });
+
+  it("admissionUnlimited is registered as a boolean defaulting to false in the admission group", () => {
+    const field = runtimeConfigSchema.fields.find(
+      (f) => f.key === "admissionUnlimited",
+    );
+    assert.ok(field, "admissionUnlimited field must be registered");
+    assert.equal(field.type, "boolean");
+    assert.equal(field.default, false);
+    assert.equal(field.group, "admission");
+    assert.equal(field.applies, "live");
+  });
 });

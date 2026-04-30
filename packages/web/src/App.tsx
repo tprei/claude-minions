@@ -18,6 +18,7 @@ import { AuditDrawer } from "./views/auditDrawer.js";
 import { ChatSurface } from "./chat/ChatSurface.js";
 import { MemoryDrawer } from "./memory/Drawer.js";
 import { RuntimeDrawer } from "./runtime/Drawer.js";
+import { AdmissionUnlimitedBanner } from "./runtime/AdmissionUnlimitedBanner.js";
 import { ResourceIndicator } from "./resource/Indicator.js";
 import { LoopsDrawer } from "./views/loopsDrawer.js";
 import { VariantsDrawer } from "./views/variantsDrawer.js";
@@ -218,6 +219,8 @@ export function App(): ReactElement {
         onClose={() => setPaletteOpen(false)}
         actions={paletteActions}
       />
+
+      <AdmissionUnlimitedBanner onOpenRuntime={() => setRuntimeOpen(true)} />
 
       <OfflineBanner />
 

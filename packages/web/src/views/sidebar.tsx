@@ -4,6 +4,7 @@ import { useConnectionStore } from "../connections/store.js";
 import { useVersionStore } from "../store/version.js";
 import { useMemoryStore, EMPTY_MEMORIES } from "../store/memoryStore.js";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
+import { useRuntimeStore } from "../store/runtimeStore.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl, type ViewKind } from "../routing/parseUrl.js";
 import { cx } from "../util/classnames.js";
@@ -96,6 +97,9 @@ export function Sidebar({
     for (const s of sessionsMap.values()) if (s.attention && s.attention.length > 0) n++;
     return n;
   }, [sessionsMap]);
+  const admissionUnlimited = useRuntimeStore(s =>
+    activeId ? s.byConnection.get(activeId)?.effective?.["admissionUnlimited"] === true : false,
+  );
 
   function navigate(view: ViewKind): void {
     if (!activeId) return;
@@ -228,7 +232,17 @@ export function Sidebar({
         )}
         {features.has("runtime-overrides") && (
           <button onClick={onOpenRuntime} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
-            <span>⚙</span> Runtime
+            <span>⚙</span>
+            <span className="flex-1 text-left">Runtime</span>
+            {admissionUnlimited && (
+              <span
+                className="pill bg-red-900/60 text-red-200 text-[10px] border border-red-700/60"
+                title="Admission caps disabled — engine accepts unlimited concurrent sessions"
+                data-testid="admission-unlimited-pill"
+              >
+                ∞
+              </span>
+            )}
           </button>
         )}
         {features.has("audit") && (
