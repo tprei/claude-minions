@@ -17,6 +17,7 @@ describe("runtimeConfigSchema", () => {
     "judgeRubricDefault",
     "sseHeartbeatSec",
     "rebaseAutoResolverEnabled",
+    "editorOpenEnabled",
     "landingDefaultStrategy",
   ];
 

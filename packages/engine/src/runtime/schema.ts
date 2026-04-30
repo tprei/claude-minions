@@ -124,6 +124,16 @@ const fields: RuntimeField[] = [
     applies: "live",
   },
   {
+    key: "editorOpenEnabled",
+    label: "Editor open enabled",
+    description:
+      "Allow the session header's 'Open in editor' button to spawn a local editor process pointed at the worktree. Security-sensitive — only enable when the engine runs on a trusted host.",
+    type: "boolean",
+    default: true,
+    group: "execution",
+    applies: "live",
+  },
+  {
     key: "landingDefaultStrategy",
     label: "Default landing strategy",
     description: "Default merge strategy when landing a session",
