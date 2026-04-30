@@ -9,17 +9,17 @@ import { RestackManager } from "./restack.js";
 import { formatStackComment } from "./stackComment.js";
 import { pushBranch as defaultPushBranch } from "./push.js";
 import { ensurePullRequest as defaultEnsurePullRequest, type EnsurePullRequestArgs } from "./openPR.js";
+import {
+  createEditPullRequestBase,
+  defaultRunGh,
+  type EditPullRequestBaseFn,
+} from "./editPRBase.js";
 import { EngineError } from "../errors.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
 
 export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
 export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
-export type EditPullRequestBaseFn = (args: {
-  cwd: string;
-  prNumber: number;
-  newBase: string;
-  log: Logger;
-}) => Promise<void>;
+export type { EditPullRequestBaseFn } from "./editPRBase.js";
 
 export interface SessionStateUpdater {
   update(slug: string, patch: { baseBranch?: string }): void;
@@ -56,9 +56,7 @@ function runGh(args: string[], opts: { cwd: string; log: Logger }): Promise<stri
   });
 }
 
-const defaultEditPullRequestBase: EditPullRequestBaseFn = async ({ cwd, prNumber, newBase, log }) => {
-  await runGh(["pr", "edit", String(prNumber), "--base", newBase], { cwd, log });
-};
+const defaultEditPullRequestBase: EditPullRequestBaseFn = createEditPullRequestBase(defaultRunGh);
 
 export class LandingManager {
   private readonly pushBranch: PushBranchFn;
@@ -360,23 +358,31 @@ export class LandingManager {
       !!child.pr &&
       child.pr.state === "open";
 
-    if (onlineFlow && child.pr && child.worktreePath) {
+    if (onlineFlow && child.pr && child.worktreePath && repo?.remote) {
       try {
         await this.editPullRequestBase({
           cwd: child.worktreePath,
           prNumber: child.pr.number,
           newBase,
+          remote: repo.remote,
           log: this.log,
         });
         if (this.sessionRepo) {
           this.sessionRepo.setPr(child.slug, { ...child.pr, base: newBase });
         }
       } catch (err) {
+        const message = (err as Error).message;
         this.log.warn("failed to update child PR base on GitHub", {
           child: child.slug,
           prNumber: child.pr.number,
-          err: (err as Error).message,
+          err: message,
         });
+        this.ctx.audit.record(
+          "system",
+          "landing.pr.edit_base.failed",
+          { kind: "session", id: child.slug },
+          { prNumber: child.pr.number, newBase, error: message },
+        );
       }
     }
 
