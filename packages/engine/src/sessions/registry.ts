@@ -370,7 +370,7 @@ export class SessionRegistry {
   async create(req: CreateSessionRequest): Promise<Session> {
     const { db, bus, log, ctx, workspaceDir } = this.deps;
 
-    const slug = newSlug();
+    const slug = req.slug ? this.reserveSuggestedSlug(req.slug) : newSlug();
     const now = nowIso();
     const mode: SessionMode = req.mode ?? "task";
     const bucket = req.bucket ?? inferBucket({ prompt: req.prompt, mode, metadata: req.metadata });
@@ -498,6 +498,44 @@ export class SessionRegistry {
     const row = this.getSessionRow(parentSlug);
     if (!row) return null;
     return row.root_slug ?? parentSlug;
+  }
+
+  private reserveSuggestedSlug(suggested: string): string {
+    const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+    const MAX_LEN = 40;
+
+    if (
+      suggested.length < 1 ||
+      suggested.length > MAX_LEN ||
+      !SLUG_PATTERN.test(suggested)
+    ) {
+      throw new EngineError("bad_request", `Invalid slug: ${suggested}`, {
+        slug: suggested,
+      });
+    }
+
+    if (this.getSessionRow(suggested) === null) {
+      return suggested;
+    }
+
+    for (let n = 2; n <= 50; n += 1) {
+      const suffix = `-${n}`;
+      let base = suggested;
+      if (base.length + suffix.length > MAX_LEN) {
+        base = base.slice(0, MAX_LEN - suffix.length);
+        if (base.endsWith("-")) base = base.slice(0, -1);
+      }
+      const candidate = `${base}${suffix}`;
+      if (this.getSessionRow(candidate) === null) {
+        return candidate;
+      }
+    }
+
+    throw new EngineError(
+      "conflict",
+      `Could not allocate unique slug from suggestion: ${suggested}`,
+      { slug: suggested },
+    );
   }
 
   private async writeMcpConfig(slug: string, _worktreePath: string): Promise<string> {
