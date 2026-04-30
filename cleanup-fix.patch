@@ -1,0 +1,778 @@
+diff --git a/packages/engine/package.json b/packages/engine/package.json
+index d56025e..76d403e 100644
+--- a/packages/engine/package.json
++++ b/packages/engine/package.json
+@@ -7,7 +7,7 @@
+   "bin": { "minions-engine": "./dist/cli.js" },
+   "scripts": {
+     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+-    "dev": "tsx watch src/cli.ts",
++    "dev": "NODE_OPTIONS=--max-old-space-size=8192 tsx watch src/cli.ts",
+     "start": "node dist/cli.js",
+     "typecheck": "tsc -p tsconfig.json --noEmit",
+     "test": "node --import tsx --test --test-reporter=spec",
+diff --git a/packages/engine/src/cleanup/__tests__/routes.test.ts b/packages/engine/src/cleanup/__tests__/routes.test.ts
+index ba11653..6f60df8 100644
+--- a/packages/engine/src/cleanup/__tests__/routes.test.ts
++++ b/packages/engine/src/cleanup/__tests__/routes.test.ts
+@@ -226,9 +226,80 @@ describe("cleanup routes", () => {
+     });
+     assert.equal(res.statusCode, 200);
+     const body = res.json() as CleanupCandidatesResponse;
+-    assert.equal(body.truncated, false);
++    assert.equal(body.nextCursor, null);
+     assert.equal(body.items.length, 1);
+     assert.equal(body.items[0]!.slug, h.completedSlug);
++    assert.equal(
++      "worktreeBytes" in (body.items[0] as unknown as Record<string, unknown>),
++      false,
++      "list endpoint must not return worktree byte sizes",
++    );
++  });
++
++  test("GET /api/cleanup/candidates rejects limit > 500", async () => {
++    const res = await h.app.inject({
++      method: "GET",
++      url: "/api/cleanup/candidates?olderThanDays=0&limit=501",
++    });
++    assert.equal(res.statusCode, 400);
++  });
++
++  test("GET /api/cleanup/candidates paginates 500 sessions in 100-row pages", async () => {
++    const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
++    for (let i = 0; i < 500; i++) {
++      insertSession(h.db, `bulk-${i.toString().padStart(4, "0")}`, "completed", tenDaysAgo, null, null, null);
++    }
++
++    const t0 = Date.now();
++    const first = await h.app.inject({
++      method: "GET",
++      url: "/api/cleanup/candidates?olderThanDays=0&limit=100",
++    });
++    const elapsed = Date.now() - t0;
++    assert.equal(first.statusCode, 200);
++    const firstBody = first.json() as CleanupCandidatesResponse;
++    assert.equal(firstBody.items.length, 100, "first page must hold 100 rows");
++    assert.ok(firstBody.nextCursor, "first page must yield a cursor for next page");
++    assert.ok(elapsed < 2000, `first page should return quickly without du, took ${elapsed}ms`);
++
++    const seen = new Set(firstBody.items.map((c) => c.slug));
++    async function fetchPage(c: string): Promise<CleanupCandidatesResponse> {
++      const r = await h.app.inject({
++        method: "GET",
++        url: `/api/cleanup/candidates?olderThanDays=0&limit=100&cursor=${encodeURIComponent(c)}`,
++      });
++      assert.equal(r.statusCode, 200);
++      return r.json() as CleanupCandidatesResponse;
++    }
++
++    let cursor: string | null = firstBody.nextCursor;
++    let pages = 1;
++    while (cursor !== null) {
++      const body = await fetchPage(cursor);
++      for (const item of body.items) {
++        assert.equal(seen.has(item.slug), false, `duplicate slug ${item.slug} across pages`);
++        seen.add(item.slug);
++      }
++      cursor = body.nextCursor;
++      pages++;
++      if (pages > 20) throw new Error("pagination did not terminate");
++    }
++
++    assert.ok(seen.size >= 500, `expected at least 500 unique slugs, got ${seen.size}`);
++  });
++
++  test("POST /api/cleanup/preview computes selection size within budget", async () => {
++    const t0 = Date.now();
++    const res = await h.app.inject({
++      method: "POST",
++      url: "/api/cleanup/preview",
++      payload: { slugs: [h.completedSlug], removeWorktree: true },
++    });
++    const elapsed = Date.now() - t0;
++    assert.equal(res.statusCode, 200);
++    const body = res.json() as CleanupPreviewResponse;
++    assert.ok(body.totalBytes > 0, `expected totalBytes > 0, got ${body.totalBytes}`);
++    assert.ok(elapsed < 30_000, `preview must complete within 30s, took ${elapsed}ms`);
+   });
+ 
+   test("POST /api/cleanup/preview marks the running session as ineligible", async () => {
+diff --git a/packages/engine/src/cleanup/index.ts b/packages/engine/src/cleanup/index.ts
+index 5c26e65..d24aabd 100644
+--- a/packages/engine/src/cleanup/index.ts
++++ b/packages/engine/src/cleanup/index.ts
+@@ -1,7 +1,9 @@
+ import path from "node:path";
+ import fs from "node:fs/promises";
++import pLimit from "p-limit";
+ import type {
+   CleanupCandidate,
++  CleanupCandidatesResponse,
+   CleanupableStatus,
+   CleanupExecuteError,
+   CleanupExecuteRequest,
+@@ -16,8 +18,15 @@ import type { Logger } from "../logger.js";
+ import { removeWorktree } from "../workspace/worktree.js";
+ import { diskUsage } from "../util/diskUsage.js";
+ 
++export interface SelectCandidatesOptions {
++  olderThanDays: number;
++  statuses: CleanupableStatus[];
++  limit: number;
++  cursor?: string | null;
++}
++
+ export interface CleanupSubsystem {
+-  selectCandidates(opts: { olderThanDays: number; statuses: CleanupableStatus[] }): Promise<CleanupCandidate[]>;
++  selectCandidates(opts: SelectCandidatesOptions): Promise<CleanupCandidatesResponse>;
+   preview(req: CleanupPreviewRequest): Promise<CleanupPreviewResponse>;
+   execute(req: CleanupExecuteRequest): Promise<CleanupExecuteResponse>;
+ }
+@@ -39,46 +48,105 @@ const INELIGIBLE_RUNTIME_STATUSES: ReadonlySet<string> = new Set([
+ ]);
+ 
+ const DAY_MS = 86_400_000;
++const PREVIEW_DU_CONCURRENCY = 4;
++const PREVIEW_DU_TIMEOUT_MS = 5_000;
++
++interface PageCursorShape {
++  updatedAt: string;
++  slug: string;
++}
++
++function encodeCursor(c: PageCursorShape): string {
++  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
++}
++
++function decodeCursor(raw: string): PageCursorShape | null {
++  try {
++    const json = Buffer.from(raw, "base64url").toString("utf8");
++    const parsed = JSON.parse(json) as { updatedAt?: unknown; slug?: unknown };
++    if (typeof parsed.updatedAt !== "string" || typeof parsed.slug !== "string") return null;
++    return { updatedAt: parsed.updatedAt, slug: parsed.slug };
++  } catch {
++    return null;
++  }
++}
++
++async function diskUsageWithTimeout(absPath: string, timeoutMs: number): Promise<number> {
++  let timer: NodeJS.Timeout | null = null;
++  const timeout = new Promise<number>((resolve) => {
++    timer = setTimeout(() => resolve(0), timeoutMs);
++  });
++  try {
++    const result = await Promise.race([
++      diskUsage(absPath).then((r) => r.bytes),
++      timeout,
++    ]);
++    return result;
++  } finally {
++    if (timer) clearTimeout(timer);
++  }
++}
+ 
+ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsystem {
+   const { sessions, audit, workspaceDir, reposDir, worktreeRoot, log } = deps;
+ 
+-  async function selectCandidates(opts: {
+-    olderThanDays: number;
+-    statuses: CleanupableStatus[];
+-  }): Promise<CleanupCandidate[]> {
+-    const result = sessions.listPaged({ status: opts.statuses, limit: 250 });
+-    const cutoff = Date.now() - opts.olderThanDays * DAY_MS;
+-
+-    const eligible: Session[] = [];
+-    for (const s of result.items) {
+-      if (!s.completedAt) continue;
+-      const ts = Date.parse(s.completedAt);
+-      if (Number.isNaN(ts)) continue;
+-      if (ts > cutoff) continue;
+-      eligible.push(s);
++  async function selectCandidates(
++    opts: SelectCandidatesOptions,
++  ): Promise<CleanupCandidatesResponse> {
++    const cutoff =
++      opts.olderThanDays > 0 ? Date.now() - opts.olderThanDays * DAY_MS : Number.POSITIVE_INFINITY;
++    const noAgeFilter = opts.olderThanDays === 0;
++
++    const items: CleanupCandidate[] = [];
++    let cursor: PageCursorShape | undefined = opts.cursor
++      ? decodeCursor(opts.cursor) ?? undefined
++      : undefined;
++
++    let nextCursor: PageCursorShape | undefined;
++    let exhausted = false;
++
++    while (items.length < opts.limit && !exhausted) {
++      const page = sessions.listPaged({
++        status: opts.statuses,
++        limit: opts.limit,
++        cursor,
++      });
++
++      for (const s of page.items) {
++        if (items.length >= opts.limit) break;
++        if (!noAgeFilter) {
++          if (!s.completedAt) continue;
++          const ts = Date.parse(s.completedAt);
++          if (Number.isNaN(ts)) continue;
++          if (ts > cutoff) continue;
++        }
++        items.push(toCandidate(s));
++        nextCursor = { updatedAt: s.updatedAt, slug: s.slug };
++      }
++
++      if (!page.nextCursor) {
++        exhausted = true;
++        if (items.length < opts.limit) {
++          nextCursor = undefined;
++        }
++        break;
++      }
++      cursor = page.nextCursor;
+     }
+ 
+-    const usages = await Promise.all(
+-      eligible.map((s) =>
+-        s.worktreePath ? diskUsage(s.worktreePath) : Promise.resolve({ bytes: 0, missing: true }),
+-      ),
+-    );
+-
+-    return eligible.map((s, i) => ({
+-      slug: s.slug,
+-      title: s.title,
+-      status: s.status,
+-      completedAt: s.completedAt ?? null,
+-      worktreePath: s.worktreePath ?? null,
+-      worktreeBytes: usages[i]!.bytes,
+-      branch: s.branch ?? null,
+-    }));
++    if (exhausted && items.length < opts.limit) {
++      nextCursor = undefined;
++    }
++
++    return {
++      items,
++      nextCursor: nextCursor ? encodeCursor(nextCursor) : null,
++    };
+   }
+ 
+   async function preview(req: CleanupPreviewRequest): Promise<CleanupPreviewResponse> {
+     const ineligible: { slug: string; reason: string }[] = [];
+-    let totalBytes = 0;
++    const sizeTasks: Array<() => Promise<number>> = [];
+ 
+     for (const slug of req.slugs) {
+       const s = sessions.get(slug);
+@@ -91,11 +159,15 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
+         continue;
+       }
+       if (req.removeWorktree && s.worktreePath) {
+-        const du = await diskUsage(s.worktreePath);
+-        totalBytes += du.bytes;
++        const wt = s.worktreePath;
++        sizeTasks.push(() => diskUsageWithTimeout(wt, PREVIEW_DU_TIMEOUT_MS));
+       }
+     }
+ 
++    const limiter = pLimit(PREVIEW_DU_CONCURRENCY);
++    const sizes = await Promise.all(sizeTasks.map((task) => limiter(task)));
++    const totalBytes = sizes.reduce((acc, n) => acc + n, 0);
++
+     return {
+       count: req.slugs.length - ineligible.length,
+       totalBytes,
+@@ -125,8 +197,7 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
+ 
+       let measuredBytes = 0;
+       if (req.removeWorktree && s.worktreePath) {
+-        const du = await diskUsage(s.worktreePath);
+-        measuredBytes = du.bytes;
++        measuredBytes = await diskUsageWithTimeout(s.worktreePath, PREVIEW_DU_TIMEOUT_MS);
+       }
+ 
+       let worktreeRemoved = false;
+@@ -182,3 +253,14 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
+ 
+   return { selectCandidates, preview, execute };
+ }
++
++function toCandidate(s: Session): CleanupCandidate {
++  return {
++    slug: s.slug,
++    title: s.title,
++    status: s.status,
++    completedAt: s.completedAt ?? null,
++    worktreePath: s.worktreePath ?? null,
++    branch: s.branch ?? null,
++  };
++}
+diff --git a/packages/engine/src/cleanup/routes.ts b/packages/engine/src/cleanup/routes.ts
+index f7acd42..d6b6003 100644
+--- a/packages/engine/src/cleanup/routes.ts
++++ b/packages/engine/src/cleanup/routes.ts
+@@ -1,18 +1,20 @@
+ import type { FastifyInstance, FastifyRequest } from "fastify";
+ import {
+   CLEANUPABLE_STATUSES,
+-  type CleanupCandidatesResponse,
++  CLEANUP_DEFAULT_LIMIT,
++  CLEANUP_MAX_LIMIT,
+   type CleanupableStatus,
+ } from "@minions/shared";
+ import type { EngineContext } from "../context.js";
+ import { EngineError } from "../errors.js";
+ 
+-const MAX_CANDIDATES = 200;
+ const STATUS_SET: ReadonlySet<string> = new Set(CLEANUPABLE_STATUSES);
+ 
+ interface CandidatesQuery {
+   olderThanDays?: string;
+   statuses?: string;
++  limit?: string;
++  cursor?: string;
+ }
+ 
+ function parseStatuses(raw: string): CleanupableStatus[] {
+@@ -35,6 +37,22 @@ function parseOlderThanDays(raw: string): number {
+   return n;
+ }
+ 
++function parseLimit(raw: string | undefined): number {
++  if (raw === undefined) return CLEANUP_DEFAULT_LIMIT;
++  const n = Number(raw);
++  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
++    throw new EngineError("bad_request", "limit must be a positive integer");
++  }
++  if (n > CLEANUP_MAX_LIMIT) {
++    throw new EngineError(
++      "bad_request",
++      `limit must be <= ${CLEANUP_MAX_LIMIT}`,
++      { max: CLEANUP_MAX_LIMIT, requested: n },
++    );
++  }
++  return n;
++}
++
+ function validateBody(body: unknown): { slugs: string[]; removeWorktree: boolean } {
+   if (!body || typeof body !== "object") {
+     throw new EngineError("bad_request", "Body must be an object");
+@@ -61,12 +79,16 @@ export function registerCleanupRoutes(app: FastifyInstance, ctx: EngineContext):
+       const statuses = req.query.statuses
+         ? parseStatuses(req.query.statuses)
+         : [...CLEANUPABLE_STATUSES];
++      const limit = parseLimit(req.query.limit);
++      const cursor = req.query.cursor ?? null;
+ 
+-      const all = await ctx.cleanup.selectCandidates({ olderThanDays, statuses });
+-      const truncated = all.length > MAX_CANDIDATES;
+-      const items = truncated ? all.slice(0, MAX_CANDIDATES) : all;
+-      const body: CleanupCandidatesResponse = { items, truncated };
+-      return reply.send(body);
++      const result = await ctx.cleanup.selectCandidates({
++        olderThanDays,
++        statuses,
++        limit,
++        cursor,
++      });
++      return reply.send(result);
+     },
+   );
+ 
+diff --git a/packages/engine/src/context.ts b/packages/engine/src/context.ts
+index adc7bff..1242595 100644
+--- a/packages/engine/src/context.ts
++++ b/packages/engine/src/context.ts
+@@ -160,7 +160,9 @@ export interface EngineContext {
+     selectCandidates: (opts: {
+       olderThanDays: number;
+       statuses: import("@minions/shared").CleanupableStatus[];
+-    }) => Promise<import("@minions/shared").CleanupCandidate[]>;
++      limit: number;
++      cursor?: string | null;
++    }) => Promise<import("@minions/shared").CleanupCandidatesResponse>;
+     preview: (
+       req: import("@minions/shared").CleanupPreviewRequest,
+     ) => Promise<import("@minions/shared").CleanupPreviewResponse>;
+diff --git a/packages/shared/src/cleanup.ts b/packages/shared/src/cleanup.ts
+index 062aab2..2ea2d28 100644
+--- a/packages/shared/src/cleanup.ts
++++ b/packages/shared/src/cleanup.ts
+@@ -3,19 +3,21 @@ import type { SessionStatus } from "./session.js";
+ export const CLEANUPABLE_STATUSES = ["completed", "failed", "cancelled"] as const;
+ export type CleanupableStatus = (typeof CLEANUPABLE_STATUSES)[number];
+ 
++export const CLEANUP_DEFAULT_LIMIT = 100;
++export const CLEANUP_MAX_LIMIT = 500;
++
+ export interface CleanupCandidate {
+   slug: string;
+   title: string;
+   status: SessionStatus;
+   completedAt: string | null;
+   worktreePath: string | null;
+-  worktreeBytes: number;
+   branch: string | null;
+ }
+ 
+ export interface CleanupCandidatesResponse {
+   items: CleanupCandidate[];
+-  truncated: boolean;
++  nextCursor: string | null;
+ }
+ 
+ export interface CleanupPreviewRequest {
+diff --git a/packages/web/src/transport/rest.ts b/packages/web/src/transport/rest.ts
+index 1d0ef81..aa08fc1 100644
+--- a/packages/web/src/transport/rest.ts
++++ b/packages/web/src/transport/rest.ts
+@@ -357,10 +357,22 @@ export interface UploadResponse {
+ 
+ export function fetchCleanupCandidates(
+   conn: Connection,
+-  opts: { olderThanDays: number; statuses: CleanupableStatus[] },
++  opts: {
++    olderThanDays: number;
++    statuses: CleanupableStatus[];
++    limit?: number;
++    cursor?: string | null;
++  },
+ ): Promise<CleanupCandidatesResponse> {
+-  const qs = `olderThanDays=${opts.olderThanDays}&statuses=${opts.statuses.join(",")}`;
+-  return apiFetch<CleanupCandidatesResponse>(conn, `/api/cleanup/candidates?${qs}`);
++  const params = new URLSearchParams();
++  params.set("olderThanDays", String(opts.olderThanDays));
++  params.set("statuses", opts.statuses.join(","));
++  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
++  if (opts.cursor) params.set("cursor", opts.cursor);
++  return apiFetch<CleanupCandidatesResponse>(
++    conn,
++    `/api/cleanup/candidates?${params.toString()}`,
++  );
+ }
+ 
+ export function previewCleanup(
+diff --git a/packages/web/src/views/cleanup/CandidateTable.tsx b/packages/web/src/views/cleanup/CandidateTable.tsx
+index 9966371..e971616 100644
+--- a/packages/web/src/views/cleanup/CandidateTable.tsx
++++ b/packages/web/src/views/cleanup/CandidateTable.tsx
+@@ -1,6 +1,6 @@
+ import type { ReactElement } from "react";
+ import type { CleanupCandidate, SessionStatus } from "@minions/shared";
+-import { fmtBytes, relTime } from "../../util/time.js";
++import { relTime } from "../../util/time.js";
+ import { cx } from "../../util/classnames.js";
+ 
+ interface Props {
+@@ -52,7 +52,6 @@ export function CandidateTable({ candidates, selected, onToggle, onToggleAll }:
+             <th className="text-left px-3 py-2 font-normal">status</th>
+             <th className="text-left px-3 py-2 font-normal">completed</th>
+             <th className="text-left px-3 py-2 font-normal">branch</th>
+-            <th className="text-right px-3 py-2 font-normal">bytes</th>
+           </tr>
+         </thead>
+         <tbody>
+@@ -88,9 +87,6 @@ export function CandidateTable({ candidates, selected, onToggle, onToggleAll }:
+                 <td className="px-3 py-2 text-xs font-mono text-fg-muted truncate max-w-[10rem]">
+                   {c.branch ?? "—"}
+                 </td>
+-                <td className="px-3 py-2 text-xs font-mono text-fg text-right">
+-                  {fmtBytes(c.worktreeBytes)}
+-                </td>
+               </tr>
+             );
+           })}
+diff --git a/packages/web/src/views/cleanup/CleanupCard.tsx b/packages/web/src/views/cleanup/CleanupCard.tsx
+index fadcaae..53ab301 100644
+--- a/packages/web/src/views/cleanup/CleanupCard.tsx
++++ b/packages/web/src/views/cleanup/CleanupCard.tsx
+@@ -11,7 +11,11 @@ import { Modal } from "../../components/Modal.js";
+ import { fmtBytes } from "../../util/time.js";
+ import { useApiMutation } from "../../hooks/useApiMutation.js";
+ import { useSessionStore } from "../../store/sessionStore.js";
+-import { fetchCleanupCandidates, executeCleanup } from "../../transport/rest.js";
++import {
++  fetchCleanupCandidates,
++  executeCleanup,
++  previewCleanup,
++} from "../../transport/rest.js";
+ import { CandidateTable } from "./CandidateTable.js";
+ 
+ interface ApiClient {
+@@ -26,12 +30,15 @@ interface Props {
+   conn: Connection;
+ }
+ 
+-interface FilterState {
++interface FetchArgs {
+   olderThanDays: number;
+   statuses: Set<CleanupableStatus>;
++  cursor: string | null;
++  append: boolean;
+ }
+ 
+ const DEBOUNCE_MS = 300;
++const PAGE_SIZE = 100;
+ 
+ export function CleanupCard({ conn }: Props): ReactElement {
+   const [olderThanDays, setOlderThanDays] = useState<number>(7);
+@@ -40,32 +47,53 @@ export function CleanupCard({ conn }: Props): ReactElement {
+   );
+   const [candidates, setCandidates] = useState<CleanupCandidate[]>([]);
+   const [selected, setSelected] = useState<Set<string>>(new Set());
+-  const [truncated, setTruncated] = useState(false);
++  const [nextCursor, setNextCursor] = useState<string | null>(null);
+   const [removeWorktree, setRemoveWorktree] = useState(true);
+   const [confirmOpen, setConfirmOpen] = useState(false);
+   const [lastResult, setLastResult] = useState<CleanupExecuteResponse | null>(null);
+   const [errorsExpanded, setErrorsExpanded] = useState(false);
++  const [selectionBytes, setSelectionBytes] = useState<number | null>(null);
+ 
+   const fetchMutation = useApiMutation(
+-    async (filter: FilterState) =>
+-      fetchCleanupCandidates(conn, {
+-        olderThanDays: filter.olderThanDays,
+-        statuses: Array.from(filter.statuses),
+-      }),
++    async (args: FetchArgs) => {
++      const res = await fetchCleanupCandidates(conn, {
++        olderThanDays: args.olderThanDays,
++        statuses: Array.from(args.statuses),
++        limit: PAGE_SIZE,
++        cursor: args.cursor,
++      });
++      return { res, append: args.append };
++    },
+     {
+-      onSuccess: (res) => {
+-        setCandidates(res.items);
+-        setTruncated(res.truncated);
+-        setSelected((prev) => {
+-          const visible = new Set(res.items.map((i) => i.slug));
+-          const next = new Set<string>();
+-          for (const slug of prev) if (visible.has(slug)) next.add(slug);
+-          return next;
+-        });
++      onSuccess: ({ res, append }) => {
++        setNextCursor(res.nextCursor);
++        if (append) {
++          setCandidates((prev) => {
++            const seen = new Set(prev.map((c) => c.slug));
++            const merged = [...prev];
++            for (const c of res.items) if (!seen.has(c.slug)) merged.push(c);
++            return merged;
++          });
++        } else {
++          setCandidates(res.items);
++          setSelected((prev) => {
++            const visible = new Set(res.items.map((i) => i.slug));
++            const next = new Set<string>();
++            for (const slug of prev) if (visible.has(slug)) next.add(slug);
++            return next;
++          });
++        }
+       },
+     },
+   );
+ 
++  const previewMutation = useApiMutation(
++    async (args: { slugs: string[]; removeWorktree: boolean }) => previewCleanup(conn, args),
++    {
++      onSuccess: (res) => setSelectionBytes(res.totalBytes),
++    },
++  );
++
+   const executeMutation = useApiMutation(
+     async (args: { slugs: string[]; removeWorktree: boolean }) =>
+       executeCleanup(conn, args),
+@@ -73,8 +101,9 @@ export function CleanupCard({ conn }: Props): ReactElement {
+       onSuccess: (res) => {
+         setLastResult(res);
+         setSelected(new Set());
++        setSelectionBytes(null);
+         setConfirmOpen(false);
+-        void fetchMutation.run({ olderThanDays, statuses });
++        void fetchMutation.run({ olderThanDays, statuses, cursor: null, append: false });
+       },
+     },
+   );
+@@ -82,8 +111,9 @@ export function CleanupCard({ conn }: Props): ReactElement {
+   const fetchRun = fetchMutation.run;
+ 
+   useEffect(() => {
++    setSelectionBytes(null);
+     const timer = setTimeout(() => {
+-      void fetchRun({ olderThanDays, statuses });
++      void fetchRun({ olderThanDays, statuses, cursor: null, append: false });
+     }, DEBOUNCE_MS);
+     return () => clearTimeout(timer);
+   }, [olderThanDays, statuses, fetchRun]);
+@@ -120,12 +150,6 @@ export function CleanupCard({ conn }: Props): ReactElement {
+     return unsub;
+   }, [conn.id]);
+ 
+-  const totalSelectedBytes = useMemo(() => {
+-    let sum = 0;
+-    for (const c of candidates) if (selected.has(c.slug)) sum += c.worktreeBytes;
+-    return sum;
+-  }, [candidates, selected]);
+-
+   const toggleStatus = useCallback((s: CleanupableStatus) => {
+     setStatuses((prev) => {
+       const next = new Set(prev);
+@@ -136,6 +160,7 @@ export function CleanupCard({ conn }: Props): ReactElement {
+   }, []);
+ 
+   const toggleRow = useCallback((slug: string) => {
++    setSelectionBytes(null);
+     setSelected((prev) => {
+       const next = new Set(prev);
+       if (next.has(slug)) next.delete(slug);
+@@ -144,9 +169,23 @@ export function CleanupCard({ conn }: Props): ReactElement {
+     });
+   }, []);
+ 
+-  const toggleAll = useCallback((checked: boolean) => {
+-    setSelected(() => (checked ? new Set(candidates.map((c) => c.slug)) : new Set()));
+-  }, [candidates]);
++  const toggleAll = useCallback(
++    (checked: boolean) => {
++      setSelectionBytes(null);
++      setSelected(() => (checked ? new Set(candidates.map((c) => c.slug)) : new Set()));
++    },
++    [candidates],
++  );
++
++  const onLoadMore = useCallback(() => {
++    if (!nextCursor || fetchMutation.loading) return;
++    void fetchRun({ olderThanDays, statuses, cursor: nextCursor, append: true });
++  }, [fetchRun, fetchMutation.loading, nextCursor, olderThanDays, statuses]);
++
++  const onComputeSize = useCallback(() => {
++    if (selected.size === 0) return;
++    void previewMutation.run({ slugs: Array.from(selected), removeWorktree });
++  }, [previewMutation, selected, removeWorktree]);
+ 
+   const onConfirm = useCallback(async () => {
+     await executeMutation.run({ slugs: Array.from(selected), removeWorktree });
+@@ -154,6 +193,9 @@ export function CleanupCard({ conn }: Props): ReactElement {
+ 
+   const selectedSlugs = useMemo(() => Array.from(selected), [selected]);
+ 
++  const isInitialLoading = fetchMutation.loading && candidates.length === 0;
++  const isPagingLoading = fetchMutation.loading && candidates.length > 0;
++
+   return (
+     <div id="cleanup" className="card p-4 flex flex-col gap-3 md:col-span-2 scroll-mt-4">
+       <div className="flex items-center justify-between gap-3 flex-wrap">
+@@ -191,25 +233,51 @@ export function CleanupCard({ conn }: Props): ReactElement {
+             </label>
+           ))}
+         </div>
+-        {fetchMutation.loading && (
+-          <span className="text-xs text-fg-subtle">loading…</span>
+-        )}
+-        {truncated && (
+-          <span className="pill bg-amber-900/30 text-amber-300 text-[10px]">truncated</span>
+-        )}
+       </div>
+ 
+-      <CandidateTable
+-        candidates={candidates}
+-        selected={selected}
+-        onToggle={toggleRow}
+-        onToggleAll={toggleAll}
+-      />
++      {isInitialLoading ? (
++        <div className="text-xs text-fg-subtle text-center py-6 border border-dashed border-border rounded-lg">
++          Loading candidates…
++        </div>
++      ) : (
++        <CandidateTable
++          candidates={candidates}
++          selected={selected}
++          onToggle={toggleRow}
++          onToggleAll={toggleAll}
++        />
++      )}
++
++      {nextCursor && !isInitialLoading && (
++        <div className="flex justify-center pt-1">
++          <Button variant="ghost" onClick={onLoadMore} disabled={fetchMutation.loading}>
++            {isPagingLoading ? "Loading…" : "Load more"}
++          </Button>
++        </div>
++      )}
+ 
+       <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
+-        <div className="text-xs text-fg-muted">
+-          <span className="text-fg font-mono">{selected.size}</span> sessions selected —{" "}
+-          <span className="text-fg font-mono">{fmtBytes(totalSelectedBytes)}</span> to reclaim
++        <div className="text-xs text-fg-muted flex items-center gap-2 flex-wrap">
++          <span>
++            <span className="text-fg font-mono">{selected.size}</span> sessions selected
++          </span>
++          {selectionBytes !== null && (
++            <span>
++              — <span className="text-fg font-mono">{fmtBytes(selectionBytes)}</span> to reclaim
++            </span>
++          )}
++          {selected.size > 0 && (
++            <Button
++              variant="ghost"
++              onClick={onComputeSize}
++              disabled={previewMutation.loading}
++            >
++              {previewMutation.loading ? "Computing…" : "Compute selection size"}
++            </Button>
++          )}
++          {previewMutation.error && (
++            <span className="text-err text-[10px]">{previewMutation.error.message}</span>
++          )}
+         </div>
+         <div className="flex items-center gap-3">
+           <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer">
+@@ -268,7 +336,7 @@ export function CleanupCard({ conn }: Props): ReactElement {
+       <ConfirmCleanupDialog
+         open={confirmOpen}
+         slugs={selectedSlugs}
+-        totalBytes={totalSelectedBytes}
++        totalBytes={selectionBytes}
+         removeWorktree={removeWorktree}
+         loading={executeMutation.loading}
+         error={executeMutation.error?.message ?? null}
+@@ -282,7 +350,7 @@ export function CleanupCard({ conn }: Props): ReactElement {
+ interface ConfirmProps {
+   open: boolean;
+   slugs: string[];
+-  totalBytes: number;
++  totalBytes: number | null;
+   removeWorktree: boolean;
+   loading: boolean;
+   error: string | null;
+@@ -304,6 +372,7 @@ function ConfirmCleanupDialog({
+   const visible = slugs.slice(0, 10);
+   const more = n - visible.length;
+   const tail = removeWorktree ? "the git worktrees" : "only the DB rows";
++  const sizeLabel = totalBytes === null ? "size not computed" : fmtBytes(totalBytes);
+ 
+   return (
+     <Modal open={open} onClose={onCancel} title={`Clean up ${n} sessions?`}>
+@@ -315,7 +384,7 @@ function ConfirmCleanupDialog({
+           {more > 0 && <li className="text-fg-subtle">…and {more} more</li>}
+         </ul>
+         <div className="text-xs text-fg-muted">
+-          Total to reclaim: <span className="font-mono text-fg">{fmtBytes(totalBytes)}</span>
++          Total to reclaim: <span className="font-mono text-fg">{sizeLabel}</span>
+         </div>
+         <p className="text-xs text-fg-muted">
+           This permanently deletes session DB rows, transcripts, and {tail}. Cannot be undone.
+@@ -330,7 +399,7 @@ function ConfirmCleanupDialog({
+             Cancel
+           </Button>
+           <Button onClick={onConfirm} disabled={loading || n === 0} variant="danger">
+-            {loading ? "Deleting…" : `Delete ${n} sessions (${fmtBytes(totalBytes)})`}
++            {loading ? "Deleting…" : `Delete ${n} sessions`}
+           </Button>
+         </div>
+       </div>
