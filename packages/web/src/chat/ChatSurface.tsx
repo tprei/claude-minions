@@ -12,6 +12,7 @@ import { CostModal } from "./CostModal.js";
 import { QuickActions } from "./quickActions.js";
 import { RecoveryFooter } from "./RecoveryFooter.js";
 import { PRPanel } from "./PRPanel.js";
+import { ExecutePlanModal } from "./ExecutePlanModal.js";
 import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
@@ -261,6 +262,7 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
   const conn = useRootStore((s) => s.getActiveConnection());
   const [landing, setLanding] = useState(false);
   const [landError, setLandError] = useState<string | null>(null);
+  const [executePlanOpen, setExecutePlanOpen] = useState(false);
 
   function navTo(view: "list" | "dag", slug?: string | null, dagId?: string) {
     const activeId = useConnectionStore.getState().activeId;
@@ -275,6 +277,7 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
     session.status === "completed" &&
     !!session.branch &&
     !session.pr;
+  const canExecutePlan = !!conn && session.status === "completed" && session.mode === "think";
 
   const handleLand = async () => {
     if (!conn || landing) return;
@@ -296,9 +299,20 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
 
   const shortParent = session.parentSlug ? session.parentSlug.slice(0, 8) : null;
   return (
+    <>
     <div className="flex flex-col gap-1 px-3 py-2 border-b border-border">
       <div className="flex items-center gap-2 min-w-0">
         <span className="text-sm font-medium text-fg truncate flex-1">{session.title}</span>
+        {canExecutePlan && (
+          <button
+            type="button"
+            onClick={() => setExecutePlanOpen(true)}
+            className="btn-primary text-xs px-2 py-1"
+            title="Spawn a task session from this plan"
+          >
+            Execute plan
+          </button>
+        )}
         {canLand && (
           <button
             type="button"
@@ -383,6 +397,12 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
         )}
       </div>
     </div>
+    <ExecutePlanModal
+      open={executePlanOpen}
+      onClose={() => setExecutePlanOpen(false)}
+      parentSession={session}
+    />
+    </>
   );
 }
 
