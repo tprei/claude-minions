@@ -10,6 +10,7 @@ import type {
 import { EngineError } from "../../errors.js";
 import { newId } from "../../util/ids.js";
 import { nowIso } from "../../util/time.js";
+import { SessionRepo } from "../../store/repos/sessionRepo.js";
 
 function assertString(val: unknown, field: string): string {
   if (typeof val !== "string" || val.trim() === "") {
@@ -231,6 +232,21 @@ function validateCommand(body: unknown): Command {
         kind: "resume-session",
         sessionSlug: assertString(b["sessionSlug"], "sessionSlug"),
       };
+    case "update-session-budget": {
+      const slug = assertString(b["slug"], "slug");
+      const raw = b["costBudgetUsd"];
+      if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+        throw new EngineError(
+          "bad_request",
+          "update-session-budget.costBudgetUsd must be a finite number >= 0",
+        );
+      }
+      return {
+        kind: "update-session-budget",
+        slug,
+        costBudgetUsd: raw,
+      };
+    }
     default:
       throw new EngineError("bad_request", `Unknown command kind: ${String(kind)}`);
   }
@@ -344,6 +360,31 @@ async function dispatchCommand(cmd: Command, ctx: EngineContext): Promise<Comman
 
     case "resume-session": {
       const kicked = await ctx.sessions.kickReplyQueue(cmd.sessionSlug);
+      return { ok: true, data: { kicked } };
+    }
+
+    case "update-session-budget": {
+      const existing = ctx.sessions.get(cmd.slug);
+      if (!existing) {
+        throw new EngineError("not_found", `Session not found: ${cmd.slug}`);
+      }
+      const sessionRepo = new SessionRepo(ctx.db);
+      sessionRepo.setCostBudget(cmd.slug, cmd.costBudgetUsd);
+      const remaining = existing.attention.filter((a) => a.kind !== "budget_exceeded");
+      if (remaining.length !== existing.attention.length) {
+        sessionRepo.setAttention(cmd.slug, remaining);
+      }
+      const refreshed = ctx.sessions.get(cmd.slug);
+      if (refreshed) {
+        ctx.bus.emit({ kind: "session_updated", session: refreshed });
+      }
+      const kicked = await ctx.sessions.kickReplyQueue(cmd.slug);
+      ctx.audit.record(
+        "operator",
+        "session.budget.updated",
+        { kind: "session", id: cmd.slug },
+        { costBudgetUsd: cmd.costBudgetUsd },
+      );
       return { ok: true, data: { kicked } };
     }
   }

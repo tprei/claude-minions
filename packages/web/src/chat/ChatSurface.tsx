@@ -223,6 +223,28 @@ const PR_STATE_PILL: Record<"open" | "closed" | "merged", string> = {
   closed: "bg-bg-elev text-fg-muted",
 };
 
+export function BudgetMeterPill({ costUsd, cap }: { costUsd: number; cap: number }) {
+  const safeCost = costUsd > 0 ? costUsd : 0;
+  const ratio = cap > 0 ? safeCost / cap : 0;
+  const widthPct = Math.min(100, ratio * 100);
+  const tone = ratio >= 1 ? "bg-err" : ratio >= 0.8 ? "bg-warn" : "bg-accent";
+  const textTone = ratio >= 1 ? "text-err" : ratio >= 0.8 ? "text-warn" : "text-fg-muted";
+  return (
+    <span
+      data-testid="budget-meter"
+      className={cx("pill bg-bg-elev font-mono relative overflow-hidden", textTone)}
+      title={`cost ${safeCost.toFixed(2)} of ${cap.toFixed(2)} USD cap`}
+    >
+      <span
+        aria-hidden="true"
+        className={cx("absolute left-0 bottom-0 h-0.5 transition-[width]", tone)}
+        style={{ width: `${widthPct}%` }}
+      />
+      ${safeCost.toFixed(2)} / ${cap.toFixed(2)}
+    </span>
+  );
+}
+
 function OperationalHeader({ session, onClose }: { session: Session; onClose: () => void }) {
   const conn = useRootStore((s) => s.getActiveConnection());
   const [landing, setLanding] = useState(false);
@@ -315,6 +337,9 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
           <span className="pill bg-amber-900/40 text-amber-300" title={session.attention.map((a) => a.kind).join(", ")}>
             ⚠ {session.attention.length}
           </span>
+        )}
+        {session.costBudgetUsd !== undefined && session.costBudgetUsd > 0 && (
+          <BudgetMeterPill costUsd={session.stats.costUsd} cap={session.costBudgetUsd} />
         )}
         {shortParent && (
           <button

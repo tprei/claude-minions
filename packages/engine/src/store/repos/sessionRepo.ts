@@ -154,6 +154,7 @@ export class SessionRepo {
   private readonly stmtSetQuickActions: Database.Statement;
   private readonly stmtUpdate: Database.Statement;
   private readonly stmtSetBucket: Database.Statement;
+  private readonly stmtSetCostBudget: Database.Statement;
 
   constructor(private readonly db: Database.Database) {
     this.stmtGet = db.prepare(`SELECT * FROM sessions WHERE slug = ?`);
@@ -220,6 +221,9 @@ export class SessionRepo {
        WHERE slug = ?`
     );
     this.stmtSetBucket = db.prepare(`UPDATE sessions SET bucket = ?, updated_at = ? WHERE slug = ?`);
+    this.stmtSetCostBudget = db.prepare(
+      `UPDATE sessions SET cost_budget_usd = ?, updated_at = ? WHERE slug = ?`
+    );
   }
 
   private childSlugs(slug: string): string[] {
@@ -409,5 +413,10 @@ export class SessionRepo {
 
   setBucket(slug: string, bucket: import("@minions/shared").SessionBucket | null): void {
     this.stmtSetBucket.run(bucket, nowIso(), slug);
+  }
+
+  setCostBudget(slug: string, costBudgetUsd: number): void {
+    const value = costBudgetUsd > 0 ? costBudgetUsd : null;
+    this.stmtSetCostBudget.run(value, nowIso(), slug);
   }
 }
