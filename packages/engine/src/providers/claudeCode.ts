@@ -1,7 +1,8 @@
-import { spawn as nodeSpawn } from "node:child_process";
+import { execFile, spawn as nodeSpawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs/promises";
 import readline from "node:readline";
+import { promisify } from "node:util";
 import type { PermissionTier } from "@minions/shared";
 import type {
   AgentProvider,
@@ -13,6 +14,34 @@ import type {
   ParseStreamState,
 } from "./provider.js";
 import { EngineError } from "../errors.js";
+
+const execFileAsync = promisify(execFile);
+
+export async function resolveWorktreeGitPaths(
+  worktree: string,
+): Promise<{ gitDir: string; gitCommonDir: string }> {
+  const { stdout } = await execFileAsync("git", [
+    "-C",
+    worktree,
+    "rev-parse",
+    "--git-dir",
+    "--git-common-dir",
+  ]);
+  const lines = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length < 2) {
+    throw new Error(
+      `git rev-parse returned unexpected output for ${worktree}: ${JSON.stringify(stdout)}`,
+    );
+  }
+  const [gitDirLine, gitCommonDirLine] = lines as [string, string];
+  return {
+    gitDir: path.resolve(worktree, gitDirLine),
+    gitCommonDir: path.resolve(worktree, gitCommonDirLine),
+  };
+}
 
 function appendPermissionFlags(
   args: string[],
