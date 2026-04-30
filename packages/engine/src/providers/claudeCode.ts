@@ -47,6 +47,7 @@ function appendPermissionFlags(
   args: string[],
   tier: PermissionTier | undefined,
   worktree: string,
+  extra?: { gitDir?: string; gitCommonDir?: string },
 ): void {
   switch (tier) {
     case "read":
@@ -55,6 +56,12 @@ function appendPermissionFlags(
     case "worktree":
       args.push("--permission-mode", "acceptEdits");
       args.push("--add-dir", worktree);
+      if (typeof extra?.gitDir === "string" && extra.gitDir.length > 0) {
+        args.push("--add-dir", extra.gitDir);
+      }
+      if (typeof extra?.gitCommonDir === "string" && extra.gitCommonDir.length > 0) {
+        args.push("--add-dir", extra.gitCommonDir);
+      }
       return;
     case "full":
     case undefined:
@@ -338,7 +345,10 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
     "--verbose",
   ];
 
-  appendPermissionFlags(args, opts.permissionTier, opts.worktree);
+  appendPermissionFlags(args, opts.permissionTier, opts.worktree, {
+    gitDir: opts.worktreeGitDir,
+    gitCommonDir: opts.worktreeGitCommonDir,
+  });
 
   if (opts.modelHint) {
     args.push("--model", opts.modelHint);
@@ -363,7 +373,10 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
 export function buildResumeArgs(opts: ProviderResumeOpts): string[] {
   const args = ["--output-format", "stream-json", "--print", "--verbose"];
 
-  appendPermissionFlags(args, opts.permissionTier, opts.worktree);
+  appendPermissionFlags(args, opts.permissionTier, opts.worktree, {
+    gitDir: opts.worktreeGitDir,
+    gitCommonDir: opts.worktreeGitCommonDir,
+  });
 
   if (opts.mcpConfigPath) {
     args.push("--mcp-config", opts.mcpConfigPath);
@@ -415,7 +428,13 @@ export const claudeCodeProvider: AgentProvider = {
       });
     }
 
-    const args = buildSpawnArgs(opts);
+    let resolvedOpts: ProviderSpawnOpts = opts;
+    if (opts.permissionTier === "worktree") {
+      const { gitDir, gitCommonDir } = await resolveWorktreeGitPaths(opts.worktree);
+      resolvedOpts = { ...opts, worktreeGitDir: gitDir, worktreeGitCommonDir: gitCommonDir };
+    }
+
+    const args = buildSpawnArgs(resolvedOpts);
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -444,7 +463,13 @@ export const claudeCodeProvider: AgentProvider = {
       });
     }
 
-    const args = buildResumeArgs(opts);
+    let resolvedOpts: ProviderResumeOpts = opts;
+    if (opts.permissionTier === "worktree") {
+      const { gitDir, gitCommonDir } = await resolveWorktreeGitPaths(opts.worktree);
+      resolvedOpts = { ...opts, worktreeGitDir: gitDir, worktreeGitCommonDir: gitCommonDir };
+    }
+
+    const args = buildResumeArgs(resolvedOpts);
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
