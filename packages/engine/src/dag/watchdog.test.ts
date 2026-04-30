@@ -394,6 +394,45 @@ describe("Dag api operator commands", () => {
     }
   });
 
+  test("retry resets a cancelled node to pending so the parent ship can rerun it", async () => {
+    const db = makeTempDb();
+    const bus = new EventBus();
+    const sessions = new Map<string, Session>();
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    ctx.bus = bus;
+    ctx.db = db;
+
+    const dag = makeDag("dag-rc", [makeNode("A", "cancelled", { sessionSlug: "old-A" })]);
+    seedDag(db, bus, dag);
+
+    const subsystem = createDagSubsystem({
+      ctx,
+      log: createLogger("error"),
+      env: {} as EngineContext["env"],
+      db,
+      bus,
+      mutex: ctx.mutex,
+      workspaceDir: "/tmp",
+    });
+    ctx.dags = subsystem.api;
+
+    try {
+      await subsystem.api.retry("dag-rc", "A");
+
+      const repo = new DagRepo(db, bus);
+      const after = repo.getNode("A");
+      assert.equal(after?.status, "running", "scheduler.tick promoted cancelled node to running");
+      assert.notEqual(after?.sessionSlug, "old-A");
+      const retryAudit = audit.find((a) => a.action === "dag.node.retry");
+      assert.ok(retryAudit, "dag.node.retry audit row written for cancelled retry");
+      assert.equal(retryAudit?.detail?.["from"], "cancelled");
+    } finally {
+      await subsystem.onShutdown?.();
+      db.close();
+    }
+  });
+
   test("retry rejects with conflict when dag is cancelled", async () => {
     const db = makeTempDb();
     const bus = new EventBus();
@@ -435,7 +474,6 @@ describe("Dag api operator commands", () => {
       "landed",
       "pending",
       "done",
-      "cancelled",
     ];
     for (const status of nonRetryable) {
       const db = makeTempDb();

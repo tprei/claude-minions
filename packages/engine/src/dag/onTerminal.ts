@@ -21,6 +21,16 @@ export class DagTerminalHandler {
     const dag = this.repo.byNodeSession(session.slug);
     if (!dag) return;
 
+    if (session.status === "cancelled") {
+      this.repo.updateNode(node.id, {
+        status: "cancelled",
+        failedReason: null,
+        completedAt: new Date().toISOString(),
+      });
+      await this.scheduler.tick(dag.id);
+      return;
+    }
+
     if (session.status !== "completed") {
       this.repo.updateNode(node.id, {
         status: "failed",
