@@ -241,6 +241,7 @@ function makeMockCtx(
     features: () => [],
     featuresPending: () => [],
     repos: () => [],
+    getRepo: () => null,
     shutdown: async () => {},
   };
 }

@@ -4,7 +4,7 @@ import type { Logger } from "../logger.js";
 import { ensureDir, pathExists } from "../util/fs.js";
 import type { KeyedMutex } from "../util/mutex.js";
 
-function barePath(reposDir: string, repoId: string): string {
+export function barePath(reposDir: string, repoId: string): string {
   return path.join(reposDir, `${repoId}.git`);
 }
 

@@ -7,6 +7,7 @@ import { registerMetricsRoutes } from "./metrics.js";
 import { registerCommandRoutes } from "./commands.js";
 import { registerMessageRoutes } from "./messages.js";
 import { registerEntrypointRoutes } from "./entrypoints.js";
+import { registerRepoRoutes } from "./repos.js";
 import { registerSessionsRoutes } from "../../sessions/routes.js";
 import { registerDagRoutes } from "./dags.js";
 import { registerMemoryRoutes } from "./memories.js";
@@ -30,6 +31,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): 
   registerCommandRoutes(app, ctx);
   registerMessageRoutes(app, ctx);
   registerEntrypointRoutes(app, ctx);
+  registerRepoRoutes(app, ctx);
   registerSessionsRoutes(app, ctx);
   registerDagRoutes(app, ctx);
   registerMemoryRoutes(app, ctx);

@@ -148,6 +148,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
     features: () => [],
     featuresPending: () => [],
     repos: () => (repoBinding ? [repoBinding] : []),
+    getRepo: (id) => (repoBinding && repoBinding.id === id ? repoBinding : null),
     shutdown: async () => {},
   };
 
@@ -458,6 +459,7 @@ function makeUpstreamHarness(opts: {
     features: () => [],
     featuresPending: () => [],
     repos: () => [repoBinding],
+    getRepo: (id) => (repoBinding.id === id ? repoBinding : null),
     shutdown: async () => {},
   };
 
