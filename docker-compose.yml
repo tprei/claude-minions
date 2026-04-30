@@ -1,3 +1,4 @@
+# For the unattended overnight checklist see docs/deploy/supervisor.md.
 # Single-container deploy: engine serves /api + the built PWA on /.
 #
 # First-time setup on the mini PC:

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ----- builder ----------------------------------------------------------------
-FROM node:20-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 
 RUN apt-get update \
@@ -26,7 +26,10 @@ RUN pnpm --filter @minions/shared run build \
  && pnpm --filter @minions/web    run build
 
 # ----- runtime ----------------------------------------------------------------
-FROM node:20-bookworm-slim AS runtime
+# MINIONS_TOKEN must be injected at runtime (compose env_file or `docker run -e`).
+# Never bake into the image. The /api/health endpoint is public; all other /api routes
+# require the token via Authorization: Bearer or ?token= query for SSE.
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
