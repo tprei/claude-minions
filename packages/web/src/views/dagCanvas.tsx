@@ -23,7 +23,6 @@ import { parseUrl } from "../routing/parseUrl.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { useApiMutation } from "../hooks/useApiMutation.js";
 import { UpgradeNotice } from "../components/UpgradeNotice.js";
-import { Sheet } from "../components/Sheet.js";
 import { Modal } from "../components/Modal.js";
 import { Button } from "../components/Button.js";
 import { retryDagNode } from "../transport/rest.js";
@@ -479,7 +478,7 @@ interface Props {
 }
 
 function DagCanvasChrome({ children }: { children: ReactNode }) {
-  const { collapsed, breakpoint, toggleCollapsed, setCollapsed } = usePanelLayout(
+  const { collapsed, breakpoint, toggleCollapsed } = usePanelLayout(
     PANEL_DAG_CANVAS,
     {
       defaultSize: DAG_DEFAULT_WIDTH,
@@ -488,46 +487,34 @@ function DagCanvasChrome({ children }: { children: ReactNode }) {
     },
   );
   const isMobile = breakpoint === "mobile";
-  const showInline = !collapsed && !isMobile;
-  const showSheet = !collapsed && isMobile;
 
   return (
     <div data-testid="panel-dag-canvas" className="flex flex-col h-full">
-      <div
-        data-testid="panel-dag-canvas-header"
-        className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border bg-bg-soft text-xs"
-      >
-        <span className="text-fg-subtle font-medium">DAG canvas</span>
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          data-testid="panel-dag-canvas-toggle"
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? "Expand DAG canvas" : "Collapse DAG canvas"}
-          className="text-fg-subtle hover:text-fg transition-colors"
+      {!isMobile && (
+        <div
+          data-testid="panel-dag-canvas-header"
+          className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border bg-bg-soft text-xs"
         >
-          {collapsed ? "▸" : "▾"}
-        </button>
-      </div>
-      {showInline && (
+          <span className="text-fg-subtle font-medium">DAG canvas</span>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            data-testid="panel-dag-canvas-toggle"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? "Expand DAG canvas" : "Collapse DAG canvas"}
+            className="text-fg-subtle hover:text-fg transition-colors"
+          >
+            {collapsed ? "▸" : "▾"}
+          </button>
+        </div>
+      )}
+      {(isMobile || !collapsed) && (
         <div
           data-testid="panel-dag-canvas-body"
-          className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden"
+          className="flex-1 min-w-0 min-h-0 overflow-hidden"
         >
           {children}
         </div>
-      )}
-      {showSheet && (
-        <Sheet
-          open
-          onClose={() => setCollapsed(true)}
-          title="DAG canvas"
-          side="bottom"
-        >
-          <div data-testid="panel-dag-canvas-body" className="h-[70dvh]">
-            {children}
-          </div>
-        </Sheet>
       )}
     </div>
   );
