@@ -1,9 +1,9 @@
-// TODO(T33): add web tests for RecoveryFooter once a runner exists.
 import { useEffect, useState } from "react";
 import type { Command, MergeReadiness, Session, Checkpoint } from "@minions/shared";
 import { useRootStore } from "../store/root.js";
 import { getCheckpoints, getReadiness, restoreCheckpoint } from "../transport/rest.js";
 import { StatusDot } from "../components/StatusDot.js";
+import { InputDialog } from "../components/InputDialog.js";
 import { cx } from "../util/classnames.js";
 
 interface Props {
@@ -175,6 +175,7 @@ export function RecoveryFooter({ session, onAction }: Props) {
   const [continueText, setContinueText] = useState("");
   const [continuePending, setContinuePending] = useState(false);
   const [continueErr, setContinueErr] = useState<string | null>(null);
+  const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
 
   const visible =
     session.status === "failed" ||
@@ -216,6 +217,7 @@ export function RecoveryFooter({ session, onAction }: Props) {
 
   const tone = readiness ? readinessTone(readiness) : null;
   const flagMsg = session.attention[0]?.message;
+  const budgetExceeded = session.attention.some((a) => a.kind === "budget_exceeded");
 
   return (
     <div className="border-t border-border bg-bg-elev px-3 py-2 flex flex-col gap-2">
@@ -249,6 +251,14 @@ export function RecoveryFooter({ session, onAction }: Props) {
             onClick={() => onAction({ kind: "reply", sessionSlug: session.slug, text: "Resume from where you left off." })}
           />
         )}
+        {budgetExceeded && (
+          <ActionButton
+            label="Resume with new cap"
+            primary
+            title="Raise the cost cap and resume the session"
+            onClick={() => setBudgetDialogOpen(true)}
+          />
+        )}
         {canAbort && (
           <ActionButton
             label="Abort"
@@ -269,6 +279,23 @@ export function RecoveryFooter({ session, onAction }: Props) {
           </a>
         )}
       </div>
+      <InputDialog
+        open={budgetDialogOpen}
+        title="Resume with new cap"
+        label="Cost budget (USD)"
+        initialValue={session.costBudgetUsd}
+        min={0}
+        step={0.01}
+        confirmLabel="Resume"
+        onConfirm={async (value) => {
+          await onAction({
+            kind: "update-session-budget",
+            slug: session.slug,
+            costBudgetUsd: value,
+          });
+        }}
+        onCancel={() => setBudgetDialogOpen(false)}
+      />
       {canContinue && (
         <div className="flex flex-col gap-1">
           <textarea
