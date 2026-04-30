@@ -162,6 +162,16 @@ const fields: RuntimeField[] = [
     applies: "live",
   },
   {
+    key: "autoMergeOnGreen",
+    label: "Auto-merge PR on green CI",
+    description:
+      "Automatically squash-merge a PR once all CI checks pass, no reviewer has requested changes, and the PR is mergeable. Pairs with CI self-heal so a successful retry lands without operator action.",
+    type: "boolean",
+    default: false,
+    group: "autonomy",
+    applies: "live",
+  },
+  {
     key: "admissionUnlimited",
     label: "Admission unlimited (disable caps)",
     description:
@@ -301,6 +311,7 @@ const fields: RuntimeField[] = [
 export const runtimeConfigSchema: RuntimeConfigSchema = {
   groups: [
     { id: "execution", label: "Execution" },
+    { id: "autonomy", label: "Autonomy" },
     { id: "loops", label: "Loops" },
     { id: "ci", label: "CI" },
     { id: "quality", label: "Quality" },
