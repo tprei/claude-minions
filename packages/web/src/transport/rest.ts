@@ -212,6 +212,24 @@ export function deleteSession(conn: Connection, slug: string): Promise<OkEnvelop
   return apiFetch(conn, `/api/sessions/${slug}`, { method: "DELETE" });
 }
 
+export interface ListFilesOptions {
+  q?: string;
+  limit?: number;
+}
+
+export function listRepoFiles(
+  conn: Connection,
+  repoId: string,
+  opts?: ListFilesOptions,
+): Promise<{ items: string[] }> {
+  const params = new URLSearchParams();
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  const base = `/api/repos/${encodeURIComponent(repoId)}/files`;
+  return apiFetch(conn, qs ? `${base}?${qs}` : base);
+}
+
 export interface ListMemoriesOptions {
   status?: MemoryStatus;
   kind?: MemoryKind;
