@@ -944,6 +944,27 @@ export class SessionRegistry {
     this.emitUpdated(this.buildSession(updatedRow));
   }
 
+  setMetadata(slug: string, patch: Record<string, unknown>): void {
+    const row = this.getSessionRow(slug);
+    if (!row) {
+      throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+    this.repo.setMetadata(slug, patch);
+    const updatedRow = this.getSessionRow(slug)!;
+    this.emitUpdated(this.buildSession(updatedRow));
+  }
+
+  markCompleted(slug: string): void {
+    const row = this.getSessionRow(slug);
+    if (!row) {
+      throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+    const now = nowIso();
+    this.updateSessionStatus.run("completed", now, now, slug);
+    const updatedRow = this.getSessionRow(slug)!;
+    this.emitUpdated(this.buildSession(updatedRow));
+  }
+
   async stop(slug: string, _reason?: string): Promise<void> {
     const row = this.getSessionRow(slug);
     if (!row) {

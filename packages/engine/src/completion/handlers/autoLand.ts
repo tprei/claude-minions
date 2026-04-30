@@ -61,7 +61,50 @@ export function autoLandHandler(ctx: EngineContext): (session: Session) => Promi
         { kind: "session", id: session.slug },
         { pushedAndOpened: true, baseBranch },
       );
-      emitStatus(ctx, session.slug, "auto-land: branch pushed and PR opened — CI babysitter takes over from here");
+
+      const fresh = ctx.sessions.get(session.slug);
+      const concluded = fresh?.metadata["ciSelfHealConcluded"];
+      const maxAttempts = readSelfHealMaxAttempts(ctx);
+
+      if (concluded === "success" || concluded === "exhausted") {
+        emitStatus(
+          ctx,
+          session.slug,
+          `auto-land: PR refreshed (CI self-heal previously ${concluded})`,
+        );
+      } else if (maxAttempts > 0) {
+        const alreadySelfHealing = fresh?.metadata["selfHealCi"] === true;
+        if (!alreadySelfHealing) {
+          ctx.sessions.setMetadata(session.slug, {
+            selfHealCi: true,
+            ciSelfHealAttempts: 0,
+          });
+        }
+        const hasCiPending = (fresh?.attention ?? []).some((a) => a.kind === "ci_pending");
+        if (!hasCiPending) {
+          ctx.sessions.appendAttention(session.slug, {
+            kind: "ci_pending",
+            message: "Waiting for CI to complete on the auto-landed PR",
+            raisedAt: new Date().toISOString(),
+          });
+        }
+        ctx.sessions.markWaitingInput(
+          session.slug,
+          "ci self-heal: parking until CI reports terminal state",
+        );
+
+        emitStatus(
+          ctx,
+          session.slug,
+          "auto-land: branch pushed and PR opened — parking session in waiting_input; CI self-heal will replay failures into this session",
+        );
+      } else {
+        emitStatus(
+          ctx,
+          session.slug,
+          "auto-land: branch pushed and PR opened — CI babysitter takes over from here",
+        );
+      }
     } catch (err) {
       const message = (err as Error).message;
       ctx.audit.record(
@@ -75,6 +118,16 @@ export function autoLandHandler(ctx: EngineContext): (session: Session) => Promi
   };
   Object.defineProperty(handler, "name", { value: "autoLandHandler" });
   return handler;
+}
+
+export const DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS = 3;
+
+function readSelfHealMaxAttempts(ctx: EngineContext): number {
+  const raw = ctx.runtime.effective()["ciSelfHealMaxAttempts"];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS;
+  }
+  return Math.floor(raw);
 }
 
 function emitStatus(

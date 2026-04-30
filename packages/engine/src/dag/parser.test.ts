@@ -87,6 +87,8 @@ function makeMockCtx(opts: {
       delete: async () => {},
       reply: async () => {},
       setDagId: () => {},
+      setMetadata: () => {},
+      markCompleted: () => {},
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },

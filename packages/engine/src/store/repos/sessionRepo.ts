@@ -415,6 +415,15 @@ export class SessionRepo {
     this.stmtSetBucket.run(bucket, nowIso(), slug);
   }
 
+  setMetadata(slug: string, patch: Record<string, unknown>): void {
+    const current = this.get(slug);
+    if (!current) return;
+    const next = { ...current.metadata, ...patch };
+    this.db
+      .prepare(`UPDATE sessions SET metadata = ?, updated_at = ? WHERE slug = ?`)
+      .run(JSON.stringify(next), nowIso(), slug);
+  }
+
   setCostBudget(slug: string, costBudgetUsd: number): void {
     const value = costBudgetUsd > 0 ? costBudgetUsd : null;
     this.stmtSetCostBudget.run(value, nowIso(), slug);
