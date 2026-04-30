@@ -39,7 +39,7 @@ interface TestEngine {
 async function createTestEngine(envOverrides: Partial<EngineEnv> = {}): Promise<TestEngine> {
   const port = await getFreePort();
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "minions-sse-test-"));
-  const baseEnv = loadEnv({});
+  const baseEnv = loadEnv({ MINIONS_TOKEN: "test-token-sse" });
   const env: EngineEnv = {
     ...baseEnv,
     port,

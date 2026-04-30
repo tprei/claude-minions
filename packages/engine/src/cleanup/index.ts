@@ -1,7 +1,9 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import pLimit from "p-limit";
 import type {
   CleanupCandidate,
+  CleanupCandidatesResponse,
   CleanupableStatus,
   CleanupExecuteError,
   CleanupExecuteRequest,
@@ -16,8 +18,15 @@ import type { Logger } from "../logger.js";
 import { removeWorktree } from "../workspace/worktree.js";
 import { diskUsage } from "../util/diskUsage.js";
 
+export interface SelectCandidatesOptions {
+  olderThanDays: number;
+  statuses: CleanupableStatus[];
+  limit: number;
+  cursor?: string | null;
+}
+
 export interface CleanupSubsystem {
-  selectCandidates(opts: { olderThanDays: number; statuses: CleanupableStatus[] }): Promise<CleanupCandidate[]>;
+  selectCandidates(opts: SelectCandidatesOptions): Promise<CleanupCandidatesResponse>;
   preview(req: CleanupPreviewRequest): Promise<CleanupPreviewResponse>;
   execute(req: CleanupExecuteRequest): Promise<CleanupExecuteResponse>;
 }
@@ -39,46 +48,105 @@ const INELIGIBLE_RUNTIME_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 const DAY_MS = 86_400_000;
+const PREVIEW_DU_CONCURRENCY = 4;
+const PREVIEW_DU_TIMEOUT_MS = 5_000;
+
+interface PageCursorShape {
+  updatedAt: string;
+  slug: string;
+}
+
+function encodeCursor(c: PageCursorShape): string {
+  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
+}
+
+function decodeCursor(raw: string): PageCursorShape | null {
+  try {
+    const json = Buffer.from(raw, "base64url").toString("utf8");
+    const parsed = JSON.parse(json) as { updatedAt?: unknown; slug?: unknown };
+    if (typeof parsed.updatedAt !== "string" || typeof parsed.slug !== "string") return null;
+    return { updatedAt: parsed.updatedAt, slug: parsed.slug };
+  } catch {
+    return null;
+  }
+}
+
+async function diskUsageWithTimeout(absPath: string, timeoutMs: number): Promise<number> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeout = new Promise<number>((resolve) => {
+    timer = setTimeout(() => resolve(0), timeoutMs);
+  });
+  try {
+    const result = await Promise.race([
+      diskUsage(absPath).then((r) => r.bytes),
+      timeout,
+    ]);
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsystem {
   const { sessions, audit, workspaceDir, reposDir, worktreeRoot, log } = deps;
 
-  async function selectCandidates(opts: {
-    olderThanDays: number;
-    statuses: CleanupableStatus[];
-  }): Promise<CleanupCandidate[]> {
-    const result = sessions.listPaged({ status: opts.statuses, limit: 250 });
-    const cutoff = Date.now() - opts.olderThanDays * DAY_MS;
+  async function selectCandidates(
+    opts: SelectCandidatesOptions,
+  ): Promise<CleanupCandidatesResponse> {
+    const cutoff =
+      opts.olderThanDays > 0 ? Date.now() - opts.olderThanDays * DAY_MS : Number.POSITIVE_INFINITY;
+    const noAgeFilter = opts.olderThanDays === 0;
 
-    const eligible: Session[] = [];
-    for (const s of result.items) {
-      if (!s.completedAt) continue;
-      const ts = Date.parse(s.completedAt);
-      if (Number.isNaN(ts)) continue;
-      if (ts > cutoff) continue;
-      eligible.push(s);
+    const items: CleanupCandidate[] = [];
+    let cursor: PageCursorShape | undefined = opts.cursor
+      ? decodeCursor(opts.cursor) ?? undefined
+      : undefined;
+
+    let nextCursor: PageCursorShape | undefined;
+    let exhausted = false;
+
+    while (items.length < opts.limit && !exhausted) {
+      const page = sessions.listPaged({
+        status: opts.statuses,
+        limit: opts.limit,
+        cursor,
+      });
+
+      for (const s of page.items) {
+        if (items.length >= opts.limit) break;
+        if (!noAgeFilter) {
+          if (!s.completedAt) continue;
+          const ts = Date.parse(s.completedAt);
+          if (Number.isNaN(ts)) continue;
+          if (ts > cutoff) continue;
+        }
+        items.push(toCandidate(s));
+        nextCursor = { updatedAt: s.updatedAt, slug: s.slug };
+      }
+
+      if (!page.nextCursor) {
+        exhausted = true;
+        if (items.length < opts.limit) {
+          nextCursor = undefined;
+        }
+        break;
+      }
+      cursor = page.nextCursor;
     }
 
-    const usages = await Promise.all(
-      eligible.map((s) =>
-        s.worktreePath ? diskUsage(s.worktreePath) : Promise.resolve({ bytes: 0, missing: true }),
-      ),
-    );
+    if (exhausted && items.length < opts.limit) {
+      nextCursor = undefined;
+    }
 
-    return eligible.map((s, i) => ({
-      slug: s.slug,
-      title: s.title,
-      status: s.status,
-      completedAt: s.completedAt ?? null,
-      worktreePath: s.worktreePath ?? null,
-      worktreeBytes: usages[i]!.bytes,
-      branch: s.branch ?? null,
-    }));
+    return {
+      items,
+      nextCursor: nextCursor ? encodeCursor(nextCursor) : null,
+    };
   }
 
   async function preview(req: CleanupPreviewRequest): Promise<CleanupPreviewResponse> {
     const ineligible: { slug: string; reason: string }[] = [];
-    let totalBytes = 0;
+    const sizeTasks: Array<() => Promise<number>> = [];
 
     for (const slug of req.slugs) {
       const s = sessions.get(slug);
@@ -91,10 +159,14 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
         continue;
       }
       if (req.removeWorktree && s.worktreePath) {
-        const du = await diskUsage(s.worktreePath);
-        totalBytes += du.bytes;
+        const wt = s.worktreePath;
+        sizeTasks.push(() => diskUsageWithTimeout(wt, PREVIEW_DU_TIMEOUT_MS));
       }
     }
+
+    const limiter = pLimit(PREVIEW_DU_CONCURRENCY);
+    const sizes = await Promise.all(sizeTasks.map((task) => limiter(task)));
+    const totalBytes = sizes.reduce((acc, n) => acc + n, 0);
 
     return {
       count: req.slugs.length - ineligible.length,
@@ -125,8 +197,7 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
 
       let measuredBytes = 0;
       if (req.removeWorktree && s.worktreePath) {
-        const du = await diskUsage(s.worktreePath);
-        measuredBytes = du.bytes;
+        measuredBytes = await diskUsageWithTimeout(s.worktreePath, PREVIEW_DU_TIMEOUT_MS);
       }
 
       let worktreeRemoved = false;
@@ -181,4 +252,15 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
   }
 
   return { selectCandidates, preview, execute };
+}
+
+function toCandidate(s: Session): CleanupCandidate {
+  return {
+    slug: s.slug,
+    title: s.title,
+    status: s.status,
+    completedAt: s.completedAt ?? null,
+    worktreePath: s.worktreePath ?? null,
+    branch: s.branch ?? null,
+  };
 }

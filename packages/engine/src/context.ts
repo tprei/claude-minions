@@ -160,7 +160,9 @@ export interface EngineContext {
     selectCandidates: (opts: {
       olderThanDays: number;
       statuses: import("@minions/shared").CleanupableStatus[];
-    }) => Promise<import("@minions/shared").CleanupCandidate[]>;
+      limit: number;
+      cursor?: string | null;
+    }) => Promise<import("@minions/shared").CleanupCandidatesResponse>;
     preview: (
       req: import("@minions/shared").CleanupPreviewRequest,
     ) => Promise<import("@minions/shared").CleanupPreviewResponse>;

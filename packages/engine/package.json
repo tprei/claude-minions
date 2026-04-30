@@ -7,7 +7,7 @@
   "bin": { "minions-engine": "./dist/cli.js" },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
-    "dev": "tsx watch src/cli.ts",
+    "dev": "NODE_OPTIONS=--max-old-space-size=8192 tsx watch src/cli.ts",
     "start": "node dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test --test-reporter=spec",

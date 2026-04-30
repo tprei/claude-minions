@@ -11,7 +11,11 @@ import { Modal } from "../../components/Modal.js";
 import { fmtBytes } from "../../util/time.js";
 import { useApiMutation } from "../../hooks/useApiMutation.js";
 import { useSessionStore } from "../../store/sessionStore.js";
-import { fetchCleanupCandidates, executeCleanup } from "../../transport/rest.js";
+import {
+  fetchCleanupCandidates,
+  executeCleanup,
+  previewCleanup,
+} from "../../transport/rest.js";
 import { CandidateTable } from "./CandidateTable.js";
 
 interface ApiClient {
@@ -26,12 +30,15 @@ interface Props {
   conn: Connection;
 }
 
-interface FilterState {
+interface FetchArgs {
   olderThanDays: number;
   statuses: Set<CleanupableStatus>;
+  cursor: string | null;
+  append: boolean;
 }
 
 const DEBOUNCE_MS = 300;
+const PAGE_SIZE = 100;
 
 export function CleanupCard({ conn }: Props): ReactElement {
   const [olderThanDays, setOlderThanDays] = useState<number>(7);
@@ -40,29 +47,50 @@ export function CleanupCard({ conn }: Props): ReactElement {
   );
   const [candidates, setCandidates] = useState<CleanupCandidate[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [truncated, setTruncated] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [removeWorktree, setRemoveWorktree] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [lastResult, setLastResult] = useState<CleanupExecuteResponse | null>(null);
   const [errorsExpanded, setErrorsExpanded] = useState(false);
+  const [selectionBytes, setSelectionBytes] = useState<number | null>(null);
 
   const fetchMutation = useApiMutation(
-    async (filter: FilterState) =>
-      fetchCleanupCandidates(conn, {
-        olderThanDays: filter.olderThanDays,
-        statuses: Array.from(filter.statuses),
-      }),
+    async (args: FetchArgs) => {
+      const res = await fetchCleanupCandidates(conn, {
+        olderThanDays: args.olderThanDays,
+        statuses: Array.from(args.statuses),
+        limit: PAGE_SIZE,
+        cursor: args.cursor,
+      });
+      return { res, append: args.append };
+    },
     {
-      onSuccess: (res) => {
-        setCandidates(res.items);
-        setTruncated(res.truncated);
-        setSelected((prev) => {
-          const visible = new Set(res.items.map((i) => i.slug));
-          const next = new Set<string>();
-          for (const slug of prev) if (visible.has(slug)) next.add(slug);
-          return next;
-        });
+      onSuccess: ({ res, append }) => {
+        setNextCursor(res.nextCursor);
+        if (append) {
+          setCandidates((prev) => {
+            const seen = new Set(prev.map((c) => c.slug));
+            const merged = [...prev];
+            for (const c of res.items) if (!seen.has(c.slug)) merged.push(c);
+            return merged;
+          });
+        } else {
+          setCandidates(res.items);
+          setSelected((prev) => {
+            const visible = new Set(res.items.map((i) => i.slug));
+            const next = new Set<string>();
+            for (const slug of prev) if (visible.has(slug)) next.add(slug);
+            return next;
+          });
+        }
       },
+    },
+  );
+
+  const previewMutation = useApiMutation(
+    async (args: { slugs: string[]; removeWorktree: boolean }) => previewCleanup(conn, args),
+    {
+      onSuccess: (res) => setSelectionBytes(res.totalBytes),
     },
   );
 
@@ -73,8 +101,9 @@ export function CleanupCard({ conn }: Props): ReactElement {
       onSuccess: (res) => {
         setLastResult(res);
         setSelected(new Set());
+        setSelectionBytes(null);
         setConfirmOpen(false);
-        void fetchMutation.run({ olderThanDays, statuses });
+        void fetchMutation.run({ olderThanDays, statuses, cursor: null, append: false });
       },
     },
   );
@@ -82,8 +111,9 @@ export function CleanupCard({ conn }: Props): ReactElement {
   const fetchRun = fetchMutation.run;
 
   useEffect(() => {
+    setSelectionBytes(null);
     const timer = setTimeout(() => {
-      void fetchRun({ olderThanDays, statuses });
+      void fetchRun({ olderThanDays, statuses, cursor: null, append: false });
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [olderThanDays, statuses, fetchRun]);
@@ -120,12 +150,6 @@ export function CleanupCard({ conn }: Props): ReactElement {
     return unsub;
   }, [conn.id]);
 
-  const totalSelectedBytes = useMemo(() => {
-    let sum = 0;
-    for (const c of candidates) if (selected.has(c.slug)) sum += c.worktreeBytes;
-    return sum;
-  }, [candidates, selected]);
-
   const toggleStatus = useCallback((s: CleanupableStatus) => {
     setStatuses((prev) => {
       const next = new Set(prev);
@@ -136,6 +160,7 @@ export function CleanupCard({ conn }: Props): ReactElement {
   }, []);
 
   const toggleRow = useCallback((slug: string) => {
+    setSelectionBytes(null);
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(slug)) next.delete(slug);
@@ -144,15 +169,32 @@ export function CleanupCard({ conn }: Props): ReactElement {
     });
   }, []);
 
-  const toggleAll = useCallback((checked: boolean) => {
-    setSelected(() => (checked ? new Set(candidates.map((c) => c.slug)) : new Set()));
-  }, [candidates]);
+  const toggleAll = useCallback(
+    (checked: boolean) => {
+      setSelectionBytes(null);
+      setSelected(() => (checked ? new Set(candidates.map((c) => c.slug)) : new Set()));
+    },
+    [candidates],
+  );
+
+  const onLoadMore = useCallback(() => {
+    if (!nextCursor || fetchMutation.loading) return;
+    void fetchRun({ olderThanDays, statuses, cursor: nextCursor, append: true });
+  }, [fetchRun, fetchMutation.loading, nextCursor, olderThanDays, statuses]);
+
+  const onComputeSize = useCallback(() => {
+    if (selected.size === 0) return;
+    void previewMutation.run({ slugs: Array.from(selected), removeWorktree });
+  }, [previewMutation, selected, removeWorktree]);
 
   const onConfirm = useCallback(async () => {
     await executeMutation.run({ slugs: Array.from(selected), removeWorktree });
   }, [executeMutation, selected, removeWorktree]);
 
   const selectedSlugs = useMemo(() => Array.from(selected), [selected]);
+
+  const isInitialLoading = fetchMutation.loading && candidates.length === 0;
+  const isPagingLoading = fetchMutation.loading && candidates.length > 0;
 
   return (
     <div id="cleanup" className="card p-4 flex flex-col gap-3 md:col-span-2 scroll-mt-4">
@@ -191,25 +233,51 @@ export function CleanupCard({ conn }: Props): ReactElement {
             </label>
           ))}
         </div>
-        {fetchMutation.loading && (
-          <span className="text-xs text-fg-subtle">loading…</span>
-        )}
-        {truncated && (
-          <span className="pill bg-amber-900/30 text-amber-300 text-[10px]">truncated</span>
-        )}
       </div>
 
-      <CandidateTable
-        candidates={candidates}
-        selected={selected}
-        onToggle={toggleRow}
-        onToggleAll={toggleAll}
-      />
+      {isInitialLoading ? (
+        <div className="text-xs text-fg-subtle text-center py-6 border border-dashed border-border rounded-lg">
+          Loading candidates…
+        </div>
+      ) : (
+        <CandidateTable
+          candidates={candidates}
+          selected={selected}
+          onToggle={toggleRow}
+          onToggleAll={toggleAll}
+        />
+      )}
+
+      {nextCursor && !isInitialLoading && (
+        <div className="flex justify-center pt-1">
+          <Button variant="ghost" onClick={onLoadMore} disabled={fetchMutation.loading}>
+            {isPagingLoading ? "Loading…" : "Load more"}
+          </Button>
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
-        <div className="text-xs text-fg-muted">
-          <span className="text-fg font-mono">{selected.size}</span> sessions selected —{" "}
-          <span className="text-fg font-mono">{fmtBytes(totalSelectedBytes)}</span> to reclaim
+        <div className="text-xs text-fg-muted flex items-center gap-2 flex-wrap">
+          <span>
+            <span className="text-fg font-mono">{selected.size}</span> sessions selected
+          </span>
+          {selectionBytes !== null && (
+            <span>
+              — <span className="text-fg font-mono">{fmtBytes(selectionBytes)}</span> to reclaim
+            </span>
+          )}
+          {selected.size > 0 && (
+            <Button
+              variant="ghost"
+              onClick={onComputeSize}
+              disabled={previewMutation.loading}
+            >
+              {previewMutation.loading ? "Computing…" : "Compute selection size"}
+            </Button>
+          )}
+          {previewMutation.error && (
+            <span className="text-err text-[10px]">{previewMutation.error.message}</span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer">
@@ -268,7 +336,7 @@ export function CleanupCard({ conn }: Props): ReactElement {
       <ConfirmCleanupDialog
         open={confirmOpen}
         slugs={selectedSlugs}
-        totalBytes={totalSelectedBytes}
+        totalBytes={selectionBytes}
         removeWorktree={removeWorktree}
         loading={executeMutation.loading}
         error={executeMutation.error?.message ?? null}
@@ -282,7 +350,7 @@ export function CleanupCard({ conn }: Props): ReactElement {
 interface ConfirmProps {
   open: boolean;
   slugs: string[];
-  totalBytes: number;
+  totalBytes: number | null;
   removeWorktree: boolean;
   loading: boolean;
   error: string | null;
@@ -304,6 +372,7 @@ function ConfirmCleanupDialog({
   const visible = slugs.slice(0, 10);
   const more = n - visible.length;
   const tail = removeWorktree ? "the git worktrees" : "only the DB rows";
+  const sizeLabel = totalBytes === null ? "size not computed" : fmtBytes(totalBytes);
 
   return (
     <Modal open={open} onClose={onCancel} title={`Clean up ${n} sessions?`}>
@@ -315,7 +384,7 @@ function ConfirmCleanupDialog({
           {more > 0 && <li className="text-fg-subtle">…and {more} more</li>}
         </ul>
         <div className="text-xs text-fg-muted">
-          Total to reclaim: <span className="font-mono text-fg">{fmtBytes(totalBytes)}</span>
+          Total to reclaim: <span className="font-mono text-fg">{sizeLabel}</span>
         </div>
         <p className="text-xs text-fg-muted">
           This permanently deletes session DB rows, transcripts, and {tail}. Cannot be undone.
@@ -330,7 +399,7 @@ function ConfirmCleanupDialog({
             Cancel
           </Button>
           <Button onClick={onConfirm} disabled={loading || n === 0} variant="danger">
-            {loading ? "Deleting…" : `Delete ${n} sessions (${fmtBytes(totalBytes)})`}
+            {loading ? "Deleting…" : `Delete ${n} sessions`}
           </Button>
         </div>
       </div>

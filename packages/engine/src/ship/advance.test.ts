@@ -150,6 +150,7 @@ interface MockCtxHandle {
   sessions: Map<string, Session>;
   repliedTexts: string[];
   statusEvents: unknown[];
+  waitingInputCalls: { slug: string; reason?: string }[];
 }
 
 function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): MockCtxHandle {
@@ -158,6 +159,7 @@ function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): MockCtxHand
   const sessions = new Map<string, Session>();
   const repliedTexts: string[] = [];
   const statusEvents: unknown[] = [];
+  const waitingInputCalls: { slug: string; reason?: string }[] = [];
   const transcript = opts.transcript ?? [];
 
   bus.on("transcript_event", (ev) => {
@@ -179,6 +181,10 @@ function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): MockCtxHand
       reply: async (_slug: string, text: string) => {
         repliedTexts.push(text);
       },
+      markWaitingInput: (slug: string, reason?: string) => {
+        waitingInputCalls.push({ slug, reason });
+      },
+      markCompleted: () => {},
       resumeAllActive: async () => {},
       diff: async (slug: string) => ({
         sessionSlug: slug,
@@ -239,7 +245,7 @@ function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): MockCtxHand
     shutdown: async () => {},
   } as unknown as EngineContext;
 
-  return { ctx, sessions, repliedTexts, statusEvents };
+  return { ctx, sessions, repliedTexts, statusEvents, waitingInputCalls };
 }
 
 function getStageFromDb(db: Database.Database, slug: string): string | undefined {
@@ -322,7 +328,13 @@ describe("ShipCoordinator.onTurnCompleted", () => {
     await coordinator.onTurnCompleted(slug);
 
     assert.equal(getStageFromDb(db, slug), "dag");
-    assert.ok(handle.repliedTexts[0]?.includes("[Ship stage: dag]"));
+    assert.equal(
+      handle.repliedTexts.length,
+      0,
+      "dag advance must not enqueue a parent directive (would re-spawn parent)",
+    );
+    assert.equal(handle.waitingInputCalls.length, 1);
+    assert.equal(handle.waitingInputCalls[0]!.slug, slug);
   });
 
   test("plan does not advance without parseable dag block", async () => {
