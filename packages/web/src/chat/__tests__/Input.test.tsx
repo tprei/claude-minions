@@ -2,27 +2,35 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, createElement, useCallback, useState, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { ChatInput } from "../Input.js";
-import { HelpModal } from "../HelpModal.js";
-import { CostModal } from "../CostModal.js";
-import { dispatchSlashUi } from "../ChatSurface.js";
-import type { SlashCommand, SlashContext } from "../slashCommands.js";
-
-vi.mock("../../store/root.js", () => ({
-  useRootStore: Object.assign(
-    (selector: (s: { getActiveConnection: () => null }) => unknown) =>
-      selector({ getActiveConnection: () => null }),
-    { getState: () => ({ getActiveConnection: () => null }) },
-  ),
+const { listRepoFilesMock } = vi.hoisted(() => ({
+  listRepoFilesMock: vi.fn(),
 }));
+
+vi.mock("../../store/root.js", () => {
+  const conn = { id: "c1", baseUrl: "http://x", token: "t" };
+  return {
+    useRootStore: Object.assign(
+      (selector: (s: { getActiveConnection: () => typeof conn }) => unknown) =>
+        selector({ getActiveConnection: () => conn }),
+      { getState: () => ({ getActiveConnection: () => conn }) },
+    ),
+  };
+});
 
 vi.mock("../../hooks/useFeature.js", () => ({
   useFeature: () => false,
 }));
 
 vi.mock("../../transport/rest.js", () => ({
+  listRepoFiles: listRepoFilesMock,
   uploadAttachment: vi.fn(async () => ({ url: "stub://uploaded" })),
 }));
+
+import { ChatInput } from "../Input.js";
+import { HelpModal } from "../HelpModal.js";
+import { CostModal } from "../CostModal.js";
+import { dispatchSlashUi } from "../ChatSurface.js";
+import type { SlashCommand, SlashContext } from "../slashCommands.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,6 +41,8 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  listRepoFilesMock.mockReset();
+  listRepoFilesMock.mockResolvedValue({ items: ["src/utils.ts", "src/user.ts"] });
 });
 
 afterEach(() => {
@@ -53,6 +63,8 @@ function setReactValue(el: HTMLTextAreaElement, value: string): void {
     "value",
   )?.set;
   setter?.call(el, value);
+  el.selectionStart = value.length;
+  el.selectionEnd = value.length;
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -221,5 +233,110 @@ describe("ChatInput slash popover", () => {
       const row = container.querySelector(`[data-testid="help-row-${name}"]`);
       expect(row, `expected /${name} row in HelpModal`).not.toBeNull();
     }
+  });
+});
+
+async function waitForMention(): Promise<void> {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 150));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+function mentionPopoverItems(): HTMLButtonElement[] {
+  return Array.from(container.querySelectorAll("ul button")) as HTMLButtonElement[];
+}
+
+describe("ChatInput @-mention popover", () => {
+  it("renders matching files when the user types @u", async () => {
+    act(() => {
+      root.render(
+        createElement(ChatInput, {
+          onSubmit: vi.fn(),
+          onSlashCommand: vi.fn(),
+          repoId: "r1",
+        }),
+      );
+    });
+    await flush();
+
+    const ta = findTextarea();
+    act(() => setReactValue(ta, "@u"));
+    await waitForMention();
+
+    expect(listRepoFilesMock).toHaveBeenCalled();
+    const texts = mentionPopoverItems().map((b) => b.textContent ?? "");
+    expect(texts.some((t) => t.includes("utils.ts"))).toBe(true);
+    expect(texts.some((t) => t.includes("user.ts"))).toBe(true);
+  });
+
+  it("ArrowDown + Enter inserts the second file and closes the popover", async () => {
+    act(() => {
+      root.render(
+        createElement(ChatInput, {
+          onSubmit: vi.fn(),
+          onSlashCommand: vi.fn(),
+          repoId: "r1",
+        }),
+      );
+    });
+    await flush();
+
+    const ta = findTextarea();
+    act(() => setReactValue(ta, "@u"));
+    await waitForMention();
+    expect(mentionPopoverItems().length).toBeGreaterThan(0);
+
+    act(() => fireKeyDown(ta, "ArrowDown"));
+    act(() => fireKeyDown(ta, "Enter"));
+    await flush();
+
+    expect(ta.value).toBe("@src/user.ts ");
+    expect(mentionPopoverItems().length).toBe(0);
+  });
+
+  it("Escape closes the popover", async () => {
+    act(() => {
+      root.render(
+        createElement(ChatInput, {
+          onSubmit: vi.fn(),
+          onSlashCommand: vi.fn(),
+          repoId: "r1",
+        }),
+      );
+    });
+    await flush();
+
+    const ta = findTextarea();
+    act(() => setReactValue(ta, "@"));
+    await waitForMention();
+    expect(mentionPopoverItems().length).toBeGreaterThan(0);
+
+    act(() => fireKeyDown(ta, "Escape"));
+    await flush();
+
+    expect(mentionPopoverItems().length).toBe(0);
+  });
+
+  it("does not open the mention popover for slash commands (composes with /)", async () => {
+    act(() => {
+      root.render(
+        createElement(ChatInput, {
+          onSubmit: vi.fn(),
+          onSlashCommand: vi.fn(),
+          repoId: "r1",
+        }),
+      );
+    });
+    await flush();
+
+    const ta = findTextarea();
+    act(() => setReactValue(ta, "/co"));
+    await waitForMention();
+
+    const txt = container.textContent ?? "";
+    expect(txt).toContain("/cost");
+    expect(listRepoFilesMock).not.toHaveBeenCalled();
   });
 });
