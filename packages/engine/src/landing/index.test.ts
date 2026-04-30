@@ -80,6 +80,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
       setDagId: () => {},
       markWaitingInput: () => {},
       appendAttention: () => {},
+      dismissAttention: () => { throw new Error("not implemented"); },
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({
@@ -387,6 +388,7 @@ function makeUpstreamHarness(opts: {
       setDagId: () => {},
       markWaitingInput: () => {},
       appendAttention: () => {},
+      dismissAttention: () => { throw new Error("not implemented"); },
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({

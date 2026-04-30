@@ -49,6 +49,14 @@ export interface AttentionFlag {
   raisedAt: string;
 }
 
+export interface AttentionInboxItem {
+  sessionSlug: string;
+  sessionTitle: string;
+  mode: SessionMode;
+  status: SessionStatus;
+  attention: AttentionFlag;
+}
+
 export interface SessionStats {
   turns: number;
   inputTokens: number;
