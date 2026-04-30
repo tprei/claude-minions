@@ -51,7 +51,7 @@ const STATUS_COLOR: Record<DAGNodeStatus, string> = {
 };
 
 const NODE_W = 180;
-const NODE_H = 64;
+const NODE_H = 80;
 const PARENT_NODE_ID = "__parent__";
 
 interface DagNodeData {
@@ -150,7 +150,7 @@ function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
         "relative rounded-lg border px-3 py-2 text-xs cursor-default select-none",
         STATUS_COLOR[node.status],
       )}
-      style={{ width: NODE_W, minHeight: NODE_H }}
+      style={{ width: NODE_W }}
     >
       <Handle type="target" position={Position.Top} className="!bg-zinc-600" />
       {showAttention && (
@@ -166,7 +166,7 @@ function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
           !
         </span>
       )}
-      <div className="font-medium leading-tight truncate">{node.title}</div>
+      <div className="font-medium leading-tight line-clamp-2 break-words">{node.title}</div>
       <div className="mt-1 text-[10px] opacity-70">{node.status}</div>
       <div className="mt-1 flex items-center gap-2">
         {node.sessionSlug && (
@@ -204,11 +204,11 @@ function ParentNodeComponent({ data }: NodeProps<ParentNodeData>) {
   return (
     <div
       className="rounded-lg border border-dashed border-fg-subtle bg-bg-elev px-3 py-2 text-xs text-fg-muted cursor-pointer select-none"
-      style={{ width: NODE_W, minHeight: NODE_H }}
+      style={{ width: NODE_W }}
       title={`double-click to ${target}`}
     >
       <div className="text-[10px] uppercase tracking-wide opacity-60">parent</div>
-      <div className="font-medium leading-tight truncate">{data.sessionSlug}</div>
+      <div className="font-medium leading-tight line-clamp-2 break-words">{data.sessionSlug}</div>
       <Handle type="source" position={Position.Bottom} className="!bg-zinc-600" />
     </div>
   );
