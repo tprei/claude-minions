@@ -69,6 +69,7 @@ export const RETRYABLE_DAG_NODE_STATUSES: ReadonlySet<DAGNodeStatus> = new Set([
   "failed",
   "ci-failed",
   "rebase-conflict",
+  "cancelled",
 ]);
 
 export function isRetryableDagNodeStatus(status: DAGNodeStatus): boolean {
