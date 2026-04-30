@@ -10,6 +10,7 @@ export type {
   ShipStage,
   QuickAction,
   AttentionFlag,
+  AttentionInboxItem,
   SessionStats,
   SessionRef,
   PRSummary,
