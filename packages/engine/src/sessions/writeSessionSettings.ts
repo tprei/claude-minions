@@ -17,11 +17,32 @@ async function symlinkOperatorAuth(claudeDir: string): Promise<void> {
     }
     const dst = path.join(claudeDir, filename);
     try {
+      const existing = await fs.readlink(dst);
+      if (existing === src) continue;
       await fs.unlink(dst);
-    } catch {
-      // ok if missing
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "EINVAL") {
+        // ENOENT: nothing to remove. EINVAL: not a symlink (regular file/dir we'd rather leave alone).
+        // Anything else is unexpected — surface it.
+        throw err;
+      }
     }
-    await fs.symlink(src, dst);
+    try {
+      await fs.symlink(src, dst);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") {
+        // Concurrent spawn beat us to it — verify the existing link points at the right target.
+        try {
+          const existing = await fs.readlink(dst);
+          if (existing === src) return;
+        } catch {
+          // fall through to throw original
+        }
+      }
+      throw err;
+    }
   }
 }
 
