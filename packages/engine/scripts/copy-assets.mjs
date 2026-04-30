@@ -10,7 +10,7 @@ const ROOT = path.resolve(here, "..");
 const SRC = path.join(ROOT, "src");
 const DIST = path.join(ROOT, "dist");
 
-const COPY_EXTS = new Set([".md", ".json", ".sql", ".txt"]);
+const COPY_EXTS = new Set([".md", ".json", ".sql", ".txt", ".mjs"]);
 
 function copyTree(srcDir, dstDir) {
   if (!fs.existsSync(srcDir)) return;
