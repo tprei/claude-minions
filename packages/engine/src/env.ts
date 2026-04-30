@@ -19,6 +19,7 @@ export interface EngineEnv {
   apiVersion: string;
   libraryVersion: string;
   webDist: string | null;
+  crashLogDir: string;
 }
 
 const DEFAULT_CORS_ORIGINS = [
@@ -99,5 +100,8 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): EngineEnv {
       env.MINIONS_SERVE_WEB === "true" && env.MINIONS_WEB_DIST
         ? path.resolve(env.MINIONS_WEB_DIST)
         : null,
+    crashLogDir: env.MINIONS_CRASH_LOG_DIR
+      ? path.resolve(env.MINIONS_CRASH_LOG_DIR)
+      : path.join(os.homedir(), ".minions", "crashes"),
   };
 }

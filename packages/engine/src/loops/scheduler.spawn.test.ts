@@ -39,6 +39,7 @@ function makeEnv(overrides: Partial<EngineEnv> = {}): EngineEnv {
     apiVersion: "1",
     libraryVersion: "0.1.0",
     webDist: null,
+    crashLogDir: "/tmp/minions-crashes",
     ...overrides,
   };
 }

@@ -161,6 +161,7 @@ function makeEnv(workspaceDir: string): EngineEnv {
     apiVersion: "1",
     libraryVersion: "0.0.0-test",
     webDist: null,
+    crashLogDir: "/tmp/minions-crashes",
   };
 }
 
