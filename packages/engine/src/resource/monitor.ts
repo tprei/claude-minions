@@ -85,6 +85,7 @@ export class ResourceMonitor {
         usedBytes: diskInfo.used,
         totalBytes: diskInfo.total,
         workspacePath: this.workspaceDir,
+        workspaceUsedBytes: 0,
       },
       eventLoop: {
         lagMs: Number.isFinite(lagMs) ? lagMs : 0,

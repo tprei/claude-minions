@@ -1,0 +1,872 @@
+diff --git a/packages/engine/src/context.ts b/packages/engine/src/context.ts
+index 8444192..7ba3412 100644
+--- a/packages/engine/src/context.ts
++++ b/packages/engine/src/context.ts
+@@ -152,6 +152,19 @@ export interface EngineContext {
+     promText: () => string;
+   };
+ 
++  cleanup: {
++    selectCandidates: (opts: {
++      olderThanDays: number;
++      statuses: import("@minions/shared").CleanupableStatus[];
++    }) => Promise<import("@minions/shared").CleanupCandidate[]>;
++    preview: (
++      req: import("@minions/shared").CleanupPreviewRequest,
++    ) => Promise<import("@minions/shared").CleanupPreviewResponse>;
++    execute: (
++      req: import("@minions/shared").CleanupExecuteRequest,
++    ) => Promise<import("@minions/shared").CleanupExecuteResponse>;
++  };
++
+   features: () => import("@minions/shared").FeatureFlag[];
+   featuresPending: () => { flag: import("@minions/shared").FeatureFlag; reason: string }[];
+   repos: () => import("@minions/shared").RepoBinding[];
+diff --git a/packages/engine/src/dag/scheduler.test.ts b/packages/engine/src/dag/scheduler.test.ts
+index acd36a7..62c67bb 100644
+--- a/packages/engine/src/dag/scheduler.test.ts
++++ b/packages/engine/src/dag/scheduler.test.ts
+@@ -192,6 +192,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
+     digest: {} as EngineContext["digest"],
+     github: {} as EngineContext["github"],
+     stats: {} as EngineContext["stats"],
++    cleanup: {} as EngineContext["cleanup"],
+     bus: {} as EventBus,
+     mutex: {} as EngineContext["mutex"],
+     env: {} as EngineContext["env"],
+diff --git a/packages/engine/src/dag/watchdog.test.ts b/packages/engine/src/dag/watchdog.test.ts
+index 54c8b14..9108b43 100644
+--- a/packages/engine/src/dag/watchdog.test.ts
++++ b/packages/engine/src/dag/watchdog.test.ts
+@@ -230,6 +230,7 @@ function makeMockCtx(
+     digest: {} as EngineContext["digest"],
+     github: {} as EngineContext["github"],
+     stats: {} as EngineContext["stats"],
++    cleanup: {} as EngineContext["cleanup"],
+     bus: new EventBus(),
+     mutex: new KeyedMutex(),
+     env: {} as EngineContext["env"],
+diff --git a/packages/engine/src/http/routes/index.ts b/packages/engine/src/http/routes/index.ts
+index 1196b0b..4de7500 100644
+--- a/packages/engine/src/http/routes/index.ts
++++ b/packages/engine/src/http/routes/index.ts
+@@ -20,6 +20,7 @@ import { registerLoopRoutes } from "./loops.js";
+ import { registerVariantsRoutes } from "../../variants/routes.js";
+ import { registerDoctorRoutes } from "./doctor.js";
+ import { registerUploadsRoute } from "./uploads.js";
++import { registerCleanupRoutes } from "../../cleanup/routes.js";
+ 
+ export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): Promise<void> {
+   registerHealthRoutes(app, ctx);
+@@ -42,4 +43,5 @@ export async function registerRoutes(app: FastifyInstance, ctx: EngineContext):
+   registerVariantsRoutes(app, ctx);
+   registerDoctorRoutes(app, ctx);
+   registerUploadsRoute(app, ctx);
++  registerCleanupRoutes(app, ctx);
+ }
+diff --git a/packages/engine/src/index.ts b/packages/engine/src/index.ts
+index 5f4d79b..2f3696b 100644
+--- a/packages/engine/src/index.ts
++++ b/packages/engine/src/index.ts
+@@ -33,6 +33,8 @@ import { createLoopsSubsystem } from "./loops/index.js";
+ import { createVariantsSubsystem } from "./variants/index.js";
+ import { createCiSubsystem } from "./ci/index.js";
+ import { createStatsSubsystem } from "./stats/index.js";
++import { makeCleanupSubsystem } from "./cleanup/index.js";
++import { workspacePaths } from "./workspace/paths.js";
+ 
+ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
+   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
+@@ -105,6 +107,15 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
+   ctx.variants = wire(createVariantsSubsystem(deps));
+   ctx.ci = wire(createCiSubsystem(deps));
+   ctx.stats = wire(createStatsSubsystem(deps));
++  ctx.cleanup = makeCleanupSubsystem({
++    sessions: ctx.sessions,
++    audit: ctx.audit,
++    workspaceDir: env.workspace,
++    reposDir: workspacePaths(env.workspace).repos,
++    worktreeRoot: env.workspace,
++    log: engineLog,
++    bus,
++  });
+ 
+   const unsubscribeCompletion = wireCompletionHandlers(ctx, engineLog);
+   shutdownHooks.push(unsubscribeCompletion);
+diff --git a/packages/engine/src/landing/index.test.ts b/packages/engine/src/landing/index.test.ts
+index ee00bf0..8ffcfa6 100644
+--- a/packages/engine/src/landing/index.test.ts
++++ b/packages/engine/src/landing/index.test.ts
+@@ -139,6 +139,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
+     digest: {} as EngineContext["digest"],
+     github: {} as EngineContext["github"],
+     stats: {} as EngineContext["stats"],
++    cleanup: {} as EngineContext["cleanup"],
+     env: {} as EngineContext["env"],
+     log: createLogger("error"),
+     db: {} as EngineContext["db"],
+@@ -447,6 +448,7 @@ function makeUpstreamHarness(opts: {
+     digest: {} as EngineContext["digest"],
+     github: {} as EngineContext["github"],
+     stats: {} as EngineContext["stats"],
++    cleanup: {} as EngineContext["cleanup"],
+     env: {} as EngineContext["env"],
+     log: createLogger("error"),
+     db: {} as EngineContext["db"],
+diff --git a/packages/engine/src/landing/restack.test.ts b/packages/engine/src/landing/restack.test.ts
+index 67c0799..9edaa52 100644
+--- a/packages/engine/src/landing/restack.test.ts
++++ b/packages/engine/src/landing/restack.test.ts
+@@ -139,6 +139,7 @@ function makeHarness(sessions: Session[]): RestackHarness {
+     digest: {} as EngineContext["digest"],
+     github: {} as EngineContext["github"],
+     stats: {} as EngineContext["stats"],
++    cleanup: {} as EngineContext["cleanup"],
+     env: {} as EngineContext["env"],
+     log: createLogger("error"),
+     db: {} as EngineContext["db"],
+diff --git a/packages/engine/src/resource/monitor.ts b/packages/engine/src/resource/monitor.ts
+index 20fb9ca..b070ce0 100644
+--- a/packages/engine/src/resource/monitor.ts
++++ b/packages/engine/src/resource/monitor.ts
+@@ -85,6 +85,7 @@ export class ResourceMonitor {
+         usedBytes: diskInfo.used,
+         totalBytes: diskInfo.total,
+         workspacePath: this.workspaceDir,
++        workspaceUsedBytes: 0,
+       },
+       eventLoop: {
+         lagMs: Number.isFinite(lagMs) ? lagMs : 0,
+diff --git a/packages/engine/src/runtime/index.test.ts b/packages/engine/src/runtime/index.test.ts
+index 9132a02..e34464c 100644
+--- a/packages/engine/src/runtime/index.test.ts
++++ b/packages/engine/src/runtime/index.test.ts
+@@ -71,6 +71,7 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
+     digest: {} as EngineContext["digest"],
+     github: {} as EngineContext["github"],
+     stats: {} as EngineContext["stats"],
++    cleanup: {} as EngineContext["cleanup"],
+     bus: new EventBus(),
+     mutex: new KeyedMutex(),
+     env: {} as EngineContext["env"],
+--- .empty-cmp/cleanup-index	2026-04-30 07:23:27.028798246 +0100
++++ packages/engine/src/cleanup/index.ts	2026-04-30 07:10:18.336198325 +0100
+@@ -0,0 +1,184 @@
++import path from "node:path";
++import fs from "node:fs/promises";
++import type {
++  CleanupCandidate,
++  CleanupableStatus,
++  CleanupExecuteError,
++  CleanupExecuteRequest,
++  CleanupExecuteResponse,
++  CleanupPreviewRequest,
++  CleanupPreviewResponse,
++  Session,
++} from "@minions/shared";
++import type { EngineContext } from "../context.js";
++import type { EventBus } from "../bus/eventBus.js";
++import type { Logger } from "../logger.js";
++import { removeWorktree } from "../workspace/worktree.js";
++import { diskUsage } from "../util/diskUsage.js";
++
++export interface CleanupSubsystem {
++  selectCandidates(opts: { olderThanDays: number; statuses: CleanupableStatus[] }): Promise<CleanupCandidate[]>;
++  preview(req: CleanupPreviewRequest): Promise<CleanupPreviewResponse>;
++  execute(req: CleanupExecuteRequest): Promise<CleanupExecuteResponse>;
++}
++
++export interface CleanupSubsystemDeps {
++  sessions: EngineContext["sessions"];
++  audit: EngineContext["audit"];
++  workspaceDir: string;
++  reposDir: string;
++  worktreeRoot: string;
++  log: Logger;
++  bus: EventBus;
++}
++
++const INELIGIBLE_RUNTIME_STATUSES: ReadonlySet<string> = new Set([
++  "running",
++  "waiting_input",
++  "pending",
++]);
++
++const DAY_MS = 86_400_000;
++
++export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsystem {
++  const { sessions, audit, workspaceDir, reposDir, worktreeRoot, log } = deps;
++
++  async function selectCandidates(opts: {
++    olderThanDays: number;
++    statuses: CleanupableStatus[];
++  }): Promise<CleanupCandidate[]> {
++    const result = sessions.listPaged({ status: opts.statuses, limit: 250 });
++    const cutoff = Date.now() - opts.olderThanDays * DAY_MS;
++
++    const eligible: Session[] = [];
++    for (const s of result.items) {
++      if (!s.completedAt) continue;
++      const ts = Date.parse(s.completedAt);
++      if (Number.isNaN(ts)) continue;
++      if (ts > cutoff) continue;
++      eligible.push(s);
++    }
++
++    const usages = await Promise.all(
++      eligible.map((s) =>
++        s.worktreePath ? diskUsage(s.worktreePath) : Promise.resolve({ bytes: 0, missing: true }),
++      ),
++    );
++
++    return eligible.map((s, i) => ({
++      slug: s.slug,
++      title: s.title,
++      status: s.status,
++      completedAt: s.completedAt ?? null,
++      worktreePath: s.worktreePath ?? null,
++      worktreeBytes: usages[i]!.bytes,
++      branch: s.branch ?? null,
++    }));
++  }
++
++  async function preview(req: CleanupPreviewRequest): Promise<CleanupPreviewResponse> {
++    const ineligible: { slug: string; reason: string }[] = [];
++    let totalBytes = 0;
++
++    for (const slug of req.slugs) {
++      const s = sessions.get(slug);
++      if (!s) {
++        ineligible.push({ slug, reason: "not_found" });
++        continue;
++      }
++      if (INELIGIBLE_RUNTIME_STATUSES.has(s.status)) {
++        ineligible.push({ slug, reason: `ineligible_status:${s.status}` });
++        continue;
++      }
++      if (req.removeWorktree && s.worktreePath) {
++        const du = await diskUsage(s.worktreePath);
++        totalBytes += du.bytes;
++      }
++    }
++
++    return {
++      count: req.slugs.length - ineligible.length,
++      totalBytes,
++      ineligible,
++    };
++  }
++
++  async function execute(req: CleanupExecuteRequest): Promise<CleanupExecuteResponse> {
++    const errors: CleanupExecuteError[] = [];
++    let bytesReclaimed = 0;
++    let deleted = 0;
++
++    for (const slug of req.slugs) {
++      const s = sessions.get(slug);
++      if (!s) {
++        errors.push({ slug, code: "not_found", message: `Session ${slug} not found` });
++        continue;
++      }
++      if (INELIGIBLE_RUNTIME_STATUSES.has(s.status)) {
++        errors.push({
++          slug,
++          code: "ineligible_status",
++          message: `Session ${slug} status=${s.status}`,
++        });
++        continue;
++      }
++
++      let measuredBytes = 0;
++      if (req.removeWorktree && s.worktreePath) {
++        const du = await diskUsage(s.worktreePath);
++        measuredBytes = du.bytes;
++      }
++
++      let worktreeRemoved = false;
++      if (req.removeWorktree && s.repoId && s.worktreePath) {
++        try {
++          await removeWorktree(reposDir, worktreeRoot, s.repoId, slug, log);
++          worktreeRemoved = true;
++        } catch (err) {
++          errors.push({
++            slug,
++            code: "worktree_remove_failed",
++            message: String(err),
++          });
++        }
++      }
++
++      const sideTargets = [
++        path.join(workspaceDir, "uploads", slug),
++        path.join(workspaceDir, "reply-queue", `${slug}.jsonl`),
++        path.join(workspaceDir, "mcp-configs", `${slug}.json`),
++      ];
++      for (const target of sideTargets) {
++        try {
++          await fs.rm(target, { recursive: true, force: true });
++        } catch (err) {
++          const e = err as NodeJS.ErrnoException;
++          if (e.code !== "ENOENT") {
++            log.warn("cleanup side-effect rm failed", { slug, target, err: String(err) });
++          }
++        }
++      }
++
++      try {
++        await sessions.delete(slug);
++      } catch (err) {
++        errors.push({ slug, code: "internal", message: String(err) });
++        continue;
++      }
++
++      audit.record(
++        "operator",
++        "session.cleanup",
++        { kind: "session", id: slug },
++        { bytesReclaimed: measuredBytes, removeWorktree: req.removeWorktree },
++      );
++
++      deleted++;
++      if (worktreeRemoved) bytesReclaimed += measuredBytes;
++    }
++
++    return { deleted, bytesReclaimed, errors };
++  }
++
++  return { selectCandidates, preview, execute };
++}
+--- .empty-cmp/cleanup-routes	2026-04-30 07:23:27.028798246 +0100
++++ packages/engine/src/cleanup/routes.ts	2026-04-30 07:10:35.938285456 +0100
+@@ -0,0 +1,84 @@
++import type { FastifyInstance, FastifyRequest } from "fastify";
++import {
++  CLEANUPABLE_STATUSES,
++  type CleanupCandidatesResponse,
++  type CleanupableStatus,
++} from "@minions/shared";
++import type { EngineContext } from "../context.js";
++import { EngineError } from "../errors.js";
++
++const MAX_CANDIDATES = 200;
++const STATUS_SET: ReadonlySet<string> = new Set(CLEANUPABLE_STATUSES);
++
++interface CandidatesQuery {
++  olderThanDays?: string;
++  statuses?: string;
++}
++
++function parseStatuses(raw: string): CleanupableStatus[] {
++  const parts = raw.split(",").map((p) => p.trim()).filter((p) => p.length > 0);
++  const invalid = parts.filter((p) => !STATUS_SET.has(p));
++  if (invalid.length > 0) {
++    throw new EngineError("bad_request", `Invalid status(es): ${invalid.join(", ")}`, {
++      invalid,
++      allowed: [...STATUS_SET],
++    });
++  }
++  return parts as CleanupableStatus[];
++}
++
++function parseOlderThanDays(raw: string): number {
++  const n = Number(raw);
++  if (!Number.isFinite(n) || n < 0) {
++    throw new EngineError("bad_request", "olderThanDays must be a non-negative number");
++  }
++  return n;
++}
++
++function validateBody(body: unknown): { slugs: string[]; removeWorktree: boolean } {
++  if (!body || typeof body !== "object") {
++    throw new EngineError("bad_request", "Body must be an object");
++  }
++  const b = body as { slugs?: unknown; removeWorktree?: unknown };
++  if (!Array.isArray(b.slugs)) {
++    throw new EngineError("bad_request", "slugs must be an array");
++  }
++  if (b.slugs.some((s) => typeof s !== "string")) {
++    throw new EngineError("bad_request", "slugs must be an array of strings");
++  }
++  if (typeof b.removeWorktree !== "boolean") {
++    throw new EngineError("bad_request", "removeWorktree must be a boolean");
++  }
++  return { slugs: b.slugs as string[], removeWorktree: b.removeWorktree };
++}
++
++export function registerCleanupRoutes(app: FastifyInstance, ctx: EngineContext): void {
++  app.get(
++    "/api/cleanup/candidates",
++    async (req: FastifyRequest<{ Querystring: CandidatesQuery }>, reply) => {
++      const olderThanDays =
++        req.query.olderThanDays !== undefined ? parseOlderThanDays(req.query.olderThanDays) : 7;
++      const statuses = req.query.statuses
++        ? parseStatuses(req.query.statuses)
++        : [...CLEANUPABLE_STATUSES];
++
++      const all = await ctx.cleanup.selectCandidates({ olderThanDays, statuses });
++      const truncated = all.length > MAX_CANDIDATES;
++      const items = truncated ? all.slice(0, MAX_CANDIDATES) : all;
++      const body: CleanupCandidatesResponse = { items, truncated };
++      return reply.send(body);
++    },
++  );
++
++  app.post("/api/cleanup/preview", async (req, reply) => {
++    const valid = validateBody(req.body);
++    const result = await ctx.cleanup.preview(valid);
++    return reply.send(result);
++  });
++
++  app.post("/api/cleanup/execute", async (req, reply) => {
++    const valid = validateBody(req.body);
++    const result = await ctx.cleanup.execute(valid);
++    return reply.send(result);
++  });
++}
+--- .empty-cmp/cleanup-routes-test	2026-04-30 07:23:27.028798246 +0100
++++ packages/engine/src/cleanup/__tests__/routes.test.ts	2026-04-30 07:13:14.678698711 +0100
+@@ -0,0 +1,295 @@
++import { test, describe, beforeEach, afterEach } from "node:test";
++import assert from "node:assert/strict";
++import path from "node:path";
++import os from "node:os";
++import fs from "node:fs/promises";
++import Database from "better-sqlite3";
++import Fastify, { type FastifyInstance } from "fastify";
++import { simpleGit } from "simple-git";
++import type {
++  SessionDeletedEvent,
++  CleanupCandidatesResponse,
++  CleanupExecuteResponse,
++  CleanupPreviewResponse,
++} from "@minions/shared";
++import { EventBus } from "../../bus/eventBus.js";
++import { SessionRegistry } from "../../sessions/registry.js";
++import { createLogger } from "../../logger.js";
++import { migrations } from "../../store/migrations.js";
++import type { EngineContext } from "../../context.js";
++import { isEngineError } from "../../errors.js";
++import { makeCleanupSubsystem } from "../index.js";
++import { registerCleanupRoutes } from "../routes.js";
++
++interface AuditCall {
++  actor: string;
++  action: string;
++  target?: { kind: string; id: string };
++  detail?: Record<string, unknown>;
++}
++
++interface Harness {
++  app: FastifyInstance;
++  db: Database.Database;
++  bus: EventBus;
++  workspaceDir: string;
++  reposDir: string;
++  auditCalls: AuditCall[];
++  deletedEvents: SessionDeletedEvent[];
++  completedSlug: string;
++  runningSlug: string;
++  failedSlug: string;
++  completedWorktreePath: string;
++  cleanup: () => Promise<void>;
++}
++
++function insertSession(
++  db: Database.Database,
++  slug: string,
++  status: string,
++  completedAt: string | null,
++  repoId: string | null,
++  worktreePath: string | null,
++  branch: string | null,
++): void {
++  db.prepare(
++    `INSERT INTO sessions(
++      slug, title, prompt, mode, status, repo_id, branch, worktree_path,
++      attention, quick_actions,
++      stats_turns, stats_input_tokens, stats_output_tokens,
++      stats_cache_read_tokens, stats_cache_creation_tokens,
++      stats_cost_usd, stats_duration_ms, stats_tool_calls,
++      provider, created_at, updated_at, completed_at, pr_draft, metadata
++    ) VALUES (
++      ?, ?, 'p', 'task', ?, ?, ?, ?,
++      '[]', '[]',
++      0, 0, 0, 0, 0, 0, 0, 0,
++      'mock', datetime('now'), datetime('now'), ?, 0, '{}'
++    )`,
++  ).run(slug, slug, status, repoId, branch, worktreePath, completedAt);
++}
++
++async function buildHarness(): Promise<Harness> {
++  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "cleanup-routes-test-"));
++
++  const seedDir = path.join(workspaceDir, "_seed");
++  await fs.mkdir(seedDir, { recursive: true });
++  const seed = simpleGit(seedDir);
++  await seed.init(["--initial-branch=main"]);
++  await seed.addConfig("user.email", "test@local");
++  await seed.addConfig("user.name", "Test");
++  await fs.writeFile(path.join(seedDir, "README.md"), "seed\n");
++  await seed.add(".");
++  await seed.commit("initial");
++
++  const repoId = "repo-fixture";
++  const reposDir = path.join(workspaceDir, ".repos");
++  await fs.mkdir(reposDir, { recursive: true });
++  const barePath = path.join(reposDir, `${repoId}.git`);
++  await simpleGit().clone(seedDir, barePath, ["--bare"]);
++  try {
++    await simpleGit(barePath).raw(["remote", "add", "origin", seedDir]);
++  } catch {
++    /* ignore */
++  }
++
++  const completedSlug = "completed-slug";
++  const runningSlug = "running-slug";
++  const failedSlug = "failed-slug";
++  const completedWorktreePath = path.join(workspaceDir, completedSlug);
++
++  const bareGit = simpleGit(barePath);
++  await bareGit.raw([
++    "worktree",
++    "add",
++    "-b",
++    `minions/${completedSlug}`,
++    completedWorktreePath,
++    "main",
++  ]);
++  await fs.writeFile(path.join(completedWorktreePath, "data.txt"), Buffer.alloc(2048));
++
++  const db = new Database(":memory:");
++  db.pragma("journal_mode = WAL");
++  db.pragma("foreign_keys = ON");
++  for (const m of migrations) db.exec(m.sql);
++
++  const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
++  const oneDayAgo = new Date(Date.now() - 1 * 86_400_000).toISOString();
++
++  insertSession(db, runningSlug, "running", null, null, null, null);
++  insertSession(
++    db,
++    completedSlug,
++    "completed",
++    tenDaysAgo,
++    repoId,
++    completedWorktreePath,
++    `minions/${completedSlug}`,
++  );
++  insertSession(db, failedSlug, "failed", oneDayAgo, null, null, null);
++
++  const bus = new EventBus();
++  const log = createLogger("error");
++
++  const stubCtx = {
++    audit: { record: () => {}, list: () => [] },
++    dags: { onSessionTerminal: async () => {} },
++    ship: { onTurnCompleted: async () => {} },
++    env: { host: "127.0.0.1", port: 0, token: "x" },
++    memory: { renderPreamble: () => "" },
++  } as unknown as EngineContext;
++
++  const registry = new SessionRegistry({ db, bus, log, workspaceDir, ctx: stubCtx });
++
++  const sessionsApi = {
++    get: (slug: string) => registry.get(slug),
++    listPaged: (opts: Parameters<typeof registry.listPaged>[0]) => registry.listPaged(opts),
++    delete: (slug: string) => registry.delete(slug),
++  } as unknown as EngineContext["sessions"];
++
++  const auditCalls: AuditCall[] = [];
++  const auditApi: EngineContext["audit"] = {
++    record: (actor, action, target, detail) => {
++      auditCalls.push({ actor, action, target, detail });
++    },
++    list: () => [],
++  };
++
++  const cleanup = makeCleanupSubsystem({
++    sessions: sessionsApi,
++    audit: auditApi,
++    workspaceDir,
++    reposDir,
++    worktreeRoot: workspaceDir,
++    log,
++    bus,
++  });
++
++  const ctx = {
++    sessions: sessionsApi,
++    audit: auditApi,
++    cleanup,
++    log,
++    bus,
++    workspaceDir,
++  } as unknown as EngineContext;
++
++  const app = Fastify({ logger: false });
++  app.setErrorHandler(async (err, _req, reply) => {
++    if (isEngineError(err)) {
++      await reply.status(err.status).send(err.toJSON());
++      return;
++    }
++    await reply.status(500).send({ error: "internal", message: (err as Error).message });
++  });
++  registerCleanupRoutes(app, ctx);
++
++  const deletedEvents: SessionDeletedEvent[] = [];
++  bus.on("session_deleted", (ev) => deletedEvents.push(ev));
++
++  return {
++    app,
++    db,
++    bus,
++    workspaceDir,
++    reposDir,
++    auditCalls,
++    deletedEvents,
++    completedSlug,
++    runningSlug,
++    failedSlug,
++    completedWorktreePath,
++    cleanup: async () => {
++      await app.close();
++      db.close();
++      await fs.rm(workspaceDir, { recursive: true, force: true });
++    },
++  };
++}
++
++describe("cleanup routes", () => {
++  let h: Harness;
++
++  beforeEach(async () => {
++    h = await buildHarness();
++  });
++
++  afterEach(async () => {
++    await h.cleanup();
++  });
++
++  test("GET /api/cleanup/candidates returns only sessions older than the threshold", async () => {
++    const res = await h.app.inject({
++      method: "GET",
++      url: "/api/cleanup/candidates?olderThanDays=7",
++    });
++    assert.equal(res.statusCode, 200);
++    const body = res.json() as CleanupCandidatesResponse;
++    assert.equal(body.truncated, false);
++    assert.equal(body.items.length, 1);
++    assert.equal(body.items[0]!.slug, h.completedSlug);
++  });
++
++  test("POST /api/cleanup/preview marks the running session as ineligible", async () => {
++    const res = await h.app.inject({
++      method: "POST",
++      url: "/api/cleanup/preview",
++      payload: { slugs: [h.runningSlug, h.completedSlug], removeWorktree: true },
++    });
++    assert.equal(res.statusCode, 200);
++    const body = res.json() as CleanupPreviewResponse;
++    assert.equal(body.count, 1);
++    assert.ok(body.totalBytes > 0, `expected totalBytes > 0, got ${body.totalBytes}`);
++    assert.equal(body.ineligible.length, 1);
++    assert.equal(body.ineligible[0]!.slug, h.runningSlug);
++  });
++
++  test("POST /api/cleanup/execute removes worktree, records audit, emits session_deleted", async () => {
++    const res = await h.app.inject({
++      method: "POST",
++      url: "/api/cleanup/execute",
++      payload: { slugs: [h.completedSlug], removeWorktree: true },
++    });
++    assert.equal(res.statusCode, 200);
++    const body = res.json() as CleanupExecuteResponse;
++    assert.equal(body.deleted, 1);
++    assert.ok(body.bytesReclaimed > 0, `expected bytesReclaimed > 0, got ${body.bytesReclaimed}`);
++    assert.deepEqual(body.errors, []);
++
++    const cleanupAudit = h.auditCalls.find((a) => a.action === "session.cleanup");
++    assert.ok(cleanupAudit, "cleanup audit must be recorded");
++    assert.equal(cleanupAudit!.target?.id, h.completedSlug);
++
++    assert.equal(h.deletedEvents.length, 1);
++    assert.equal(h.deletedEvents[0]!.slug, h.completedSlug);
++
++    let exists = true;
++    try {
++      await fs.access(h.completedWorktreePath);
++    } catch {
++      exists = false;
++    }
++    assert.equal(exists, false, "worktree dir must be removed from FS");
++  });
++
++  test("POST /api/cleanup/execute on a running session is rejected without DB mutation", async () => {
++    const beforeCount = (h.db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get() as { c: number })
++      .c;
++
++    const res = await h.app.inject({
++      method: "POST",
++      url: "/api/cleanup/execute",
++      payload: { slugs: [h.runningSlug], removeWorktree: true },
++    });
++    assert.equal(res.statusCode, 200);
++    const body = res.json() as CleanupExecuteResponse;
++    assert.equal(body.deleted, 0);
++    assert.equal(body.errors.length, 1);
++    assert.equal(body.errors[0]!.code, "ineligible_status");
++
++    const afterCount = (h.db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get() as { c: number })
++      .c;
++    assert.equal(afterCount, beforeCount);
++  });
++});
+--- .empty-cmp/diskUsage	2026-04-30 07:23:27.028798246 +0100
++++ packages/engine/src/util/diskUsage.ts	2026-04-30 07:09:38.271936907 +0100
+@@ -0,0 +1,80 @@
++import fs from "node:fs/promises";
++import path from "node:path";
++
++export interface DuResult {
++  bytes: number;
++  missing: boolean;
++}
++
++class Semaphore {
++  private active = 0;
++  private waiters: Array<() => void> = [];
++  constructor(private readonly cap: number) {}
++
++  async acquire(): Promise<void> {
++    if (this.active < this.cap) {
++      this.active++;
++      return;
++    }
++    await new Promise<void>((resolve) => this.waiters.push(resolve));
++  }
++
++  release(): void {
++    const next = this.waiters.shift();
++    if (next) {
++      next();
++    } else {
++      this.active--;
++    }
++  }
++}
++
++export async function diskUsage(absPath: string): Promise<DuResult> {
++  const sem = new Semaphore(8);
++  let total = 0;
++  let missing = false;
++
++  async function withSem<T>(fn: () => Promise<T>): Promise<T> {
++    await sem.acquire();
++    try {
++      return await fn();
++    } finally {
++      sem.release();
++    }
++  }
++
++  async function visit(p: string, isRoot: boolean): Promise<void> {
++    let stat: import("node:fs").Stats;
++    try {
++      stat = await withSem(() => fs.lstat(p));
++    } catch (err) {
++      const e = err as NodeJS.ErrnoException;
++      if (e.code === "ENOENT") {
++        if (isRoot) missing = true;
++        return;
++      }
++      throw err;
++    }
++
++    if (stat.isSymbolicLink()) return;
++    if (stat.isFile()) {
++      total += stat.size;
++      return;
++    }
++    if (!stat.isDirectory()) return;
++
++    let entries: Array<import("node:fs").Dirent>;
++    try {
++      entries = await withSem(() => fs.readdir(p, { withFileTypes: true }));
++    } catch (err) {
++      const e = err as NodeJS.ErrnoException;
++      if (e.code === "ENOENT") return;
++      throw err;
++    }
++
++    await Promise.all(entries.map((entry) => visit(path.join(p, entry.name), false)));
++  }
++
++  await visit(absPath, true);
++  return { bytes: total, missing };
++}
+--- .empty-cmp/diskUsage-test	2026-04-30 07:23:27.028798246 +0100
++++ packages/engine/src/util/diskUsage.test.ts	2026-04-30 07:09:48.749016270 +0100
+@@ -0,0 +1,63 @@
++import { test, describe, beforeEach, afterEach } from "node:test";
++import assert from "node:assert/strict";
++import fs from "node:fs/promises";
++import os from "node:os";
++import path from "node:path";
++import { diskUsage } from "./diskUsage.js";
++
++describe("diskUsage", () => {
++  let tmpRoot: string;
++
++  beforeEach(async () => {
++    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "disk-usage-test-"));
++  });
++
++  afterEach(async () => {
++    await fs.rm(tmpRoot, { recursive: true, force: true });
++  });
++
++  test("returns missing=true with bytes=0 when path does not exist", async () => {
++    const result = await diskUsage(path.join(tmpRoot, "absent"));
++    assert.equal(result.missing, true);
++    assert.equal(result.bytes, 0);
++  });
++
++  test("returns the exact size of a single file", async () => {
++    const file = path.join(tmpRoot, "single.bin");
++    const payload = Buffer.alloc(1234, 7);
++    await fs.writeFile(file, payload);
++
++    const result = await diskUsage(file);
++    assert.equal(result.missing, false);
++    assert.equal(result.bytes, 1234);
++  });
++
++  test("sums the sizes of files in a nested directory tree", async () => {
++    const a = path.join(tmpRoot, "tree", "a.txt");
++    const b = path.join(tmpRoot, "tree", "sub", "b.txt");
++    const c = path.join(tmpRoot, "tree", "sub", "deep", "c.txt");
++    await fs.mkdir(path.dirname(c), { recursive: true });
++    await fs.writeFile(a, Buffer.alloc(10));
++    await fs.writeFile(b, Buffer.alloc(20));
++    await fs.writeFile(c, Buffer.alloc(30));
++
++    const result = await diskUsage(path.join(tmpRoot, "tree"));
++    assert.equal(result.missing, false);
++    assert.equal(result.bytes, 60);
++  });
++
++  test("does not follow symlinks", async () => {
++    const target = path.join(tmpRoot, "target");
++    await fs.mkdir(target);
++    await fs.writeFile(path.join(target, "big.bin"), Buffer.alloc(5000));
++
++    const root = path.join(tmpRoot, "root");
++    await fs.mkdir(root);
++    await fs.writeFile(path.join(root, "small.txt"), Buffer.alloc(40));
++    await fs.symlink(target, path.join(root, "link-to-target"));
++
++    const result = await diskUsage(root);
++    assert.equal(result.missing, false);
++    assert.equal(result.bytes, 40, "symlink target must not be traversed");
++  });
++});
