@@ -1,12 +1,13 @@
 import type { Connection } from "../connections/store.js";
 import { connectSse } from "../transport/sse.js";
-import { getSessions, getDags, getVersion } from "../transport/rest.js";
+import { getSessions, getDags, getVersion, getRuntimeConfig } from "../transport/rest.js";
 import { loadSnapshot, saveSnapshot } from "../transport/snapshotCache.js";
 import { useSessionStore } from "./sessionStore.js";
 import { useDagStore } from "./dagStore.js";
 import { useResourceStore } from "./resourceStore.js";
 import { useMemoryStore } from "./memoryStore.js";
 import { useVersionStore } from "./version.js";
+import { useRuntimeStore } from "./runtimeStore.js";
 
 async function refetch(conn: Connection, isDisposed: () => boolean): Promise<void> {
   const [sessionsEnv, dagsEnv] = await Promise.all([
@@ -31,6 +32,16 @@ async function fetchVersion(conn: Connection, isDisposed: () => boolean): Promis
   }
 }
 
+async function fetchRuntime(conn: Connection, isDisposed: () => boolean): Promise<void> {
+  try {
+    const res = await getRuntimeConfig(conn);
+    if (isDisposed()) return;
+    useRuntimeStore.getState().replace(conn.id, res.schema, res.values, res.effective);
+  } catch {
+    // non-fatal — runtime indicator will simply stay absent
+  }
+}
+
 // TODO(T54): once the vitest harness lands, add coverage that detaches a
 // connection while init() is mid-flight (snapshot load, version fetch, and
 // onReconnect refetch) and asserts no entries remain in session/dag/version
@@ -50,6 +61,7 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
     }
 
     await fetchVersion(conn, isDisposed);
+    await fetchRuntime(conn, isDisposed);
 
     if (disposed) return;
 
@@ -72,6 +84,7 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
       async onReconnect() {
         if (disposed) return;
         await refetch(conn, isDisposed);
+        await fetchRuntime(conn, isDisposed);
       },
     });
   }

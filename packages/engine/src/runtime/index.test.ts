@@ -155,6 +155,26 @@ describe("runtime subsystem audit emission", () => {
     assert.deepEqual(fields, ["dagMaxConcurrent", "rebaseAutoResolverEnabled"]);
   });
 
+  test("toggling admissionUnlimited true emits a dedicated audit event", async () => {
+    await api.update({ admissionUnlimited: true });
+
+    const enabled = audit.find(
+      (e) => e.action === "runtime.admission.unlimited.enabled",
+    );
+    assert.ok(enabled, "expected runtime.admission.unlimited.enabled audit event");
+    assert.equal(enabled.actor, "operator");
+    assert.equal(enabled.target?.kind, "runtime-field");
+    assert.equal(enabled.target?.id, "admissionUnlimited");
+    assert.equal(enabled.detail?.["previous"], false);
+
+    await api.update({ admissionUnlimited: false });
+    const disabled = audit.find(
+      (e) => e.action === "runtime.admission.unlimited.disabled",
+    );
+    assert.ok(disabled, "expected runtime.admission.unlimited.disabled audit event");
+    assert.equal(disabled.detail?.["previous"], true);
+  });
+
   test("secret-tagged fields are redacted in audit body", async () => {
     const secretFieldKey = "__test_secret_field";
     runtimeConfigSchema.fields.push({

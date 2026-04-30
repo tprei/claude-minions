@@ -104,6 +104,17 @@ export function createRuntimeSubsystem(deps: SubsystemDeps): SubsystemResult<Run
           newValue: secret ? REDACTED : value,
         },
       );
+
+      if (key === "admissionUnlimited") {
+        ctx.audit.record(
+          "operator",
+          value === true
+            ? "runtime.admission.unlimited.enabled"
+            : "runtime.admission.unlimited.disabled",
+          { kind: "runtime-field", id: key },
+          { previous: before === true },
+        );
+      }
     }
 
     const sessions = ctx.sessions.list();
