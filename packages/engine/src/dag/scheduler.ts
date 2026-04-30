@@ -2,8 +2,11 @@ import type { DAG, DAGNode, SessionStatus } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { DagRepo } from "./model.js";
 import type { Logger } from "../logger.js";
+import { isEngineError } from "../errors.js";
 
 const DEFAULT_MAX_CONCURRENT = 3;
+const ADMISSION_RETRY_DELAY_MS = 30_000;
+const MAX_ADMISSION_RETRIES = 60;
 
 const TERMINAL_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
   "completed",
@@ -28,6 +31,12 @@ const TERMINAL_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["
   ...SUCCESS_NODE_STATUSES,
   ...FAILED_NODE_STATUSES,
 ]);
+
+function isAdmissionDenied(err: unknown): boolean {
+  if (!isEngineError(err)) return false;
+  if (err.code !== "conflict") return false;
+  return err.message.startsWith("Admission denied:");
+}
 
 export class DagScheduler {
   constructor(
@@ -108,6 +117,10 @@ export class DagScheduler {
         sessionSlug: session.slug,
       });
     } catch (err) {
+      if (isAdmissionDenied(err)) {
+        this.handleAdmissionDenied(dagId, node, err);
+        return;
+      }
       this.repo.updateNode(node.id, {
         status: "failed",
         failedReason: (err as Error).message,
@@ -118,6 +131,50 @@ export class DagScheduler {
         err: (err as Error).message,
       });
     }
+  }
+
+  private handleAdmissionDenied(dagId: string, node: DAGNode, err: unknown): void {
+    const previous =
+      typeof node.metadata.admissionRetries === "number" ? node.metadata.admissionRetries : 0;
+    const retries = previous + 1;
+    const message = (err as Error).message;
+
+    if (retries >= MAX_ADMISSION_RETRIES) {
+      this.repo.updateNode(node.id, {
+        status: "failed",
+        failedReason: `admission denied ${retries} times — slot pressure too high`,
+        metadata: { ...node.metadata, admissionRetries: retries },
+      });
+      this.log.error("dag node admission retries exhausted", {
+        dagId,
+        nodeId: node.id,
+        retries,
+        lastReason: message,
+      });
+      return;
+    }
+
+    this.repo.updateNode(node.id, {
+      status: "pending",
+      metadata: { ...node.metadata, admissionRetries: retries },
+    });
+    this.log.warn("dag node admission denied, deferring spawn", {
+      dagId,
+      nodeId: node.id,
+      retries,
+      reason: message,
+    });
+
+    const handle = setTimeout(() => {
+      this.tick(dagId).catch((e) => {
+        this.log.error("dag admission retry tick failed", {
+          dagId,
+          nodeId: node.id,
+          err: (e as Error).message,
+        });
+      });
+    }, ADMISSION_RETRY_DELAY_MS);
+    handle.unref?.();
   }
 
   private resolveNodeBaseBranch(dag: DAG, node: DAGNode): string | undefined {

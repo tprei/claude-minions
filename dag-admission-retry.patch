@@ -1,0 +1,234 @@
+diff --git a/packages/engine/src/dag/scheduler.test.ts b/packages/engine/src/dag/scheduler.test.ts
+index e94e399..acd36a7 100644
+--- a/packages/engine/src/dag/scheduler.test.ts
++++ b/packages/engine/src/dag/scheduler.test.ts
+@@ -6,6 +6,7 @@ import type { EventBus } from "../bus/eventBus.js";
+ import { DagScheduler } from "./scheduler.js";
+ import { DagRepo } from "./model.js";
+ import { createLogger } from "../logger.js";
++import { EngineError } from "../errors.js";
+ 
+ function makeNode(
+   id: string,
+@@ -337,6 +338,130 @@ describe("DagScheduler", () => {
+     );
+   });
+ 
++  test("admission-denied EngineError keeps node pending and bumps admissionRetries", async (t) => {
++    t.mock.timers.enable({ apis: ["setTimeout"] });
++
++    const nodeA = makeNode("A", "pending");
++    const dag = makeDag("dag1", [nodeA]);
++    const repo = makeMockRepo(dag) as unknown as DagRepo;
++    const ctx = makeMockCtx([]);
++
++    let createCalls = 0;
++    ctx.sessions.create = async () => {
++      createCalls++;
++      throw new EngineError(
++        "conflict",
++        "Admission denied: dag_task 4 at dagCap 4",
++        { class: "dag_task" },
++      );
++    };
++
++    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
++    await scheduler.tick("dag1");
++
++    assert.equal(createCalls, 1);
++    const node = repo.getNode("A");
++    assert.equal(node?.status, "pending", "node remains pending after admission denial");
++    assert.ok(
++      node?.failedReason === undefined || node?.failedReason === null,
++      "no failed reason set",
++    );
++    assert.equal(
++      (node?.metadata as { admissionRetries?: number }).admissionRetries,
++      1,
++      "admissionRetries bumped to 1",
++    );
++
++    const finalDag = repo.get("dag1");
++    assert.equal(finalDag?.status, "active", "dag stays active");
++  });
++
++  test("admission-denied schedules a re-tick after backoff", async (t) => {
++    t.mock.timers.enable({ apis: ["setTimeout"] });
++
++    const nodeA = makeNode("A", "pending");
++    const dag = makeDag("dag1", [nodeA]);
++    const repo = makeMockRepo(dag) as unknown as DagRepo;
++    const ctx = makeMockCtx([]);
++
++    let createCalls = 0;
++    ctx.sessions.create = async () => {
++      createCalls++;
++      throw new EngineError(
++        "conflict",
++        "Admission denied: dag_task 4 at dagCap 4",
++        {},
++      );
++    };
++
++    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
++    await scheduler.tick("dag1");
++    assert.equal(createCalls, 1);
++
++    t.mock.timers.tick(30_000);
++    for (let i = 0; i < 10; i++) await Promise.resolve();
++
++    assert.ok(createCalls >= 2, `expected re-tick after 30s; createCalls=${createCalls}`);
++  });
++
++  test("admission-denied escalates to failed after MAX_ADMISSION_RETRIES", async (t) => {
++    t.mock.timers.enable({ apis: ["setTimeout"] });
++
++    const nodeA = makeNode("A", "pending");
++    nodeA.metadata = { admissionRetries: 59 };
++
++    const dag = makeDag("dag1", [nodeA]);
++    const repo = makeMockRepo(dag) as unknown as DagRepo;
++    const ctx = makeMockCtx([]);
++
++    ctx.sessions.create = async () => {
++      throw new EngineError(
++        "conflict",
++        "Admission denied: dag_task 4 at dagCap 4",
++        {},
++      );
++    };
++
++    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
++    await scheduler.tick("dag1");
++
++    const node = repo.getNode("A");
++    assert.equal(node?.status, "failed", "node escalates to failed after cap");
++    assert.match(
++      node?.failedReason ?? "",
++      /admission denied 60 times/,
++      "failure reason cites the retry count",
++    );
++    assert.match(
++      node?.failedReason ?? "",
++      /slot pressure too high/,
++      "failure reason cites slot pressure",
++    );
++  });
++
++  test("non-admission spawn errors still mark the node failed", async () => {
++    const nodeA = makeNode("A", "pending");
++    const dag = makeDag("dag1", [nodeA]);
++    const repo = makeMockRepo(dag) as unknown as DagRepo;
++    const ctx = makeMockCtx([]);
++
++    ctx.sessions.create = async () => {
++      throw new Error("network blew up");
++    };
++
++    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
++    await scheduler.tick("dag1");
++
++    const node = repo.getNode("A");
++    assert.equal(node?.status, "failed");
++    assert.equal(node?.failedReason, "network blew up");
++    assert.equal(
++      (node?.metadata as { admissionRetries?: number }).admissionRetries,
++      undefined,
++      "non-admission errors do not touch admissionRetries",
++    );
++  });
++
+   test("stacked PRs: A bases on dag.baseBranch, B (depends on A) bases on A's session branch", async () => {
+     const nodeA = makeNode("A", "pending");
+     const nodeB = makeNode("B", "pending", ["A"]);
+diff --git a/packages/engine/src/dag/scheduler.ts b/packages/engine/src/dag/scheduler.ts
+index 3dd74f6..d2e7557 100644
+--- a/packages/engine/src/dag/scheduler.ts
++++ b/packages/engine/src/dag/scheduler.ts
+@@ -2,8 +2,11 @@ import type { DAG, DAGNode, SessionStatus } from "@minions/shared";
+ import type { EngineContext } from "../context.js";
+ import type { DagRepo } from "./model.js";
+ import type { Logger } from "../logger.js";
++import { isEngineError } from "../errors.js";
+ 
+ const DEFAULT_MAX_CONCURRENT = 3;
++const ADMISSION_RETRY_DELAY_MS = 30_000;
++const MAX_ADMISSION_RETRIES = 60;
+ 
+ const TERMINAL_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+   "completed",
+@@ -29,6 +32,12 @@ const TERMINAL_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["
+   ...FAILED_NODE_STATUSES,
+ ]);
+ 
++function isAdmissionDenied(err: unknown): boolean {
++  if (!isEngineError(err)) return false;
++  if (err.code !== "conflict") return false;
++  return err.message.startsWith("Admission denied:");
++}
++
+ export class DagScheduler {
+   constructor(
+     private readonly repo: DagRepo,
+@@ -108,6 +117,10 @@ export class DagScheduler {
+         sessionSlug: session.slug,
+       });
+     } catch (err) {
++      if (isAdmissionDenied(err)) {
++        this.handleAdmissionDenied(dagId, node, err);
++        return;
++      }
+       this.repo.updateNode(node.id, {
+         status: "failed",
+         failedReason: (err as Error).message,
+@@ -120,6 +133,50 @@ export class DagScheduler {
+     }
+   }
+ 
++  private handleAdmissionDenied(dagId: string, node: DAGNode, err: unknown): void {
++    const previous =
++      typeof node.metadata.admissionRetries === "number" ? node.metadata.admissionRetries : 0;
++    const retries = previous + 1;
++    const message = (err as Error).message;
++
++    if (retries >= MAX_ADMISSION_RETRIES) {
++      this.repo.updateNode(node.id, {
++        status: "failed",
++        failedReason: `admission denied ${retries} times — slot pressure too high`,
++        metadata: { ...node.metadata, admissionRetries: retries },
++      });
++      this.log.error("dag node admission retries exhausted", {
++        dagId,
++        nodeId: node.id,
++        retries,
++        lastReason: message,
++      });
++      return;
++    }
++
++    this.repo.updateNode(node.id, {
++      status: "pending",
++      metadata: { ...node.metadata, admissionRetries: retries },
++    });
++    this.log.warn("dag node admission denied, deferring spawn", {
++      dagId,
++      nodeId: node.id,
++      retries,
++      reason: message,
++    });
++
++    const handle = setTimeout(() => {
++      this.tick(dagId).catch((e) => {
++        this.log.error("dag admission retry tick failed", {
++          dagId,
++          nodeId: node.id,
++          err: (e as Error).message,
++        });
++      });
++    }, ADMISSION_RETRY_DELAY_MS);
++    handle.unref?.();
++  }
++
+   private resolveNodeBaseBranch(dag: DAG, node: DAGNode): string | undefined {
+     if (node.dependsOn.length === 0) {
+       return dag.baseBranch;
