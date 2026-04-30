@@ -230,6 +230,7 @@ function makeMockCtx(
     digest: {} as EngineContext["digest"],
     github: {} as EngineContext["github"],
     stats: {} as EngineContext["stats"],
+    cleanup: {} as EngineContext["cleanup"],
     bus: new EventBus(),
     mutex: new KeyedMutex(),
     env: {} as EngineContext["env"],

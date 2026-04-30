@@ -139,6 +139,7 @@ function makeHarness(sessions: Session[]): RestackHarness {
     digest: {} as EngineContext["digest"],
     github: {} as EngineContext["github"],
     stats: {} as EngineContext["stats"],
+    cleanup: {} as EngineContext["cleanup"],
     env: {} as EngineContext["env"],
     log: createLogger("error"),
     db: {} as EngineContext["db"],

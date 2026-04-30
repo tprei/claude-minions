@@ -20,6 +20,7 @@ import { registerLoopRoutes } from "./loops.js";
 import { registerVariantsRoutes } from "../../variants/routes.js";
 import { registerDoctorRoutes } from "./doctor.js";
 import { registerUploadsRoute } from "./uploads.js";
+import { registerCleanupRoutes } from "../../cleanup/routes.js";
 
 export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): Promise<void> {
   registerHealthRoutes(app, ctx);
@@ -42,4 +43,5 @@ export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): 
   registerVariantsRoutes(app, ctx);
   registerDoctorRoutes(app, ctx);
   registerUploadsRoute(app, ctx);
+  registerCleanupRoutes(app, ctx);
 }
