@@ -152,6 +152,19 @@ export interface EngineContext {
     promText: () => string;
   };
 
+  cleanup: {
+    selectCandidates: (opts: {
+      olderThanDays: number;
+      statuses: import("@minions/shared").CleanupableStatus[];
+    }) => Promise<import("@minions/shared").CleanupCandidate[]>;
+    preview: (
+      req: import("@minions/shared").CleanupPreviewRequest,
+    ) => Promise<import("@minions/shared").CleanupPreviewResponse>;
+    execute: (
+      req: import("@minions/shared").CleanupExecuteRequest,
+    ) => Promise<import("@minions/shared").CleanupExecuteResponse>;
+  };
+
   features: () => import("@minions/shared").FeatureFlag[];
   featuresPending: () => { flag: import("@minions/shared").FeatureFlag; reason: string }[];
   repos: () => import("@minions/shared").RepoBinding[];

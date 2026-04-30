@@ -33,6 +33,8 @@ import { createLoopsSubsystem } from "./loops/index.js";
 import { createVariantsSubsystem } from "./variants/index.js";
 import { createCiSubsystem } from "./ci/index.js";
 import { createStatsSubsystem } from "./stats/index.js";
+import { makeCleanupSubsystem } from "./cleanup/index.js";
+import { workspacePaths } from "./workspace/paths.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -105,6 +107,15 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.variants = wire(createVariantsSubsystem(deps));
   ctx.ci = wire(createCiSubsystem(deps));
   ctx.stats = wire(createStatsSubsystem(deps));
+  ctx.cleanup = makeCleanupSubsystem({
+    sessions: ctx.sessions,
+    audit: ctx.audit,
+    workspaceDir: env.workspace,
+    reposDir: workspacePaths(env.workspace).repos,
+    worktreeRoot: env.workspace,
+    log: engineLog,
+    bus,
+  });
 
   const unsubscribeCompletion = wireCompletionHandlers(ctx, engineLog);
   shutdownHooks.push(unsubscribeCompletion);

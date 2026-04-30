@@ -192,6 +192,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
     digest: {} as EngineContext["digest"],
     github: {} as EngineContext["github"],
     stats: {} as EngineContext["stats"],
+    cleanup: {} as EngineContext["cleanup"],
     bus: {} as EventBus,
     mutex: {} as EngineContext["mutex"],
     env: {} as EngineContext["env"],
