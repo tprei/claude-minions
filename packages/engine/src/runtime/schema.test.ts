@@ -19,6 +19,9 @@ describe("runtimeConfigSchema", () => {
     "rebaseAutoResolverEnabled",
     "editorOpenEnabled",
     "landingDefaultStrategy",
+    "autoCleanupEnabled",
+    "cleanupOlderThanDays",
+    "cleanupHourLocal",
   ];
 
   for (const key of expectedKeys) {
