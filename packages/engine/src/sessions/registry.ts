@@ -45,6 +45,7 @@ import { ensureBareClone } from "../workspace/cloner.js";
 import { addWorktree, removeWorktree, initScratchRepo } from "../workspace/worktree.js";
 import { linkDeps } from "../workspace/depsCache.js";
 import { injectAssets } from "../workspace/assetInjector.js";
+import { KeyedMutex } from "../util/mutex.js";
 import {
   checkAdmission,
   classifyMode,
@@ -137,6 +138,7 @@ export class SessionRegistry {
   private readonly checkpointStore: Checkpoints;
   private readonly paths: ReturnType<typeof workspacePaths>;
   private readonly repo: SessionRepo;
+  private readonly slugMutex = new KeyedMutex();
 
   private readonly insertSession: Database.Statement;
   private readonly updateSession: Database.Statement;
@@ -402,77 +404,94 @@ export class SessionRegistry {
       }
     }
 
-    this.insertSession.run(
-      slug, title, req.prompt, mode, "pending",
-      null, req.repoId ?? null, null, req.baseBranch ?? null,
-      null, req.parentSlug ?? null, req.parentSlug ? (this.getRootSlug(req.parentSlug) ?? req.parentSlug) : null,
-      null, null, null, 0, null, null, null,
-      "[]", "[]",
-      0, 0, 0, 0, 0, 0, 0, 0,
-      providerName, req.modelHint ?? null,
-      now, now, null, null, null,
-      null, null, null, null,
-      JSON.stringify(req.metadata ?? {}),
-      permissionTier,
-      bucket,
-      costBudgetUsd ?? null,
-    );
+    // Hold the per-slug mutex from the moment we insert the session row through
+    // the end of setupAndSpawn (and the final buildSession read). delete() takes
+    // the same mutex, so a concurrent cleanup cannot drop the parent row (and
+    // CASCADE its children) while we are still issuing FK-bearing inserts
+    // (provider_state, transcript_events) for this slug.
+    return this.slugMutex.run(slug, async () => {
+      this.insertSession.run(
+        slug, title, req.prompt, mode, "pending",
+        null, req.repoId ?? null, null, req.baseBranch ?? null,
+        null, req.parentSlug ?? null, req.parentSlug ? (this.getRootSlug(req.parentSlug) ?? req.parentSlug) : null,
+        null, null, null, 0, null, null, null,
+        "[]", "[]",
+        0, 0, 0, 0, 0, 0, 0, 0,
+        providerName, req.modelHint ?? null,
+        now, now, null, null, null,
+        null, null, null, null,
+        JSON.stringify(req.metadata ?? {}),
+        permissionTier,
+        bucket,
+        costBudgetUsd ?? null,
+      );
 
-    if (mode === "ship") {
-      this.deps.db.prepare(`
-        INSERT INTO ship_state(session_slug, stage, notes, updated_at)
-        VALUES (?, 'think', '[]', ?)
-        ON CONFLICT(session_slug) DO NOTHING
-      `).run(slug, now);
-      this.deps.db.prepare(
-        `UPDATE sessions SET ship_stage = 'think', updated_at = ? WHERE slug = ?`,
-      ).run(now, slug);
-    }
-
-    const sessionRow = this.getSessionRow(slug)!;
-    const session = this.buildSession(sessionRow);
-    bus.emit({ kind: "session_created", session });
-
-    const seedEventId = newEventId();
-    const seedBody = JSON.stringify({ text: req.prompt, source: "operator" });
-    db.prepare(
-      `INSERT INTO transcript_events(id, session_slug, seq, turn, kind, body, timestamp)
-       VALUES (?, ?, 0, 0, 'user_message', ?, ?)`,
-    ).run(seedEventId, slug, seedBody, now);
-    const seedEvent = rowToTranscriptEvent({
-      id: seedEventId,
-      session_slug: slug,
-      seq: 0,
-      turn: 0,
-      kind: "user_message",
-      body: seedBody,
-      timestamp: now,
-    });
-    bus.emit({ kind: "transcript_event", sessionSlug: slug, event: seedEvent });
-
-    ctx.audit.record("operator", "session.create", { kind: "session", id: slug });
-
-    try {
-      await this.setupAndSpawn(slug, req, session, providerName);
-    } catch (err) {
-      log.error("session setup failed", { slug, err: String(err) });
-      this.failSessionWithAttention(slug, `Spawn failed: ${String(err)}`);
-      throw err;
-    }
-
-    if (req.parentSlug) {
-      const parent = this.get(req.parentSlug);
-      if (parent && parent.mode === "think") {
-        ctx.audit.record(
-          "operator",
-          "spawn_from_think",
-          { kind: "session", id: slug },
-          { parentSlug: parent.slug, mode: req.mode ?? "task" },
-        );
+      if (mode === "ship") {
+        this.deps.db.prepare(`
+          INSERT INTO ship_state(session_slug, stage, notes, updated_at)
+          VALUES (?, 'think', '[]', ?)
+          ON CONFLICT(session_slug) DO NOTHING
+        `).run(slug, now);
+        this.deps.db.prepare(
+          `UPDATE sessions SET ship_stage = 'think', updated_at = ? WHERE slug = ?`,
+        ).run(now, slug);
       }
-    }
 
-    return this.buildSession(this.getSessionRow(slug)!);
+      const sessionRow = this.getSessionRow(slug)!;
+      const session = this.buildSession(sessionRow);
+      bus.emit({ kind: "session_created", session });
+
+      const seedEventId = newEventId();
+      const seedBody = JSON.stringify({ text: req.prompt, source: "operator" });
+      try {
+        db.prepare(
+          `INSERT INTO transcript_events(id, session_slug, seq, turn, kind, body, timestamp)
+           VALUES (?, ?, 0, 0, 'user_message', ?, ?)`,
+        ).run(seedEventId, slug, seedBody, now);
+      } catch (err) {
+        log.error("create: seed transcript_event insert failed", {
+          slug,
+          table: "transcript_events",
+          sessionExists: !!this.getSessionRow(slug),
+          err: String(err),
+        });
+        throw err;
+      }
+      const seedEvent = rowToTranscriptEvent({
+        id: seedEventId,
+        session_slug: slug,
+        seq: 0,
+        turn: 0,
+        kind: "user_message",
+        body: seedBody,
+        timestamp: now,
+      });
+      bus.emit({ kind: "transcript_event", sessionSlug: slug, event: seedEvent });
+
+      ctx.audit.record("operator", "session.create", { kind: "session", id: slug });
+
+      try {
+        await this.setupAndSpawn(slug, req, session, providerName);
+      } catch (err) {
+        log.error("session setup failed", { slug, err: String(err) });
+        this.failSessionWithAttention(slug, `Spawn failed: ${String(err)}`);
+        throw err;
+      }
+
+      if (req.parentSlug) {
+        const parent = this.get(req.parentSlug);
+        if (parent && parent.mode === "think") {
+          ctx.audit.record(
+            "operator",
+            "spawn_from_think",
+            { kind: "session", id: slug },
+            { parentSlug: parent.slug, mode: req.mode ?? "task" },
+          );
+        }
+      }
+
+      return this.buildSession(this.getSessionRow(slug)!);
+    });
   }
 
   private getRootSlug(parentSlug: string): string | null {
@@ -649,10 +668,20 @@ export class SessionRegistry {
 
     this.handles.set(slug, handle);
 
-    if (handle.externalId) {
-      this.upsertProviderState.run(slug, providerName, handle.externalId, 0, 0, "{}", nowIso());
-    } else {
-      this.upsertProviderState.run(slug, providerName, null, 0, 0, "{}", nowIso());
+    try {
+      if (handle.externalId) {
+        this.upsertProviderState.run(slug, providerName, handle.externalId, 0, 0, "{}", nowIso());
+      } else {
+        this.upsertProviderState.run(slug, providerName, null, 0, 0, "{}", nowIso());
+      }
+    } catch (err) {
+      log.error("setupAndSpawn: insert into provider_state failed", {
+        slug,
+        table: "provider_state",
+        sessionExists: !!this.getSessionRow(slug),
+        err: String(err),
+      });
+      throw err;
     }
 
     this.updateSession.run("running", nowIso(), nowIso(), null, worktreePath, branch ?? null, slug);
@@ -1099,29 +1128,34 @@ export class SessionRegistry {
   }
 
   async delete(slug: string): Promise<void> {
-    const { db, bus } = this.deps;
-    const row = this.getSessionRow(slug);
-    if (!row) {
-      throw new EngineError("not_found", `Session ${slug} not found`);
-    }
+    // Serialize per-slug against setupAndSpawn so we cannot drop the parent row
+    // while a concurrent spawn is mid-flight and about to insert FK-bearing
+    // child rows (provider_state, transcript_events).
+    return this.slugMutex.run(slug, async () => {
+      const { db, bus } = this.deps;
+      const row = this.getSessionRow(slug);
+      if (!row) {
+        throw new EngineError("not_found", `Session ${slug} not found`);
+      }
 
-    const handle = this.handles.get(slug);
-    if (handle) {
-      handle.kill("SIGKILL");
-      this.handles.delete(slug);
-    }
+      const handle = this.handles.get(slug);
+      if (handle) {
+        handle.kill("SIGKILL");
+        this.handles.delete(slug);
+      }
 
-    const tx = db.transaction((s: string) => {
-      db.prepare(`DELETE FROM transcript_events WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM reply_queue WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM screenshots WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM checkpoints WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM provider_state WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM sessions WHERE slug = ?`).run(s);
+      const tx = db.transaction((s: string) => {
+        db.prepare(`DELETE FROM transcript_events WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM reply_queue WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM screenshots WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM checkpoints WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM provider_state WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM sessions WHERE slug = ?`).run(s);
+      });
+      tx(slug);
+
+      bus.emit({ kind: "session_deleted", slug });
     });
-    tx(slug);
-
-    bus.emit({ kind: "session_deleted", slug });
   }
 
   async diff(slug: string): Promise<WorkspaceDiff> {
