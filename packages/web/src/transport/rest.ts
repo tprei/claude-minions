@@ -38,6 +38,8 @@ import type {
   RecentStats,
   ReadinessSummary,
   AuditEvent,
+  AttentionFlag,
+  AttentionInboxItem,
   VersionInfo,
   ListEnvelope,
   OkEnvelope,
@@ -287,6 +289,21 @@ export function getReadinessSummary(conn: Connection): Promise<ReadinessSummary>
 export function getAuditEvents(conn: Connection, cursor?: string): Promise<ListEnvelope<AuditEvent>> {
   const q = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
   return apiFetch(conn, `/api/audit/events${q}`);
+}
+
+export function getAttentionItems(conn: Connection): Promise<ListEnvelope<AttentionInboxItem>> {
+  return apiFetch(conn, "/api/attention/items");
+}
+
+export function dismissAttention(
+  conn: Connection,
+  sessionSlug: string,
+  attentionKind: AttentionFlag["kind"],
+): Promise<OkEnvelope> {
+  return apiFetch(conn, "/api/attention/dismiss", {
+    method: "POST",
+    body: JSON.stringify({ sessionSlug, attentionKind }),
+  });
 }
 
 export function getVersion(conn: Connection): Promise<VersionInfo> {

@@ -8,6 +8,7 @@ import { ShipPipelineView } from "./shipPipeline.js";
 import { NewSessionView } from "./newSession.js";
 import { DoctorView } from "./doctor.js";
 import { LoopsView } from "./loops.js";
+import { InboxView } from "./inbox.js";
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed" | "attention";
 type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
@@ -48,6 +49,8 @@ export function ViewSwitcher({ view, filterStatus, filterMode, filterBucket, ses
       return api ? <DoctorView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
     case "loops":
       return api ? <LoopsView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
+    case "inbox":
+      return api ? <InboxView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
     default:
       return <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
   }
