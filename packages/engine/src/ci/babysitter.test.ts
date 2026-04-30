@@ -88,7 +88,7 @@ describe("CiBabysitter.pollAll", () => {
     assert.deepEqual(polled, ["s-completed"]);
   });
 
-  test("skips sessions whose CI already terminally failed", async () => {
+  test("polls sessions with ci_failed attention if their PR is still open", async () => {
     const sessions = [
       makeSession({
         slug: "s-fail",
@@ -100,10 +100,10 @@ describe("CiBabysitter.pollAll", () => {
     const polled: string[] = [];
     const bs = new CiBabysitter(makeCtx(sessions, polled), createLogger("error"));
     await bs.pollAll();
-    assert.deepEqual(polled, []);
+    assert.deepEqual(polled, ["s-fail"]);
   });
 
-  test("skips sessions whose CI already terminally passed", async () => {
+  test("polls sessions with ci_passed attention if their PR is still open", async () => {
     const sessions = [
       makeSession({
         slug: "s-pass",
@@ -115,7 +115,7 @@ describe("CiBabysitter.pollAll", () => {
     const polled: string[] = [];
     const bs = new CiBabysitter(makeCtx(sessions, polled), createLogger("error"));
     await bs.pollAll();
-    assert.deepEqual(polled, []);
+    assert.deepEqual(polled, ["s-pass"]);
   });
 
   test("skips sessions without a PR or with a closed/merged PR", async () => {
@@ -127,6 +127,23 @@ describe("CiBabysitter.pollAll", () => {
       makeSession({ slug: "no-pr", status: "running" }),
       makeSession({ slug: "merged", status: "completed", pr: merged }),
       makeSession({ slug: "closed", status: "completed", pr: closed }),
+    ];
+    const polled: string[] = [];
+    const bs = new CiBabysitter(makeCtx(sessions, polled), createLogger("error"));
+    await bs.pollAll();
+    assert.deepEqual(polled, []);
+  });
+
+  test("skips a session whose PR was merged even if it has ci_failed attention", async () => {
+    const merged = openPr(12);
+    merged.state = "merged";
+    const sessions = [
+      makeSession({
+        slug: "merged-with-fail",
+        status: "completed",
+        pr: merged,
+        attention: [{ kind: "ci_failed", message: "old", raisedAt: new Date().toISOString() }],
+      }),
     ];
     const polled: string[] = [];
     const bs = new CiBabysitter(makeCtx(sessions, polled), createLogger("error"));

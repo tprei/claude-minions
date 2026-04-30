@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { PRSummary } from "@minions/shared";
+import type { AttentionFlag, PRSummary } from "@minions/shared";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { parseGithubRemote } from "../github/parseRemote.js";
 import { onPrUpdated as handlePrUpdated } from "./prLifecycle.js";
@@ -98,6 +98,41 @@ export function rollupToChecks(rollup: GhRollupEntry[] | null | undefined): GhCh
       link: entry.targetUrl ?? "",
     };
   });
+}
+
+export type CiAttentionUpdate =
+  | { kind: "noop" }
+  | { kind: "add"; attention: AttentionFlag[] }
+  | { kind: "update"; attention: AttentionFlag[]; previousMessage: string }
+  | { kind: "clear"; attention: AttentionFlag[]; previousMessage: string };
+
+export function computeCiAttentionUpdate(
+  currentAttention: AttentionFlag[],
+  failedCheckNames: string[],
+  raisedAt: string,
+): CiAttentionUpdate {
+  const existingFailedIdx = currentAttention.findIndex((a) => a.kind === "ci_failed");
+  if (failedCheckNames.length > 0) {
+    const message = `CI checks failed: ${failedCheckNames.join(", ")}`;
+    if (existingFailedIdx >= 0) {
+      const previous = currentAttention[existingFailedIdx]!;
+      const attention = currentAttention.map((a, i) =>
+        i === existingFailedIdx ? { ...a, message, raisedAt } : a,
+      );
+      return { kind: "update", attention, previousMessage: previous.message };
+    }
+    const attention = [
+      ...currentAttention,
+      { kind: "ci_failed" as const, message, raisedAt },
+    ];
+    return { kind: "add", attention };
+  }
+  if (existingFailedIdx >= 0) {
+    const previous = currentAttention[existingFailedIdx]!;
+    const attention = currentAttention.filter((a) => a.kind !== "ci_failed");
+    return { kind: "clear", attention, previousMessage: previous.message };
+  }
+  return { kind: "noop" };
 }
 
 function mapPrState(state: string): PRSummary["state"] {
@@ -227,23 +262,32 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     const fresh = ctx.sessions.get(slug);
     if (!fresh) return;
 
-    if (failed.length > 0 && !fresh.attention.find((a) => a.kind === "ci_failed")) {
-      const failNames = failed.map((c) => c.name).join(", ");
-      const attention = [
-        ...fresh.attention,
-        {
-          kind: "ci_failed" as const,
-          message: `CI checks failed: ${failNames}`,
-          raisedAt: new Date().toISOString(),
-        },
-      ];
-      sessionRepo.setAttention(slug, attention);
+    const failNames = failed.map((c) => c.name).join(", ");
+    const update = computeCiAttentionUpdate(
+      fresh.attention,
+      failed.map((c) => c.name),
+      new Date().toISOString(),
+    );
 
-      const updated = ctx.sessions.get(slug);
-      if (updated) {
-        ctx.bus.emit({ kind: "session_updated", session: updated });
-      }
+    if (update.kind !== "noop") {
+      sessionRepo.setAttention(slug, update.attention);
+    }
 
+    if (update.kind === "clear") {
+      ctx.audit.record(
+        "system",
+        "ci.attention.cleared",
+        { kind: "session", id: slug },
+        { previousMessage: update.previousMessage },
+      );
+    }
+
+    const updated = ctx.sessions.get(slug);
+    if (updated) {
+      ctx.bus.emit({ kind: "session_updated", session: updated });
+    }
+
+    if (update.kind === "add") {
       const autoFix = ctx.runtime.effective()["ciAutoFix"];
       if (autoFix === true && !hasRunningFixCi(slug)) {
         const head = prData.headRefName;
@@ -265,11 +309,6 @@ Fix the failing CI checks. Edit code as needed, run pnpm typecheck/test locally,
         }).catch((e) => {
           log.warn("ci auto-fix session spawn failed", { slug, err: (e as Error).message });
         });
-      }
-    } else {
-      const updated = ctx.sessions.get(slug);
-      if (updated) {
-        ctx.bus.emit({ kind: "session_updated", session: updated });
       }
     }
 
