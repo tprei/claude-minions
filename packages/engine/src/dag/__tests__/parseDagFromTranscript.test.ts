@@ -259,8 +259,12 @@ describe("parseDagFromTranscript handler", () => {
     assert.equal(dags.length, 1, "DAG was created");
     const dag = dags[0]!;
 
-    assert.equal(spy.setDagIdCalls.length, 1, "setDagId was called once");
-    assert.deepEqual(spy.setDagIdCalls[0], { slug: SHIP_SLUG, dagId: dag.id });
+    const parentSetDagId = spy.setDagIdCalls.find((c) => c.slug === SHIP_SLUG);
+    assert.deepEqual(
+      parentSetDagId,
+      { slug: SHIP_SLUG, dagId: dag.id },
+      "parent ship session.dagId set to created DAG id",
+    );
 
     const dagIdRow = db
       .prepare(`SELECT dag_id FROM sessions WHERE slug = ?`)
@@ -273,6 +277,15 @@ describe("parseDagFromTranscript handler", () => {
     assert.equal(schemaCall.mode, "dag-task");
     assert.equal(schemaCall.repoId, "repo-x");
     assert.equal(schemaCall.baseBranch, "main");
+
+    const schemaSpawned = spy.spawnedSessions.find((s) => s.title === "schema");
+    assert.ok(schemaSpawned, "schema session was spawned");
+    const childSetDagId = spy.setDagIdCalls.find((c) => c.slug === schemaSpawned.slug);
+    assert.deepEqual(
+      childSetDagId,
+      { slug: schemaSpawned.slug, dagId: dag.id },
+      "spawned dag-task child also has dagId promoted to the parent DAG",
+    );
 
     const refreshed = api.get(dag.id)!;
     const schemaNode = refreshed.nodes.find((n) => n.title === "schema")!;
@@ -301,13 +314,19 @@ describe("parseDagFromTranscript handler", () => {
     assert.equal(dags.length, 1);
     assert.equal(dags[0]!.id, result.dagId);
 
-    assert.equal(spy.setDagIdCalls.length, 1, "setDagId invoked once");
-    assert.equal(spy.setDagIdCalls[0]!.dagId, result.dagId);
+    const parentCall = spy.setDagIdCalls.find((c) => c.slug === SHIP_SLUG);
+    assert.ok(parentCall, "setDagId invoked for parent ship session");
+    assert.equal(parentCall.dagId, result.dagId);
 
+    const callsBeforeSecond = spy.setDagIdCalls.length;
     const second = await api.tryCreateFromTranscript(SHIP_SLUG);
     assert.equal(second.created, false, "second call is a no-op");
     assert.equal(second.dagId, result.dagId, "second call returns existing dagId");
-    assert.equal(spy.setDagIdCalls.length, 1, "setDagId not called again");
+    assert.equal(
+      spy.setDagIdCalls.length,
+      callsBeforeSecond,
+      "no additional setDagId calls on no-op",
+    );
   });
 
   test("tryCreateFromTranscript returns { created: false } when no parseable block", async () => {

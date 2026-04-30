@@ -129,6 +129,8 @@ export class DagScheduler {
         metadata: { dagId, dagNodeId: node.id },
       });
 
+      this.ctx.sessions.setDagId(session.slug, dagId);
+
       this.repo.updateNode(node.id, {
         status: "running",
         sessionSlug: session.slug,
