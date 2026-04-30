@@ -4,11 +4,15 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "bin": { "minions-engine": "./dist/cli.js" },
+  "bin": {
+    "minions-engine": "./dist/cli.js",
+    "minions-supervise": "./dist/bin/supervise.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "dev": "NODE_OPTIONS=--max-old-space-size=8192 tsx watch src/cli.ts",
     "start": "node dist/cli.js",
+    "supervise": "node dist/bin/supervise.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test --test-reporter=spec",
     "lint": "echo skip"
