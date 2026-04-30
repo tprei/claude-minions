@@ -33,7 +33,7 @@ import {
   assertAllowedMime,
   assertWithinSize,
 } from "./attachmentValidator.js";
-import { Screenshots, type ScreenshotSource } from "./screenshots.js";
+import { Screenshots } from "./screenshots.js";
 import { Checkpoints } from "./checkpoints.js";
 import { writeSessionSettings } from "./writeSessionSettings.js";
 import { computeDiff } from "./diff.js";
@@ -103,12 +103,6 @@ export interface RegistryDeps {
   ctx: EngineContext;
 }
 
-const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
-  "completed",
-  "failed",
-  "cancelled",
-]);
-
 const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
 const STUCK_PENDING_GRACE_MS = 60_000;
 const STUCK_PENDING_SWEEP_INTERVAL_MS = 30_000;
@@ -135,16 +129,6 @@ async function withTimeout<T>(
   }
 }
 
-const TRANSPARENT_PNG_1X1: Buffer = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  "base64",
-);
-
-interface PrevSessionState {
-  status: SessionStatus;
-  attentionKinds: Set<string>;
-}
-
 export class SessionRegistry {
   private handles = new Map<string, ProviderHandle>();
   private readonly collector: TranscriptCollector;
@@ -153,7 +137,6 @@ export class SessionRegistry {
   private readonly checkpointStore: Checkpoints;
   private readonly paths: ReturnType<typeof workspacePaths>;
   private readonly repo: SessionRepo;
-  private readonly prevSessionState = new Map<string, PrevSessionState>();
 
   private readonly insertSession: Database.Statement;
   private readonly updateSession: Database.Statement;
@@ -248,8 +231,6 @@ export class SessionRegistry {
     );
     this.getRepo = db.prepare(`SELECT * FROM repos WHERE id = ?`);
 
-    bus.on("session_updated", (ev) => this.onSessionUpdated(ev.session));
-
     this.startStuckPendingSweep();
   }
 
@@ -322,39 +303,6 @@ export class SessionRegistry {
 
     const updatedRow = this.getSessionRow(slug)!;
     this.emitUpdated(this.buildSession(updatedRow));
-  }
-
-  private onSessionUpdated(session: Session): void {
-    const slug = session.slug;
-    const newStatus = session.status;
-    const newKinds = new Set(session.attention.map((a) => a.kind));
-    const prev = this.prevSessionState.get(slug);
-    this.prevSessionState.set(slug, { status: newStatus, attentionKinds: newKinds });
-
-    const wasTerminal = prev ? TERMINAL_STATUSES.has(prev.status) : false;
-    const isTerminal = TERMINAL_STATUSES.has(newStatus);
-
-    if (isTerminal && !wasTerminal) {
-      const source: ScreenshotSource = newStatus === "failed" ? "failure" : "turn_end";
-      this.captureLifecycle(slug, source);
-      return;
-    }
-
-    const prevKinds = prev?.attentionKinds ?? new Set<string>();
-    for (const kind of newKinds) {
-      if (!prevKinds.has(kind)) {
-        this.captureLifecycle(slug, "readiness_change");
-        return;
-      }
-    }
-  }
-
-  private captureLifecycle(slug: string, source: ScreenshotSource): void {
-    this.screenshots
-      .capture(slug, { source, pngBuffer: TRANSPARENT_PNG_1X1 })
-      .catch((err) => {
-        this.deps.log.warn("screenshot capture failed", { slug, source, err: String(err) });
-      });
   }
 
   private getSessionRow(slug: string): SessionRow | null {
@@ -1181,8 +1129,6 @@ export class SessionRegistry {
       db.prepare(`DELETE FROM sessions WHERE slug = ?`).run(s);
     });
     tx(slug);
-
-    this.prevSessionState.delete(slug);
 
     bus.emit({ kind: "session_deleted", slug });
   }
