@@ -512,6 +512,18 @@ export class SessionRegistry {
       throw err;
     }
 
+    if (req.parentSlug) {
+      const parent = this.get(req.parentSlug);
+      if (parent && parent.mode === "think") {
+        ctx.audit.record(
+          "operator",
+          "spawn_from_think",
+          { kind: "session", id: slug },
+          { parentSlug: parent.slug, mode: req.mode ?? "task" },
+        );
+      }
+    }
+
     return this.buildSession(this.getSessionRow(slug)!);
   }
 
