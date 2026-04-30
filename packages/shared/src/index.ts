@@ -21,3 +21,4 @@ export * from "./push.js";
 export * from "./entrypoint.js";
 export * from "./api.js";
 export * from "./doctor.js";
+export * from "./cleanup.js";

@@ -15,6 +15,7 @@ export interface ResourceSnapshot {
     usedBytes: number;
     totalBytes: number;
     workspacePath: string;
+    workspaceUsedBytes: number;
   };
   eventLoop: {
     lagMs: number;

@@ -1,7 +1,21 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type Database from "better-sqlite3";
 import type { ResourceSnapshot } from "@minions/shared";
 import { bytesAvailable } from "../util/fs.js";
+
+const execFileAsync = promisify(execFile);
+
+async function workspaceUsedBytes(path: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync("du", ["-sb", path], { timeout: 5_000 });
+    const n = Number.parseInt(stdout.split(/\s+/)[0] ?? "0", 10);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
 import {
   readCpuLimit,
   readMemoryLimit,
@@ -43,10 +57,11 @@ export class ResourceMonitor {
   async sample(): Promise<ResourceSnapshot> {
     this.lagMonitor.enable();
 
-    const [cpuLimit, memLimit, diskInfo, currentCpuSample] = await Promise.all([
+    const [cpuLimit, memLimit, diskInfo, workspaceBytes, currentCpuSample] = await Promise.all([
       readCpuLimit(),
       readMemoryLimit(),
       bytesAvailable(this.workspaceDir),
+      workspaceUsedBytes(this.workspaceDir),
       readCpuUsageSample(),
     ]);
 
@@ -85,6 +100,7 @@ export class ResourceMonitor {
         usedBytes: diskInfo.used,
         totalBytes: diskInfo.total,
         workspacePath: this.workspaceDir,
+        workspaceUsedBytes: workspaceBytes,
       },
       eventLoop: {
         lagMs: Number.isFinite(lagMs) ? lagMs : 0,
