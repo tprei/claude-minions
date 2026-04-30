@@ -1,6 +1,8 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { resolveWorktreeGitPaths } from "../providers/claudeCode.js";
 import { ensureDir } from "../util/fs.js";
 
@@ -25,15 +27,30 @@ async function symlinkOperatorAuth(claudeDir: string): Promise<void> {
   }
 }
 
+function resolvePolicyScript(name: string): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const enginePkgRoot = path.resolve(here, "..", "..");
+  const distScript = path.join(enginePkgRoot, "dist", "sessions", "policy", name);
+  const srcScript = path.join(enginePkgRoot, "src", "sessions", "policy", name);
+  if (existsSync(distScript)) return distScript;
+  return srcScript;
+}
+
+export interface WriteSessionSettingsOpts {
+  slug: string;
+  policyHooksEnabled: boolean;
+}
+
 export async function writeSessionSettings(
   homeDir: string,
   worktreePath: string,
+  opts: WriteSessionSettingsOpts,
 ): Promise<void> {
   const { gitDir, gitCommonDir } = await resolveWorktreeGitPaths(worktreePath);
 
   const allowOnly = Array.from(new Set([worktreePath, gitDir, gitCommonDir]));
 
-  const settings = {
+  const base = {
     sandbox: {
       write: {
         allowOnly,
@@ -41,12 +58,39 @@ export async function writeSessionSettings(
     },
     includeCoAuthoredBy: false,
     disableWelcomeMessage: true,
-    disableAllHooks: true,
     disableNonEssentialModelCalls: true,
     bashTimeout: 120000,
     bashMaxOutputLength: 100000,
     apiKeyHelper: "",
   };
+
+  let hooks: Record<string, unknown> | undefined;
+  if (opts.policyHooksEnabled === true) {
+    const preToolUse = resolvePolicyScript("preToolUseBash.mjs");
+    const stopHint = resolvePolicyScript("stopHint.mjs");
+    hooks = {
+      PreToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [
+            {
+              type: "command",
+              command: `node ${preToolUse}`,
+              timeout: 5,
+              env: { MINIONS_WORKTREE: worktreePath, MINIONS_SLUG: opts.slug },
+            },
+          ],
+        },
+      ],
+      Stop: [
+        {
+          hooks: [{ type: "command", command: `node ${stopHint}`, timeout: 5 }],
+        },
+      ],
+    };
+  }
+
+  const settings = { ...base, ...(hooks ? { hooks } : {}) };
 
   const claudeDir = path.join(homeDir, ".claude");
   await ensureDir(claudeDir);

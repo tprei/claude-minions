@@ -65,12 +65,25 @@ interface Settings {
   bashTimeout?: number;
   bashMaxOutputLength?: number;
   apiKeyHelper?: string;
+  hooks?: {
+    PreToolUse?: Array<{
+      matcher: string;
+      hooks: Array<{
+        type: string;
+        command: string;
+        timeout?: number;
+        env?: Record<string, string>;
+      }>;
+    }>;
+    Stop?: Array<{
+      hooks: Array<{ type: string; command: string; timeout?: number }>;
+    }>;
+  };
 }
 
 function assertHardeningKeys(parsed: Settings): void {
   assert.equal(parsed.includeCoAuthoredBy, false, "includeCoAuthoredBy must be false");
   assert.equal(parsed.disableWelcomeMessage, true, "disableWelcomeMessage must be true");
-  assert.equal(parsed.disableAllHooks, true, "disableAllHooks must be true");
   assert.equal(
     parsed.disableNonEssentialModelCalls,
     true,
@@ -101,7 +114,10 @@ describe("writeSessionSettings", () => {
         log,
       );
 
-      await writeSessionSettings(fx.homeDir, worktreePath);
+      await writeSessionSettings(fx.homeDir, worktreePath, {
+        slug: "settings-bare",
+        policyHooksEnabled: true,
+      });
 
       const settingsPath = path.join(fx.homeDir, ".claude", "settings.json");
       const raw = await fs.readFile(settingsPath, "utf8");
@@ -125,6 +141,25 @@ describe("writeSessionSettings", () => {
       assert.equal(allowOnly.length, 3, "linked worktree must have 3 distinct allowOnly entries");
 
       assertHardeningKeys(parsed);
+
+      const preToolUse = parsed.hooks?.PreToolUse?.[0];
+      assert.ok(preToolUse, "hooks.PreToolUse[0] must be present");
+      assert.equal(preToolUse.matcher, "Bash", "PreToolUse matcher must be Bash");
+      const preCmd = preToolUse.hooks[0]?.command ?? "";
+      assert.ok(preCmd.startsWith("node "), `PreToolUse command must start with "node ": ${preCmd}`);
+      assert.ok(
+        preCmd.endsWith("preToolUseBash.mjs"),
+        `PreToolUse command must end with "preToolUseBash.mjs": ${preCmd}`,
+      );
+      const preEnv = preToolUse.hooks[0]?.env ?? {};
+      assert.equal(preEnv.MINIONS_WORKTREE, worktreePath, "PreToolUse env must include MINIONS_WORKTREE");
+      assert.equal(preEnv.MINIONS_SLUG, "settings-bare", "PreToolUse env must include MINIONS_SLUG");
+
+      const stopCmd = parsed.hooks?.Stop?.[0]?.hooks[0]?.command ?? "";
+      assert.ok(
+        stopCmd.endsWith("stopHint.mjs"),
+        `Stop command must end with "stopHint.mjs": ${stopCmd}`,
+      );
     } finally {
       await fx.cleanup();
     }
@@ -146,7 +181,10 @@ describe("writeSessionSettings", () => {
       await g.add(".");
       await g.commit("initial");
 
-      await writeSessionSettings(homeDir, worktreePath);
+      await writeSessionSettings(homeDir, worktreePath, {
+        slug: "flat",
+        policyHooksEnabled: true,
+      });
 
       const settingsPath = path.join(homeDir, ".claude", "settings.json");
       const parsed = JSON.parse(await fs.readFile(settingsPath, "utf8")) as Settings;
@@ -158,6 +196,41 @@ describe("writeSessionSettings", () => {
       assert.equal(new Set(allowOnly).size, allowOnly.length, "allowOnly entries must be unique");
 
       assertHardeningKeys(parsed);
+    } finally {
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("omits hooks and disableAllHooks when policyHooksEnabled is false", async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "session-settings-nohooks-"));
+    const worktreePath = path.join(tmpRoot, "wt");
+    const homeDir = path.join(tmpRoot, "home");
+    await fs.mkdir(worktreePath, { recursive: true });
+    await fs.mkdir(homeDir, { recursive: true });
+
+    try {
+      const g = simpleGit(worktreePath);
+      await g.init(["--initial-branch=main"]);
+      await g.addConfig("user.email", "test@local");
+      await g.addConfig("user.name", "Test");
+      await fs.writeFile(path.join(worktreePath, "README.md"), "seed\n");
+      await g.add(".");
+      await g.commit("initial");
+
+      await writeSessionSettings(homeDir, worktreePath, {
+        slug: "no-hooks",
+        policyHooksEnabled: false,
+      });
+
+      const settingsPath = path.join(homeDir, ".claude", "settings.json");
+      const parsed = JSON.parse(await fs.readFile(settingsPath, "utf8")) as Settings;
+
+      assert.equal(parsed.hooks, undefined, "hooks must be absent when policyHooksEnabled is false");
+      assert.equal(
+        parsed.disableAllHooks,
+        undefined,
+        "disableAllHooks must be absent (omitting hooks key is sufficient)",
+      );
     } finally {
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
