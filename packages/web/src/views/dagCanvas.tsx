@@ -593,17 +593,17 @@ export function DagCanvasView({ dagId }: Props) {
   return (
     <DagCanvasChrome>
       <div className="flex flex-col h-full">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 border-b border-border bg-bg-soft text-sm">
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-bg-soft text-xs md:text-sm md:px-4 md:py-2 md:gap-x-3">
           <button
             type="button"
             onClick={clearDag}
-            className="text-fg-subtle hover:text-fg-muted"
+            className="text-fg-subtle hover:text-fg-muted flex-shrink-0"
           >
             ← all DAGs
           </button>
-          <span className="text-fg font-medium truncate max-w-full">{selected.title}</span>
-          <span className="pill bg-bg-elev text-fg-muted text-[10px]">{selected.status}</span>
-          <span className="text-fg-subtle text-xs">{selected.nodes.length} nodes</span>
+          <span className="text-fg font-medium truncate min-w-0 flex-1">{selected.title}</span>
+          <span className="pill bg-bg-elev text-fg-muted text-[10px] flex-shrink-0">{selected.status}</span>
+          <span className="text-fg-subtle text-[10px] md:text-xs flex-shrink-0">{selected.nodes.length} nodes</span>
         </div>
         <div className="flex-1">
           <DagCanvasInner
