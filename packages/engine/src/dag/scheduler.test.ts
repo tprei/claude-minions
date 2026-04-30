@@ -162,6 +162,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
       setDagId: () => {},
       markWaitingInput: () => {},
       appendAttention: () => {},
+      dismissAttention: () => { throw new Error("not implemented"); },
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({ sessionSlug: slug, patch: "", stats: [], truncated: false, byteSize: 0, generatedAt: new Date().toISOString() }),

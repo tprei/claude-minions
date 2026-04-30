@@ -89,6 +89,7 @@ function makeMockCtx(opts: {
       setDagId: () => {},
       markWaitingInput: () => {},
       appendAttention: () => {},
+      dismissAttention: () => { throw new Error("not implemented"); },
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({

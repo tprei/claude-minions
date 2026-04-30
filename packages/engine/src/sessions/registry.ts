@@ -662,6 +662,21 @@ export class SessionRegistry {
     this.emitUpdated(this.buildSession(updatedRow));
   }
 
+  dismissAttention(slug: string, kind: AttentionFlag["kind"]): Session {
+    const session = this.get(slug);
+    if (!session) {
+      throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+    const remaining = session.attention.filter((a) => a.kind !== kind);
+    if (remaining.length === session.attention.length) {
+      return session;
+    }
+    this.repo.setAttention(slug, remaining);
+    const updated = this.buildSession(this.getSessionRow(slug)!);
+    this.emitUpdated(updated);
+    return updated;
+  }
+
   private hasBudgetExceeded(slug: string): boolean {
     const session = this.get(slug);
     if (!session) return false;

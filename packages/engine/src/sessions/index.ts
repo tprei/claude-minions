@@ -27,6 +27,7 @@ export function createSessionsSubsystem(deps: SubsystemDeps): SubsystemResult<En
     setDagId: (slug, dagId) => registry.setDagId(slug, dagId),
     markWaitingInput: (slug, reason) => registry.markWaitingInput(slug, reason),
     appendAttention: (slug, flag) => registry.appendAttention(slug, flag),
+    dismissAttention: (slug, kind) => registry.dismissAttention(slug, kind),
     kickReplyQueue: (slug) => registry.kickReplyQueue(slug),
     resumeAllActive: () => registry.resumeAllActive(),
     diff: (slug) => registry.diff(slug),

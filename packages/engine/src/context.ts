@@ -35,6 +35,7 @@ export interface EngineContext {
     setDagId: (slug: string, dagId: string) => void;
     markWaitingInput: (slug: string, reason?: string) => void;
     appendAttention: (slug: string, flag: import("@minions/shared").AttentionFlag) => void;
+    dismissAttention: (slug: string, kind: import("@minions/shared").AttentionFlag["kind"]) => import("@minions/shared").Session;
     kickReplyQueue: (slug: string) => Promise<boolean>;
     resumeAllActive: () => Promise<void>;
     diff: (slug: string) => Promise<import("@minions/shared").WorkspaceDiff>;
