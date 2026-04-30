@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import type { DoctorCheck } from "@minions/shared";
+import { useRootStore } from "../store/root.js";
+import { CleanupCard } from "./cleanup/CleanupCard.js";
 
 interface ApiClient {
   get: (path: string) => Promise<unknown>;
@@ -46,6 +48,7 @@ const REFRESH_MS = 5000;
 const SESSION_KEYS: (keyof DoctorSessions)[] = ["running", "waiting", "completed", "failed", "total"];
 
 export function DoctorView({ api }: Props): ReactElement {
+  const conn = useRootStore((s) => s.getActiveConnection());
   const [data, setData] = useState<DoctorPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
@@ -175,6 +178,8 @@ export function DoctorView({ api }: Props): ReactElement {
               </span>
             )}
           </div>
+
+          {conn && <CleanupCard api={api} conn={conn} />}
         </div>
 
         {data?.checks && data.checks.length > 0 && (

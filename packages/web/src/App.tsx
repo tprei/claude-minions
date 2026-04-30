@@ -7,7 +7,7 @@ import { Sheet } from "./components/Sheet.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { buildActions, type PaletteSessionRef } from "./components/CommandPalette.actions.js";
 import { parseUrl, type ViewKind } from "./routing/parseUrl.js";
-import { subscribeUrlChanges } from "./routing/urlState.js";
+import { subscribeUrlChanges, setUrlState } from "./routing/urlState.js";
 import { useConnectionStore } from "./connections/store.js";
 import { useRootStore } from "./store/root.js";
 import { useSessionStore, EMPTY_SESSIONS } from "./store/sessionStore.js";
@@ -146,6 +146,12 @@ export function App(): ReactElement {
             onOpenMemory={() => setMemoryOpen(true)}
             onOpenRuntime={() => setRuntimeOpen(true)}
             onOpenLoops={() => setLoopsOpen(true)}
+            onOpenDoctor={() => {
+              if (!activeId) return;
+              setUrlState({ connectionId: activeId, view: "doctor" });
+              globalThis.location.hash = "cleanup";
+              closeMobile();
+            }}
             onNavigate={closeMobile}
           />
         )}
