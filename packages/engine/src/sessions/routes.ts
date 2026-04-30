@@ -12,6 +12,7 @@ import {
 } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import { EngineError } from "../errors.js";
+import { extractPlanFromThink } from "./extractPlan.js";
 import type { PageCursor } from "../store/repos/sessionRepo.js";
 
 const STATUS_SET: ReadonlySet<string> = new Set(SESSION_STATUSES);
@@ -157,6 +158,18 @@ export function registerSessionsRoutes(app: FastifyInstance, ctx: EngineContext)
       return reply.send({ items: ctx.sessions.transcript(req.params.slug, sinceSeq) });
     },
   );
+
+  app.get("/api/sessions/:slug/plan", async (req: FastifyRequest<{ Params: { slug: string } }>, reply) => {
+    const session = ctx.sessions.get(req.params.slug);
+    if (!session) {
+      throw new EngineError("not_found", `Session ${req.params.slug} not found`);
+    }
+    if (session.mode !== "think") {
+      throw new EngineError("bad_request", "plan extraction only supported for think sessions");
+    }
+    const result = await extractPlanFromThink(ctx, req.params.slug);
+    return reply.send(result);
+  });
 
   app.get("/api/sessions/:slug/diff", async (req: FastifyRequest<{ Params: { slug: string } }>, reply) => {
     const session = ctx.sessions.get(req.params.slug);

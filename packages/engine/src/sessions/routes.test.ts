@@ -7,6 +7,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { EngineContext } from "../context.js";
 import { isEngineError } from "../errors.js";
 import { registerSessionsRoutes } from "./routes.js";
+import type { Session, SessionMode, TranscriptEvent } from "@minions/shared";
 
 const TRANSPARENT_PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -125,6 +126,82 @@ describe("GET /api/sessions/:slug/screenshots/:filename", () => {
     assert.equal(res.statusCode, 400);
     const body = res.json() as { error: string };
     assert.equal(body.error, "bad_request");
+    await app.close();
+  });
+});
+
+interface PlanBuildOpts {
+  sessions: Map<string, { mode: SessionMode }>;
+  transcript?: (slug: string) => TranscriptEvent[];
+}
+
+function buildPlanApp(opts: PlanBuildOpts): FastifyInstance {
+  const app = Fastify({ logger: false });
+  app.setErrorHandler(async (err, _req, reply) => {
+    if (isEngineError(err)) {
+      await reply.status(err.status).send(err.toJSON());
+      return;
+    }
+    await reply.status(500).send({ error: "internal", message: (err as Error).message });
+  });
+  const ctx = {
+    sessions: {
+      get: (slug: string): Session | null => {
+        const s = opts.sessions.get(slug);
+        return s ? ({ slug, mode: s.mode } as unknown as Session) : null;
+      },
+      transcript: (slug: string): TranscriptEvent[] =>
+        opts.transcript ? opts.transcript(slug) : [],
+    },
+    github: { enabled: () => false, fetchPR: async () => ({}) },
+    readiness: { compute: async () => ({}) },
+  } as unknown as EngineContext;
+  registerSessionsRoutes(app, ctx);
+  return app;
+}
+
+describe("GET /api/sessions/:slug/plan", () => {
+  it("returns 200 with { plan, source } for a think session", async () => {
+    const longText = "x".repeat(250);
+    const app = buildPlanApp({
+      sessions: new Map([["t1", { mode: "think" }]]),
+      transcript: () => [
+        {
+          id: "evt-1",
+          sessionSlug: "t1",
+          seq: 1,
+          turn: 0,
+          timestamp: "2026-01-01T00:00:00Z",
+          kind: "assistant_text",
+          text: longText,
+        },
+      ],
+    });
+    const res = await app.inject({ method: "GET", url: "/api/sessions/t1/plan" });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as { plan: string; source: string };
+    assert.equal(body.plan, longText);
+    assert.equal(body.source, "transcript");
+    await app.close();
+  });
+
+  it("returns 400 when the session is not in think mode", async () => {
+    const app = buildPlanApp({
+      sessions: new Map([["s1", { mode: "ship" }]]),
+    });
+    const res = await app.inject({ method: "GET", url: "/api/sessions/s1/plan" });
+    assert.equal(res.statusCode, 400);
+    const body = res.json() as { error: string };
+    assert.equal(body.error, "bad_request");
+    await app.close();
+  });
+
+  it("returns 404 when the session does not exist", async () => {
+    const app = buildPlanApp({ sessions: new Map() });
+    const res = await app.inject({ method: "GET", url: "/api/sessions/missing/plan" });
+    assert.equal(res.statusCode, 404);
+    const body = res.json() as { error: string };
+    assert.equal(body.error, "not_found");
     await app.close();
   });
 });
