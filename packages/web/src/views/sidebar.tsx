@@ -24,6 +24,7 @@ interface SidebarProps {
   onOpenMemory: () => void;
   onOpenRuntime: () => void;
   onOpenLoops: () => void;
+  onOpenDoctor: () => void;
   onNavigate?: () => void;
 }
 
@@ -77,6 +78,7 @@ export function Sidebar({
   onOpenMemory,
   onOpenRuntime,
   onOpenLoops,
+  onOpenDoctor,
   onNavigate,
 }: SidebarProps): ReactElement {
   const activeId = useConnectionStore(s => s.activeId);
@@ -234,6 +236,13 @@ export function Sidebar({
             <span>📋</span> Audit
           </button>
         )}
+        <button
+          onClick={onOpenDoctor}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors"
+        >
+          <span>🧹</span>
+          <span className="flex-1 text-left">Cleanup</span>
+        </button>
       </div>
     </div>
   );

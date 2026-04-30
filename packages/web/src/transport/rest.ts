@@ -1,6 +1,14 @@
 import type { Connection } from "../connections/store.js";
 import { dispatchCommand, type DispatchOptions } from "../store/optimistic.js";
 import type {
+  CleanupCandidatesResponse,
+  CleanupPreviewRequest,
+  CleanupPreviewResponse,
+  CleanupExecuteRequest,
+  CleanupExecuteResponse,
+  CleanupableStatus,
+} from "@minions/shared";
+import type {
   Session,
   SessionStatus,
   SessionMode,
@@ -310,6 +318,34 @@ export interface UploadResponse {
   name: string;
   mimeType: string;
   byteSize: number;
+}
+
+export function fetchCleanupCandidates(
+  conn: Connection,
+  opts: { olderThanDays: number; statuses: CleanupableStatus[] },
+): Promise<CleanupCandidatesResponse> {
+  const qs = `olderThanDays=${opts.olderThanDays}&statuses=${opts.statuses.join(",")}`;
+  return apiFetch<CleanupCandidatesResponse>(conn, `/api/cleanup/candidates?${qs}`);
+}
+
+export function previewCleanup(
+  conn: Connection,
+  req: CleanupPreviewRequest,
+): Promise<CleanupPreviewResponse> {
+  return apiFetch<CleanupPreviewResponse>(conn, "/api/cleanup/preview", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export function executeCleanup(
+  conn: Connection,
+  req: CleanupExecuteRequest,
+): Promise<CleanupExecuteResponse> {
+  return apiFetch<CleanupExecuteResponse>(conn, "/api/cleanup/execute", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
 }
 
 export async function uploadAttachment(conn: Connection, file: File): Promise<UploadResponse> {
