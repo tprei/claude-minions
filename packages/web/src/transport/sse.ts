@@ -9,6 +9,7 @@ import type {
   DagCreatedEvent,
   DagUpdatedEvent,
   DagDeletedEvent,
+  DagNodeUpdatedEvent,
   TranscriptEventEvent,
   ResourceEvent,
   SessionScreenshotCapturedEvent,
@@ -29,6 +30,7 @@ export interface SseHandlers {
   onDagCreated?: (e: DagCreatedEvent) => void;
   onDagUpdated?: (e: DagUpdatedEvent) => void;
   onDagDeleted?: (e: DagDeletedEvent) => void;
+  onDagNodeUpdated?: (e: DagNodeUpdatedEvent) => void;
   onTranscriptEvent?: (e: TranscriptEventEvent) => void;
   onResource?: (e: ResourceEvent) => void;
   onSessionScreenshotCaptured?: (e: SessionScreenshotCapturedEvent) => void;
@@ -89,6 +91,7 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
       "dag_created",
       "dag_updated",
       "dag_deleted",
+      "dag_node_updated",
       "transcript_event",
       "resource",
       "session_screenshot_captured",
@@ -178,6 +181,7 @@ export function connectSse(conn: Connection, handlers: SseHandlers): SseConnecti
       case "dag_created": handlers.onDagCreated?.(data as DagCreatedEvent); break;
       case "dag_updated": handlers.onDagUpdated?.(data as DagUpdatedEvent); break;
       case "dag_deleted": handlers.onDagDeleted?.(data as DagDeletedEvent); break;
+      case "dag_node_updated": handlers.onDagNodeUpdated?.(data as DagNodeUpdatedEvent); break;
       case "transcript_event": dispatchTranscriptEvent(data as TranscriptEventEvent); break;
       case "resource": handlers.onResource?.(data as ResourceEvent); break;
       case "session_screenshot_captured": handlers.onSessionScreenshotCaptured?.(data as SessionScreenshotCapturedEvent); break;

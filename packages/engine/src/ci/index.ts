@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { AttentionFlag, PRSummary } from "@minions/shared";
+import type { AttentionFlag, DagNodeCiSummary, PRSummary } from "@minions/shared";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { parseGithubRemote } from "../github/parseRemote.js";
 import { onPrUpdated as handlePrUpdated } from "./prLifecycle.js";
 import { CiBabysitter } from "./babysitter.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
+import { DagRepo } from "../dag/model.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -100,6 +101,46 @@ export function rollupToChecks(rollup: GhRollupEntry[] | null | undefined): GhCh
   });
 }
 
+export function summarizeChecks(checks: GhCheck[]): Pick<DagNodeCiSummary, "state" | "counts" | "checks"> {
+  let passed = 0;
+  let failed = 0;
+  let pending = 0;
+  const slim: DagNodeCiSummary["checks"] = [];
+  for (const c of checks) {
+    const bucket: DagNodeCiSummary["checks"][number]["bucket"] =
+      c.bucket === "pass" ? "pass" : c.bucket === "fail" ? "fail" : "pending";
+    if (bucket === "pass") passed++;
+    else if (bucket === "fail") failed++;
+    else pending++;
+    slim.push({ name: c.name, bucket });
+  }
+  const state: DagNodeCiSummary["state"] =
+    failed > 0 ? "failing" : pending > 0 || checks.length === 0 ? "pending" : "passing";
+  return { state, counts: { passed, failed, pending }, checks: slim };
+}
+
+function ciSummaryEqual(
+  a: DagNodeCiSummary | null | undefined,
+  b: DagNodeCiSummary | null | undefined,
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.state !== b.state) return false;
+  if (a.counts.passed !== b.counts.passed) return false;
+  if (a.counts.failed !== b.counts.failed) return false;
+  if (a.counts.pending !== b.counts.pending) return false;
+  if (a.prNumber !== b.prNumber) return false;
+  if (a.prUrl !== b.prUrl) return false;
+  if (a.checks.length !== b.checks.length) return false;
+  for (let i = 0; i < a.checks.length; i++) {
+    const ca = a.checks[i]!;
+    const cb = b.checks[i]!;
+    if (ca.name !== cb.name) return false;
+    if (ca.bucket !== cb.bucket) return false;
+  }
+  return true;
+}
+
 export type CiAttentionUpdate =
   | { kind: "noop" }
   | { kind: "add"; attention: AttentionFlag[] }
@@ -157,8 +198,9 @@ async function runGh(args: string[]): Promise<string> {
 }
 
 export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsystem> {
-  const { ctx, log, db } = deps;
+  const { ctx, log, db, bus } = deps;
   const sessionRepo = new SessionRepo(db);
+  const dagRepo = new DagRepo(db, bus);
   const babysitter = new CiBabysitter(ctx, log);
 
   async function fetchPrAndChecks(
@@ -261,6 +303,28 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     const failed = checks.filter((c) => c.bucket === "fail");
     const fresh = ctx.sessions.get(slug);
     if (!fresh) return;
+
+    const dagNode = dagRepo.getNodeBySession(slug);
+    if (dagNode) {
+      const base = summarizeChecks(checks);
+      const nextSummary: DagNodeCiSummary = {
+        ...base,
+        prNumber: refreshedPr.number,
+        prUrl: refreshedPr.url,
+        updatedAt: new Date().toISOString(),
+      };
+      if (!ciSummaryEqual(dagNode.ciSummary, nextSummary)) {
+        try {
+          dagRepo.setNodeCiSummary(dagNode.id, nextSummary);
+        } catch (err) {
+          log.warn("ci poll: failed to update dag node ci summary", {
+            slug,
+            nodeId: dagNode.id,
+            err: (err as Error).message,
+          });
+        }
+      }
+    }
 
     const failNames = failed.map((c) => c.name).join(", ");
     const update = computeCiAttentionUpdate(

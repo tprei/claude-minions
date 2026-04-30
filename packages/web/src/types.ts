@@ -117,6 +117,7 @@ export type {
   DagCreatedEvent,
   DagUpdatedEvent,
   DagDeletedEvent,
+  DagNodeUpdatedEvent,
   TranscriptEventEvent,
   ResourceEvent,
   SessionScreenshotCapturedEvent,

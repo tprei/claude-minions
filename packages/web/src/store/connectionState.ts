@@ -60,6 +60,7 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
       onDagCreated(e) { useDagStore.getState().upsert(conn.id, e.dag); },
       onDagUpdated(e) { useDagStore.getState().upsert(conn.id, e.dag); },
       onDagDeleted(e) { useDagStore.getState().remove(conn.id, e.id); },
+      onDagNodeUpdated(e) { useDagStore.getState().upsertNode(conn.id, e.dagId, e.node); },
       onTranscriptEvent(e) {
         useSessionStore.getState().appendTranscriptEvent(conn.id, e.sessionSlug, e.event);
       },

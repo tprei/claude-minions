@@ -16,7 +16,13 @@ import ReactFlow, {
   Position,
 } from "reactflow";
 import dagre from "dagre";
-import { isRetryableDagNodeStatus, type DAG, type DAGNode, type DAGNodeStatus } from "@minions/shared";
+import {
+  isRetryableDagNodeStatus,
+  type DAG,
+  type DAGNode,
+  type DAGNodeStatus,
+  type DagNodeCiSummary,
+} from "@minions/shared";
 import { useDagStore, EMPTY_DAGS } from "../store/dagStore.js";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore, type Connection } from "../connections/store.js";
@@ -55,6 +61,69 @@ const STATUS_COLOR: Record<DAGNodeStatus, string> = {
 const NODE_W = 180;
 const NODE_H = 80;
 const PARENT_NODE_ID = "__parent__";
+
+const CI_PILL_CLASS: Record<DagNodeCiSummary["state"], string> = {
+  passing: "border-green-700 bg-green-950/70 text-green-300",
+  failing: "border-red-700 bg-red-950/70 text-red-300",
+  pending: "border-zinc-600 bg-zinc-900/70 text-zinc-300",
+};
+
+const CI_PILL_LABEL: Record<DagNodeCiSummary["state"], string> = {
+  passing: "CI passing",
+  failing: "CI failing",
+  pending: "CI pending",
+};
+
+function ciTooltip(summary: DagNodeCiSummary): string {
+  const header = `${CI_PILL_LABEL[summary.state]} — ${summary.counts.passed} pass / ${summary.counts.failed} fail / ${summary.counts.pending} pending`;
+  if (summary.checks.length === 0) return header;
+  const lines = summary.checks
+    .slice(0, 12)
+    .map((c) => `• ${c.name || "(unnamed)"} [${c.bucket}]`);
+  if (summary.checks.length > 12) {
+    lines.push(`… +${summary.checks.length - 12} more`);
+  }
+  return `${header}\n${lines.join("\n")}`;
+}
+
+function CiStatusPill({ summary }: { summary: DagNodeCiSummary }) {
+  const handleClick = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    if (!summary.prUrl) return;
+    window.open(summary.prUrl, "_blank", "noopener,noreferrer");
+  };
+  const clickable = !!summary.prUrl;
+  const dot =
+    summary.state === "passing"
+      ? "bg-green-400"
+      : summary.state === "failing"
+        ? "bg-red-400"
+        : "bg-zinc-400";
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={!clickable}
+      title={ciTooltip(summary)}
+      data-testid="dag-node-ci-pill"
+      data-ci-state={summary.state}
+      className={cx(
+        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] leading-none",
+        CI_PILL_CLASS[summary.state],
+        clickable ? "cursor-pointer hover:brightness-125" : "cursor-default opacity-80",
+      )}
+    >
+      <span className={cx("inline-block w-1.5 h-1.5 rounded-full", dot)} />
+      <span>CI</span>
+      {summary.counts.failed > 0 && (
+        <span className="font-semibold">{summary.counts.failed}✗</span>
+      )}
+      {summary.counts.failed === 0 && summary.counts.pending > 0 && (
+        <span className="font-semibold">{summary.counts.pending}…</span>
+      )}
+    </button>
+  );
+}
 
 interface DagNodeData {
   node: DAGNode;
@@ -137,8 +206,15 @@ function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
     const session = sessions.get(node.sessionSlug);
     return !!session && session.attention.length > 0;
   });
+  const hasCiFailedAttention = useSessionStore((s) => {
+    if (!node.sessionSlug || !activeId) return false;
+    const sessions = s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS;
+    const session = sessions.get(node.sessionSlug);
+    return !!session && session.attention.some((a) => a.kind === "ci_failed");
+  });
   const showAttention = hasAttention || node.status === "failed";
   const canRetry = isRetryableDagNodeStatus(node.status);
+  const ciSummary = node.ciSummary ?? null;
 
   const goToSession = (slug: string): void => {
     if (!activeId) return;
@@ -153,15 +229,21 @@ function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
         STATUS_COLOR[node.status],
       )}
       style={{ width: NODE_W }}
+      data-testid="dag-node"
+      data-node-id={node.id}
     >
       <Handle type="target" position={Position.Top} className="!bg-zinc-600" />
       {showAttention && (
         <span
-          aria-label="needs attention"
+          aria-label={hasCiFailedAttention ? "CI failed" : "needs attention"}
+          data-testid="dag-node-attention-badge"
+          data-ci-failed={hasCiFailedAttention ? "true" : "false"}
           title={
-            node.status === "failed"
-              ? "node failed"
-              : "session has attention flags"
+            hasCiFailedAttention
+              ? "CI failed — session flagged for attention"
+              : node.status === "failed"
+                ? "node failed"
+                : "session has attention flags"
           }
           className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none border border-red-300 shadow"
         >
@@ -169,7 +251,10 @@ function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
         </span>
       )}
       <div className="font-medium leading-tight line-clamp-2 break-words">{node.title}</div>
-      <div className="mt-1 text-[10px] opacity-70">{node.status}</div>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <span className="text-[10px] opacity-70">{node.status}</span>
+        {ciSummary && <CiStatusPill summary={ciSummary} />}
+      </div>
       <div className="mt-1 flex items-center gap-2">
         {node.sessionSlug && (
           <button
