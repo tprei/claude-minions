@@ -32,6 +32,8 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
       delete: async () => {},
       reply: async () => {},
       setDagId: () => {},
+      setMetadata: () => {},
+      markCompleted: () => {},
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },
@@ -126,32 +128,31 @@ describe("runtime subsystem audit emission", () => {
   });
 
   test("PATCH emits audit_event of action runtime.override with fieldPath/oldValue/newValue", async () => {
-    await api.update({ ciAutoFix: true });
+    await api.update({ rebaseAutoResolverEnabled: false });
 
     const event = audit.find((e) => e.action === "runtime.override");
     assert.ok(event, "expected runtime.override audit event");
     assert.equal(event.actor, "operator");
     assert.equal(event.target?.kind, "runtime-field");
-    assert.equal(event.target?.id, "ciAutoFix");
-    assert.equal(event.detail?.["fieldPath"], "ciAutoFix");
-    assert.equal(event.detail?.["oldValue"], false);
-    assert.equal(event.detail?.["newValue"], true);
+    assert.equal(event.target?.id, "rebaseAutoResolverEnabled");
+    assert.equal(event.detail?.["fieldPath"], "rebaseAutoResolverEnabled");
+    assert.equal(event.detail?.["oldValue"], true);
+    assert.equal(event.detail?.["newValue"], false);
   });
 
   test("PATCH does not emit audit_event when value is unchanged", async () => {
-    // ciAutoFix default is false; setting to false should not record anything.
-    await api.update({ ciAutoFix: false });
+    await api.update({ rebaseAutoResolverEnabled: true });
     const event = audit.find((e) => e.action === "runtime.override");
     assert.equal(event, undefined, "no audit event should be recorded for noop update");
   });
 
   test("PATCH emits one audit_event per changed field", async () => {
-    await api.update({ ciAutoFix: true, dagMaxConcurrent: 5 });
+    await api.update({ rebaseAutoResolverEnabled: false, dagMaxConcurrent: 5 });
 
     const events = audit.filter((e) => e.action === "runtime.override");
     assert.equal(events.length, 2);
     const fields = events.map((e) => e.detail?.["fieldPath"]).sort();
-    assert.deepEqual(fields, ["ciAutoFix", "dagMaxConcurrent"]);
+    assert.deepEqual(fields, ["dagMaxConcurrent", "rebaseAutoResolverEnabled"]);
   });
 
   test("secret-tagged fields are redacted in audit body", async () => {

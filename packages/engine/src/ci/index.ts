@@ -141,6 +141,48 @@ function ciSummaryEqual(
   return true;
 }
 
+export const DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS = 3;
+
+export interface CheckBuckets {
+  failed: string[];
+  pending: string[];
+  passed: string[];
+}
+
+export function bucketChecks(checks: GhCheck[]): CheckBuckets {
+  return {
+    failed: checks.filter((c) => c.bucket === "fail").map((c) => c.name),
+    pending: checks.filter((c) => c.bucket === "pending").map((c) => c.name),
+    passed: checks.filter((c) => c.bucket === "pass").map((c) => c.name),
+  };
+}
+
+export type SelfHealDecision =
+  | { kind: "noop"; reason: "self-heal-disabled" | "still-pending" | "no-checks-yet" }
+  | { kind: "success" }
+  | { kind: "retry"; nextAttempts: number; failedNames: string[] }
+  | { kind: "exhausted"; failedNames: string[]; attempts: number };
+
+export interface SelfHealInput {
+  selfHealEnabled: boolean;
+  attempts: number;
+  maxAttempts: number;
+  buckets: CheckBuckets;
+}
+
+export function decideSelfHeal(input: SelfHealInput): SelfHealDecision {
+  const { selfHealEnabled, attempts, maxAttempts, buckets } = input;
+  if (!selfHealEnabled) return { kind: "noop", reason: "self-heal-disabled" };
+  const totalChecks = buckets.failed.length + buckets.pending.length + buckets.passed.length;
+  if (totalChecks === 0) return { kind: "noop", reason: "no-checks-yet" };
+  if (buckets.pending.length > 0) return { kind: "noop", reason: "still-pending" };
+  if (buckets.failed.length === 0) return { kind: "success" };
+  if (attempts >= maxAttempts) {
+    return { kind: "exhausted", failedNames: buckets.failed, attempts };
+  }
+  return { kind: "retry", nextAttempts: attempts + 1, failedNames: buckets.failed };
+}
+
 export type CiAttentionUpdate =
   | { kind: "noop" }
   | { kind: "add"; attention: AttentionFlag[] }
@@ -187,6 +229,22 @@ function tailUtf8(s: string, maxBytes: number): string {
   const buf = Buffer.from(s, "utf8");
   if (buf.length <= maxBytes) return s;
   return buf.subarray(buf.length - maxBytes).toString("utf8");
+}
+
+export function readAttempts(metadata: Record<string, unknown>): number {
+  const raw = metadata["ciSelfHealAttempts"];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return 0;
+  return Math.floor(raw);
+}
+
+export function buildSelfHealPrompt(args: {
+  prNumber: number;
+  failedNames: string[];
+  logs: string;
+}): string {
+  const failedList = args.failedNames.join(", ");
+  const logsBlock = args.logs.length > 0 ? `\n\nLog tail:\n${args.logs}\n` : "\n";
+  return `CI failed on PR #${args.prNumber}. Failed checks: ${failedList}.${logsBlock}\nFix the failing CI checks and push to the same branch (do NOT open a new PR).`;
 }
 
 async function runGh(args: string[]): Promise<string> {
@@ -245,13 +303,12 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     }
   }
 
-  function hasRunningFixCi(slug: string): boolean {
-    return ctx.sessions.list().some((s) => {
-      const meta = s.metadata;
-      if (meta["kind"] !== "fix-ci") return false;
-      if (meta["forSession"] !== slug) return false;
-      return s.status !== "completed" && s.status !== "failed" && s.status !== "cancelled";
-    });
+  function readSelfHealMaxAttempts(): number {
+    const raw = ctx.runtime.effective()["ciSelfHealMaxAttempts"];
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+      return DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS;
+    }
+    return Math.floor(raw);
   }
 
   async function poll(slug: string): Promise<void> {
@@ -300,7 +357,6 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
       });
     }
 
-    const failed = checks.filter((c) => c.bucket === "fail");
     const fresh = ctx.sessions.get(slug);
     if (!fresh) return;
 
@@ -326,24 +382,53 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
       }
     }
 
-    const failNames = failed.map((c) => c.name).join(", ");
-    const update = computeCiAttentionUpdate(
-      fresh.attention,
-      failed.map((c) => c.name),
-      new Date().toISOString(),
-    );
+    const buckets = bucketChecks(checks);
+    const selfHealEnabled = fresh.metadata["selfHealCi"] === true;
 
-    if (update.kind !== "noop") {
-      sessionRepo.setAttention(slug, update.attention);
-    }
+    if (selfHealEnabled) {
+      const attempts = readAttempts(fresh.metadata);
+      const maxAttempts = readSelfHealMaxAttempts();
+      const decision = decideSelfHeal({
+        selfHealEnabled,
+        attempts,
+        maxAttempts,
+        buckets,
+      });
 
-    if (update.kind === "clear") {
-      ctx.audit.record(
-        "system",
-        "ci.attention.cleared",
-        { kind: "session", id: slug },
-        { previousMessage: update.previousMessage },
+      if (decision.kind === "success") {
+        await applySelfHealSuccess(slug);
+      } else if (decision.kind === "retry") {
+        await applySelfHealRetry(
+          slug,
+          decision.nextAttempts,
+          decision.failedNames,
+          owner,
+          repoName,
+          prData.headRefName,
+          prNumber,
+        );
+      } else if (decision.kind === "exhausted") {
+        applySelfHealExhausted(slug, fresh.attention, decision.failedNames, decision.attempts);
+      }
+    } else {
+      const update = computeCiAttentionUpdate(
+        fresh.attention,
+        buckets.failed,
+        new Date().toISOString(),
       );
+
+      if (update.kind !== "noop") {
+        sessionRepo.setAttention(slug, update.attention);
+      }
+
+      if (update.kind === "clear") {
+        ctx.audit.record(
+          "system",
+          "ci.attention.cleared",
+          { kind: "session", id: slug },
+          { previousMessage: update.previousMessage },
+        );
+      }
     }
 
     const updated = ctx.sessions.get(slug);
@@ -351,32 +436,82 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
       ctx.bus.emit({ kind: "session_updated", session: updated });
     }
 
-    if (update.kind === "add") {
-      const autoFix = ctx.runtime.effective()["ciAutoFix"];
-      if (autoFix === true && !hasRunningFixCi(slug)) {
-        const head = prData.headRefName;
-        const logs = await fetchFailedLogs(owner, repoName, head);
-        const prompt = `CI is failing on PR #${prNumber} for branch ${head}. Failing checks: ${failNames}.
+    await handlePrUpdated(slug, ctx, log);
+  }
 
-Log tail:
-${logs}
+  async function applySelfHealSuccess(slug: string): Promise<void> {
+    ctx.sessions.dismissAttention(slug, "ci_pending");
+    ctx.sessions.setMetadata(slug, {
+      selfHealCi: false,
+      ciSelfHealConcluded: "success",
+    });
+    ctx.sessions.markCompleted(slug);
+    ctx.audit.record(
+      "system",
+      "ci.self-heal.success",
+      { kind: "session", id: slug },
+    );
+  }
 
-Fix the failing CI checks. Edit code as needed, run pnpm typecheck/test locally, then commit and push to the same branch (origin/${head}). Do not open a new PR.`;
+  async function applySelfHealRetry(
+    slug: string,
+    nextAttempts: number,
+    failedNames: string[],
+    owner: string,
+    repoName: string,
+    head: string,
+    prNumber: number,
+  ): Promise<void> {
+    ctx.sessions.setMetadata(slug, { ciSelfHealAttempts: nextAttempts });
+    const logs = await fetchFailedLogs(owner, repoName, head);
+    const prompt = buildSelfHealPrompt({ prNumber, failedNames, logs });
 
-        await ctx.sessions.create({
-          mode: "task",
-          prompt,
-          repoId: session.repoId,
-          baseBranch: session.branch,
-          parentSlug: slug,
-          metadata: { kind: "fix-ci", forSession: slug, prNumber },
-        }).catch((e) => {
-          log.warn("ci auto-fix session spawn failed", { slug, err: (e as Error).message });
-        });
-      }
+    try {
+      await ctx.sessions.reply(slug, prompt);
+    } catch (err) {
+      log.warn("ci self-heal: failed to enqueue reply", { slug, err: (err as Error).message });
+      return;
     }
 
-    await handlePrUpdated(slug, ctx, log);
+    try {
+      await ctx.sessions.kickReplyQueue(slug);
+    } catch (err) {
+      log.warn("ci self-heal: failed to kick reply queue", { slug, err: (err as Error).message });
+      return;
+    }
+
+    ctx.audit.record(
+      "system",
+      "ci.self-heal.attempted",
+      { kind: "session", id: slug },
+      { attempt: nextAttempts, prNumber, failedChecks: failedNames },
+    );
+  }
+
+  function applySelfHealExhausted(
+    slug: string,
+    currentAttention: AttentionFlag[],
+    failedNames: string[],
+    attempts: number,
+  ): void {
+    ctx.sessions.setMetadata(slug, {
+      selfHealCi: false,
+      ciSelfHealConcluded: "exhausted",
+    });
+    const withoutPending = currentAttention.filter((a) => a.kind !== "ci_pending");
+    const update = computeCiAttentionUpdate(
+      withoutPending,
+      failedNames,
+      new Date().toISOString(),
+    );
+    const next = update.kind === "noop" ? withoutPending : update.attention;
+    sessionRepo.setAttention(slug, next);
+    ctx.audit.record(
+      "system",
+      "ci.self-heal.exhausted",
+      { kind: "session", id: slug },
+      { attempts, failedChecks: failedNames },
+    );
   }
 
   async function onPrUpdated(slug: string): Promise<void> {

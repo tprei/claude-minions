@@ -1,7 +1,15 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import type { AttentionFlag } from "@minions/shared";
-import { computeCiAttentionUpdate, rollupToChecks, summarizeChecks } from "./index.js";
+import {
+  computeCiAttentionUpdate,
+  rollupToChecks,
+  summarizeChecks,
+  bucketChecks,
+  decideSelfHeal,
+  readAttempts,
+  buildSelfHealPrompt,
+} from "./index.js";
 
 describe("rollupToChecks", () => {
   test("returns empty array for null/undefined rollup", () => {
@@ -293,5 +301,153 @@ describe("computeCiAttentionUpdate", () => {
       result.attention.map((a) => a.kind),
       ["needs_input", "rebase_conflict"],
     );
+  });
+});
+
+describe("bucketChecks", () => {
+  test("partitions checks by bucket and projects names", () => {
+    const buckets = bucketChecks([
+      { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci", link: "" },
+      { name: "test", state: "FAILURE", bucket: "fail", workflow: "ci", link: "" },
+      { name: "lint", state: "IN_PROGRESS", bucket: "pending", workflow: "ci", link: "" },
+      { name: "e2e", state: "FAILURE", bucket: "fail", workflow: "ci", link: "" },
+    ]);
+    assert.deepEqual(buckets.passed, ["build"]);
+    assert.deepEqual(buckets.failed, ["test", "e2e"]);
+    assert.deepEqual(buckets.pending, ["lint"]);
+  });
+
+  test("returns empty arrays for an empty input", () => {
+    const buckets = bucketChecks([]);
+    assert.deepEqual(buckets, { failed: [], pending: [], passed: [] });
+  });
+});
+
+describe("decideSelfHeal", () => {
+  const empty = { failed: [], pending: [], passed: [] };
+
+  test("returns noop with reason self-heal-disabled when disabled", () => {
+    const decision = decideSelfHeal({
+      selfHealEnabled: false,
+      attempts: 0,
+      maxAttempts: 3,
+      buckets: { failed: ["test"], pending: [], passed: [] },
+    });
+    assert.deepEqual(decision, { kind: "noop", reason: "self-heal-disabled" });
+  });
+
+  test("returns noop with reason no-checks-yet when checks list is empty", () => {
+    const decision = decideSelfHeal({
+      selfHealEnabled: true,
+      attempts: 0,
+      maxAttempts: 3,
+      buckets: empty,
+    });
+    assert.deepEqual(decision, { kind: "noop", reason: "no-checks-yet" });
+  });
+
+  test("returns noop with reason still-pending if any pending check exists", () => {
+    const decision = decideSelfHeal({
+      selfHealEnabled: true,
+      attempts: 0,
+      maxAttempts: 3,
+      buckets: { failed: ["test"], pending: ["lint"], passed: ["build"] },
+    });
+    assert.deepEqual(decision, { kind: "noop", reason: "still-pending" });
+  });
+
+  test("returns success when terminal and all checks passed", () => {
+    const decision = decideSelfHeal({
+      selfHealEnabled: true,
+      attempts: 1,
+      maxAttempts: 3,
+      buckets: { failed: [], pending: [], passed: ["build", "test"] },
+    });
+    assert.deepEqual(decision, { kind: "success" });
+  });
+
+  test("returns retry with incremented attempts when terminal failure under cap", () => {
+    const decision = decideSelfHeal({
+      selfHealEnabled: true,
+      attempts: 0,
+      maxAttempts: 3,
+      buckets: { failed: ["test", "lint"], pending: [], passed: ["build"] },
+    });
+    assert.deepEqual(decision, { kind: "retry", nextAttempts: 1, failedNames: ["test", "lint"] });
+  });
+
+  test("returns retry up to the last allowed attempt", () => {
+    const decision = decideSelfHeal({
+      selfHealEnabled: true,
+      attempts: 2,
+      maxAttempts: 3,
+      buckets: { failed: ["test"], pending: [], passed: [] },
+    });
+    assert.deepEqual(decision, { kind: "retry", nextAttempts: 3, failedNames: ["test"] });
+  });
+
+  test("returns exhausted when attempts have hit the cap", () => {
+    const decision = decideSelfHeal({
+      selfHealEnabled: true,
+      attempts: 3,
+      maxAttempts: 3,
+      buckets: { failed: ["test"], pending: [], passed: [] },
+    });
+    assert.deepEqual(decision, {
+      kind: "exhausted",
+      failedNames: ["test"],
+      attempts: 3,
+    });
+  });
+
+  test("with maxAttempts=0, every terminal failure is exhausted with no retry", () => {
+    const decision = decideSelfHeal({
+      selfHealEnabled: true,
+      attempts: 0,
+      maxAttempts: 0,
+      buckets: { failed: ["test"], pending: [], passed: [] },
+    });
+    assert.equal(decision.kind, "exhausted");
+  });
+});
+
+describe("readAttempts", () => {
+  test("returns 0 when missing", () => {
+    assert.equal(readAttempts({}), 0);
+  });
+  test("returns 0 for non-numeric values", () => {
+    assert.equal(readAttempts({ ciSelfHealAttempts: "2" }), 0);
+    assert.equal(readAttempts({ ciSelfHealAttempts: null }), 0);
+    assert.equal(readAttempts({ ciSelfHealAttempts: NaN }), 0);
+  });
+  test("clamps negative to 0", () => {
+    assert.equal(readAttempts({ ciSelfHealAttempts: -3 }), 0);
+  });
+  test("floors fractional values", () => {
+    assert.equal(readAttempts({ ciSelfHealAttempts: 2.7 }), 2);
+  });
+  test("returns the integer attempt count", () => {
+    assert.equal(readAttempts({ ciSelfHealAttempts: 3 }), 3);
+  });
+});
+
+describe("buildSelfHealPrompt", () => {
+  test("includes PR number, failed checks, and log tail", () => {
+    const prompt = buildSelfHealPrompt({
+      prNumber: 42,
+      failedNames: ["test", "lint"],
+      logs: "tail line 1\ntail line 2",
+    });
+    assert.ok(prompt.includes("PR #42"));
+    assert.ok(prompt.includes("test, lint"));
+    assert.ok(prompt.includes("tail line 1\ntail line 2"));
+    assert.ok(prompt.includes("do NOT open a new PR"));
+  });
+
+  test("omits the log tail block when logs are empty", () => {
+    const prompt = buildSelfHealPrompt({ prNumber: 7, failedNames: ["e2e"], logs: "" });
+    assert.ok(!prompt.includes("Log tail"));
+    assert.ok(prompt.includes("PR #7"));
+    assert.ok(prompt.includes("e2e"));
   });
 });

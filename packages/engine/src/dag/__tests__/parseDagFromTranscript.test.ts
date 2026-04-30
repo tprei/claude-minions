@@ -131,6 +131,8 @@ function makeMockCtx(opts: {
           .prepare(`UPDATE sessions SET dag_id = ? WHERE slug = ?`)
           .run(dagId, slug);
       },
+      setMetadata: () => {},
+      markCompleted: () => {},
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },

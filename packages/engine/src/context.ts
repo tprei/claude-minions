@@ -33,6 +33,8 @@ export interface EngineContext {
     delete: (slug: string) => Promise<void>;
     reply: (slug: string, text: string, attachments?: import("@minions/shared").AttachmentInput[]) => Promise<void>;
     setDagId: (slug: string, dagId: string) => void;
+    setMetadata: (slug: string, patch: Record<string, unknown>) => void;
+    markCompleted: (slug: string) => void;
     markWaitingInput: (slug: string, reason?: string) => void;
     appendAttention: (slug: string, flag: import("@minions/shared").AttentionFlag) => void;
     dismissAttention: (slug: string, kind: import("@minions/shared").AttentionFlag["kind"]) => import("@minions/shared").Session;

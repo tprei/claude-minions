@@ -25,6 +25,8 @@ export function createSessionsSubsystem(deps: SubsystemDeps): SubsystemResult<En
     delete: (slug) => registry.delete(slug),
     reply: (slug, text, attachments) => registry.reply(slug, text, attachments),
     setDagId: (slug, dagId) => registry.setDagId(slug, dagId),
+    setMetadata: (slug, patch) => registry.setMetadata(slug, patch),
+    markCompleted: (slug) => registry.markCompleted(slug),
     markWaitingInput: (slug, reason) => registry.markWaitingInput(slug, reason),
     appendAttention: (slug, flag) => registry.appendAttention(slug, flag),
     dismissAttention: (slug, kind) => registry.dismissAttention(slug, kind),

@@ -9,7 +9,7 @@ describe("runtimeConfigSchema", () => {
     "dagMaxConcurrent",
     "loopMaxTotal",
     "loopReservedInteractive",
-    "ciAutoFix",
+    "ciSelfHealMaxAttempts",
     "quotaRetryBudget",
     "memoryMcpEnabled",
     "qualityTimeoutMs",
@@ -81,10 +81,13 @@ describe("runtimeConfigSchema", () => {
     assert.equal(field.applies, "restart");
   });
 
-  it("ciAutoFix is tagged as live", () => {
-    const field = runtimeConfigSchema.fields.find((f) => f.key === "ciAutoFix");
+  it("ciSelfHealMaxAttempts is tagged as live with default 3 and min 0", () => {
+    const field = runtimeConfigSchema.fields.find((f) => f.key === "ciSelfHealMaxAttempts");
     assert.ok(field);
     assert.equal(field.applies, "live");
+    assert.equal(field.type, "number");
+    assert.equal(field.default, 3);
+    assert.equal(field.min, 0);
   });
 
   it("defaultSessionBudgetUsd is registered with default 0 and applies: live", () => {

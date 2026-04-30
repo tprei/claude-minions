@@ -25,6 +25,10 @@ interface MockCtx {
   emitted: ServerEvent[];
   openForReviewCalls: OpenForReviewCall[];
   landCalls: { slug: string }[];
+  sessions: Map<string, Session>;
+  metadataPatches: { slug: string; patch: Record<string, unknown> }[];
+  attentionAppends: { slug: string; flag: import("@minions/shared").AttentionFlag }[];
+  waitingInputCalls: { slug: string; reason?: string }[];
   setOverride: (overrides: RuntimeOverrides) => void;
   setOpenForReviewImpl: (impl: (call: OpenForReviewCall) => Promise<PRSummary | null>) => void;
 }
@@ -34,6 +38,10 @@ function makeCtx(): MockCtx {
   const emitted: ServerEvent[] = [];
   const openForReviewCalls: OpenForReviewCall[] = [];
   const landCalls: { slug: string }[] = [];
+  const sessions = new Map<string, Session>();
+  const metadataPatches: { slug: string; patch: Record<string, unknown> }[] = [];
+  const attentionAppends: { slug: string; flag: import("@minions/shared").AttentionFlag }[] = [];
+  const waitingInputCalls: { slug: string; reason?: string }[] = [];
   let overrides: RuntimeOverrides = { autoLandOnCompletion: true };
   let openForReviewImpl: (call: OpenForReviewCall) => Promise<PRSummary | null> = async () => null;
 
@@ -67,6 +75,32 @@ function makeCtx(): MockCtx {
       },
       async retryRebase(): Promise<void> {},
     },
+    sessions: {
+      get(slug: string): Session | null {
+        return sessions.get(slug) ?? null;
+      },
+      setMetadata(slug: string, patch: Record<string, unknown>): void {
+        metadataPatches.push({ slug, patch });
+        const existing = sessions.get(slug);
+        if (existing) {
+          sessions.set(slug, { ...existing, metadata: { ...existing.metadata, ...patch } });
+        }
+      },
+      appendAttention(slug: string, flag: import("@minions/shared").AttentionFlag): void {
+        attentionAppends.push({ slug, flag });
+        const existing = sessions.get(slug);
+        if (existing) {
+          sessions.set(slug, { ...existing, attention: [...existing.attention, flag] });
+        }
+      },
+      markWaitingInput(slug: string, reason?: string): void {
+        waitingInputCalls.push({ slug, reason });
+        const existing = sessions.get(slug);
+        if (existing) {
+          sessions.set(slug, { ...existing, status: "waiting_input" });
+        }
+      },
+    },
   } as unknown as EngineContext;
 
   return {
@@ -75,6 +109,10 @@ function makeCtx(): MockCtx {
     emitted,
     openForReviewCalls,
     landCalls,
+    sessions,
+    metadataPatches,
+    attentionAppends,
+    waitingInputCalls,
     setOverride(next: RuntimeOverrides): void {
       overrides = next;
     },
@@ -238,6 +276,103 @@ describe("autoLandHandler — happy path", () => {
         (e) => e.kind === "transcript_event" && e.event.kind === "status" && e.event.level === "warn",
       );
       assert.ok(warnEvent, "expected a warn status event");
+    } finally {
+      await fx.cleanup();
+    }
+  });
+});
+
+describe("autoLandHandler — CI self-heal initialization", () => {
+  test("seeds selfHealCi metadata, ci_pending attention, and parks waiting_input on first land", async () => {
+    const fx = await makeRepoWithCommitsAhead(1);
+    try {
+      const m = makeCtx();
+      const session = makeSession({ slug: "s-heal-1", worktreePath: fx.worktreePath });
+      m.sessions.set(session.slug, session);
+      const handler = autoLandHandler(m.ctx);
+      await handler(session);
+
+      assert.equal(m.openForReviewCalls.length, 1);
+      const metaCall = m.metadataPatches.find((p) => p.slug === "s-heal-1");
+      assert.ok(metaCall, "expected selfHealCi metadata to be set");
+      assert.deepEqual(metaCall?.patch, { selfHealCi: true, ciSelfHealAttempts: 0 });
+
+      const attentionCall = m.attentionAppends.find((a) => a.slug === "s-heal-1");
+      assert.ok(attentionCall);
+      assert.equal(attentionCall?.flag.kind, "ci_pending");
+
+      assert.equal(m.waitingInputCalls.length, 1);
+      assert.equal(m.waitingInputCalls[0]?.slug, "s-heal-1");
+    } finally {
+      await fx.cleanup();
+    }
+  });
+
+  test("does not reset attempts when selfHealCi is already true (idempotent re-land)", async () => {
+    const fx = await makeRepoWithCommitsAhead(1);
+    try {
+      const m = makeCtx();
+      const session = makeSession({
+        slug: "s-heal-2",
+        worktreePath: fx.worktreePath,
+        metadata: { selfHealCi: true, ciSelfHealAttempts: 2 },
+        attention: [
+          { kind: "ci_pending", message: "still waiting", raisedAt: new Date().toISOString() },
+        ],
+      });
+      m.sessions.set(session.slug, session);
+      const handler = autoLandHandler(m.ctx);
+      await handler(session);
+
+      assert.equal(m.openForReviewCalls.length, 1);
+      assert.equal(
+        m.metadataPatches.length,
+        0,
+        "metadata should not be overwritten when self-heal is already in progress",
+      );
+      assert.equal(m.attentionAppends.length, 0, "ci_pending should not be re-appended");
+      assert.equal(m.waitingInputCalls.length, 1, "still parks waiting_input on re-land");
+    } finally {
+      await fx.cleanup();
+    }
+  });
+
+  test("skips self-heal init once concluded with success", async () => {
+    const fx = await makeRepoWithCommitsAhead(1);
+    try {
+      const m = makeCtx();
+      const session = makeSession({
+        slug: "s-heal-3",
+        worktreePath: fx.worktreePath,
+        metadata: { ciSelfHealConcluded: "success" },
+      });
+      m.sessions.set(session.slug, session);
+      const handler = autoLandHandler(m.ctx);
+      await handler(session);
+
+      assert.equal(m.openForReviewCalls.length, 1);
+      assert.equal(m.metadataPatches.length, 0);
+      assert.equal(m.attentionAppends.length, 0);
+      assert.equal(m.waitingInputCalls.length, 0, "must not re-park after success");
+    } finally {
+      await fx.cleanup();
+    }
+  });
+
+  test("ciSelfHealMaxAttempts=0 disables self-heal but still pushes/opens PR", async () => {
+    const fx = await makeRepoWithCommitsAhead(1);
+    try {
+      const m = makeCtx();
+      m.setOverride({ autoLandOnCompletion: true, ciSelfHealMaxAttempts: 0 });
+      const session = makeSession({ slug: "s-heal-4", worktreePath: fx.worktreePath });
+      m.sessions.set(session.slug, session);
+      const handler = autoLandHandler(m.ctx);
+      await handler(session);
+
+      assert.equal(m.openForReviewCalls.length, 1);
+      assert.equal(m.metadataPatches.length, 0);
+      assert.equal(m.attentionAppends.length, 0);
+      assert.equal(m.waitingInputCalls.length, 0);
     } finally {
       await fx.cleanup();
     }
