@@ -1,10 +1,26 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import os from "node:os";
+import type { PermissionTier } from "@minions/shared";
 import { resolveWorktreeGitPaths } from "../providers/claudeCode.js";
 import { ensureDir } from "../util/fs.js";
 
 const SHARED_AUTH_FILES = ["credentials.json", ".credentials.json"];
+
+const READ_TOOLS_ALLOW = ["Read(*)", "Glob(*)", "Grep(*)"];
+const WRITE_TOOLS_ALLOW = [
+  "Bash(*)",
+  "Read(*)",
+  "Write(*)",
+  "Edit(*)",
+  "Glob(*)",
+  "Grep(*)",
+  "TodoWrite(*)",
+];
+
+export function permissionsAllowFor(tier: PermissionTier): string[] {
+  return tier === "read" ? READ_TOOLS_ALLOW : WRITE_TOOLS_ALLOW;
+}
 
 async function symlinkOperatorAuth(claudeDir: string): Promise<void> {
   const operatorClaudeDir = path.join(os.homedir(), ".claude");
@@ -28,6 +44,7 @@ async function symlinkOperatorAuth(claudeDir: string): Promise<void> {
 export async function writeSessionSettings(
   homeDir: string,
   worktreePath: string,
+  permissionTier: PermissionTier,
 ): Promise<void> {
   const { gitDir, gitCommonDir } = await resolveWorktreeGitPaths(worktreePath);
 
@@ -38,6 +55,9 @@ export async function writeSessionSettings(
       write: {
         allowOnly,
       },
+    },
+    permissions: {
+      allow: permissionsAllowFor(permissionTier),
     },
     includeCoAuthoredBy: false,
     disableWelcomeMessage: true,

@@ -643,9 +643,16 @@ export class SessionRegistry {
       `UPDATE sessions SET worktree_path = ?, branch = ?, updated_at = ? WHERE slug = ?`,
     ).run(worktreePath, branch ?? null, nowIso(), slug);
 
+    const mode: SessionMode = req.mode ?? "task";
+    const initialShipStage: import("@minions/shared").ShipStage = "think";
+    const permissionTier = derivePermissionTier(
+      mode,
+      mode === "ship" ? initialShipStage : null,
+    );
+
     const homeDir = paths.home(providerName);
     await ensureDir(homeDir);
-    await writeSessionSettings(homeDir, worktreePath);
+    await writeSessionSettings(homeDir, worktreePath, permissionTier);
 
     const env: Record<string, string> = {
       HOME: homeDir,
@@ -660,13 +667,6 @@ export class SessionRegistry {
 
     const mcpConfigPath = await this.writeMcpConfig(slug, worktreePath);
     log.info("setupAndSpawn:writeMcpConfig done", { slug });
-
-    const mode: SessionMode = req.mode ?? "task";
-    const initialShipStage: import("@minions/shared").ShipStage = "think";
-    const permissionTier = derivePermissionTier(
-      mode,
-      mode === "ship" ? initialShipStage : null,
-    );
 
     log.info("setupAndSpawn:provider.spawn invoking", { slug, provider: providerName });
     let handle: ProviderHandle;

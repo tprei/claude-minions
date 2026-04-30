@@ -58,6 +58,9 @@ interface Settings {
       allowOnly?: string[];
     };
   };
+  permissions?: {
+    allow?: string[];
+  };
   includeCoAuthoredBy?: boolean;
   disableWelcomeMessage?: boolean;
   disableAllHooks?: boolean;
@@ -101,7 +104,7 @@ describe("writeSessionSettings", () => {
         log,
       );
 
-      await writeSessionSettings(fx.homeDir, worktreePath);
+      await writeSessionSettings(fx.homeDir, worktreePath, "full");
 
       const settingsPath = path.join(fx.homeDir, ".claude", "settings.json");
       const raw = await fs.readFile(settingsPath, "utf8");
@@ -146,7 +149,7 @@ describe("writeSessionSettings", () => {
       await g.add(".");
       await g.commit("initial");
 
-      await writeSessionSettings(homeDir, worktreePath);
+      await writeSessionSettings(homeDir, worktreePath, "full");
 
       const settingsPath = path.join(homeDir, ".claude", "settings.json");
       const parsed = JSON.parse(await fs.readFile(settingsPath, "utf8")) as Settings;
@@ -158,6 +161,107 @@ describe("writeSessionSettings", () => {
       assert.equal(new Set(allowOnly).size, allowOnly.length, "allowOnly entries must be unique");
 
       assertHardeningKeys(parsed);
+    } finally {
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("permissionTier='full' emits the wildcard write tools allow list", async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "session-settings-full-"));
+    const worktreePath = path.join(tmpRoot, "wt");
+    const homeDir = path.join(tmpRoot, "home");
+    await fs.mkdir(worktreePath, { recursive: true });
+    await fs.mkdir(homeDir, { recursive: true });
+
+    try {
+      const g = simpleGit(worktreePath);
+      await g.init(["--initial-branch=main"]);
+      await g.addConfig("user.email", "test@local");
+      await g.addConfig("user.name", "Test");
+      await fs.writeFile(path.join(worktreePath, "README.md"), "seed\n");
+      await g.add(".");
+      await g.commit("initial");
+
+      await writeSessionSettings(homeDir, worktreePath, "full");
+
+      const settingsPath = path.join(homeDir, ".claude", "settings.json");
+      const parsed = JSON.parse(await fs.readFile(settingsPath, "utf8")) as Settings;
+      const allow = parsed.permissions?.allow ?? [];
+
+      assert.deepEqual(
+        allow,
+        ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)", "TodoWrite(*)"],
+        "full tier must allow Bash/Read/Write/Edit/Glob/Grep/TodoWrite wildcards",
+      );
+    } finally {
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("permissionTier='worktree' emits the same write tools allow list as 'full'", async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "session-settings-wt-"));
+    const worktreePath = path.join(tmpRoot, "wt");
+    const homeDir = path.join(tmpRoot, "home");
+    await fs.mkdir(worktreePath, { recursive: true });
+    await fs.mkdir(homeDir, { recursive: true });
+
+    try {
+      const g = simpleGit(worktreePath);
+      await g.init(["--initial-branch=main"]);
+      await g.addConfig("user.email", "test@local");
+      await g.addConfig("user.name", "Test");
+      await fs.writeFile(path.join(worktreePath, "README.md"), "seed\n");
+      await g.add(".");
+      await g.commit("initial");
+
+      await writeSessionSettings(homeDir, worktreePath, "worktree");
+
+      const settingsPath = path.join(homeDir, ".claude", "settings.json");
+      const parsed = JSON.parse(await fs.readFile(settingsPath, "utf8")) as Settings;
+      const allow = parsed.permissions?.allow ?? [];
+
+      assert.ok(allow.includes("Bash(*)"), "worktree tier must allow Bash");
+      assert.ok(allow.includes("Write(*)"), "worktree tier must allow Write");
+      assert.ok(allow.includes("Edit(*)"), "worktree tier must allow Edit");
+      assert.ok(allow.includes("Read(*)"), "worktree tier must allow Read");
+      assert.ok(allow.includes("Glob(*)"), "worktree tier must allow Glob");
+      assert.ok(allow.includes("Grep(*)"), "worktree tier must allow Grep");
+      assert.ok(allow.includes("TodoWrite(*)"), "worktree tier must allow TodoWrite");
+    } finally {
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("permissionTier='read' restricts allow list to read-only tools", async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "session-settings-read-"));
+    const worktreePath = path.join(tmpRoot, "wt");
+    const homeDir = path.join(tmpRoot, "home");
+    await fs.mkdir(worktreePath, { recursive: true });
+    await fs.mkdir(homeDir, { recursive: true });
+
+    try {
+      const g = simpleGit(worktreePath);
+      await g.init(["--initial-branch=main"]);
+      await g.addConfig("user.email", "test@local");
+      await g.addConfig("user.name", "Test");
+      await fs.writeFile(path.join(worktreePath, "README.md"), "seed\n");
+      await g.add(".");
+      await g.commit("initial");
+
+      await writeSessionSettings(homeDir, worktreePath, "read");
+
+      const settingsPath = path.join(homeDir, ".claude", "settings.json");
+      const parsed = JSON.parse(await fs.readFile(settingsPath, "utf8")) as Settings;
+      const allow = parsed.permissions?.allow ?? [];
+
+      assert.deepEqual(
+        allow,
+        ["Read(*)", "Glob(*)", "Grep(*)"],
+        "read tier must only allow Read/Glob/Grep wildcards",
+      );
+      assert.ok(!allow.includes("Bash(*)"), "read tier must not allow Bash");
+      assert.ok(!allow.includes("Write(*)"), "read tier must not allow Write");
+      assert.ok(!allow.includes("Edit(*)"), "read tier must not allow Edit");
     } finally {
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
