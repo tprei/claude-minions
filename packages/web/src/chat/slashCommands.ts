@@ -19,7 +19,7 @@ export interface SlashMessageResult {
 
 export interface SlashUiResult {
   kind: "ui";
-  action: "help" | "stats" | "loops" | "config" | "doctor" | "status";
+  action: "help" | "stats" | "loops" | "config" | "doctor" | "status" | "diff" | "cost";
 }
 
 export type SlashResult = SlashCommandResult | SlashMessageResult | SlashUiResult;
@@ -310,5 +310,35 @@ export const slashCommands: SlashCommand[] = [
     args: [],
     hint: "Show session status panel",
     build: () => ({ kind: "ui", action: "status" }),
+  },
+  {
+    name: "clear",
+    args: [],
+    hint: "Clear conversation",
+    build: (_args, ctx) => ({
+      kind: "command",
+      payload: { kind: "reply", sessionSlug: requireSession(ctx, "clear"), text: "/clear" },
+    }),
+  },
+  {
+    name: "compact",
+    args: [],
+    hint: "Compact conversation",
+    build: (_args, ctx) => ({
+      kind: "command",
+      payload: { kind: "reply", sessionSlug: requireSession(ctx, "compact"), text: "/compact" },
+    }),
+  },
+  {
+    name: "cost",
+    args: [],
+    hint: "Show session cost",
+    build: () => ({ kind: "ui", action: "cost" }),
+  },
+  {
+    name: "diff",
+    args: [],
+    hint: "Open diff view",
+    build: () => ({ kind: "ui", action: "diff" }),
   },
 ];

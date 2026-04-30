@@ -171,7 +171,6 @@ export function App(): ReactElement {
               sessionSlug={sessionSlug ?? null}
               primary={Boolean(sessionSlug)}
               onOpenConfig={() => setRuntimeOpen(true)}
-              onOpenHelp={() => setPaletteOpen(true)}
             />
           ) : undefined
         }
