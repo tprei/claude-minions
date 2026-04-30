@@ -252,6 +252,42 @@ const fields: RuntimeField[] = [
     group: "execution",
     applies: "restart",
   },
+  {
+    key: "autoCleanupEnabled",
+    label: "Auto cleanup enabled",
+    description:
+      "Run a daily background job that deletes old completed/failed/cancelled sessions to reclaim disk used by worktrees and transcripts.",
+    type: "boolean",
+    default: true,
+    group: "maintenance",
+    applies: "live",
+  },
+  {
+    key: "cleanupOlderThanDays",
+    label: "Cleanup age threshold (days)",
+    description:
+      "Sessions whose completedAt is older than this many days are eligible for the daily auto-cleanup. Sessions with open PRs or in active DAGs are always skipped.",
+    type: "number",
+    default: 7,
+    min: 1,
+    max: 365,
+    step: 1,
+    group: "maintenance",
+    applies: "live",
+  },
+  {
+    key: "cleanupHourLocal",
+    label: "Cleanup hour (local time, 0-23)",
+    description:
+      "Hour of the local day to run the cleanup job. Restart the engine to pick up changes.",
+    type: "number",
+    default: 3,
+    min: 0,
+    max: 23,
+    step: 1,
+    group: "maintenance",
+    applies: "restart",
+  },
 ];
 
 export const runtimeConfigSchema: RuntimeConfigSchema = {
@@ -266,6 +302,7 @@ export const runtimeConfigSchema: RuntimeConfigSchema = {
     { id: "transport", label: "Transport" },
     { id: "admission", label: "Admission" },
     { id: "budget", label: "Budget" },
+    { id: "maintenance", label: "Maintenance" },
   ],
   fields,
 };
