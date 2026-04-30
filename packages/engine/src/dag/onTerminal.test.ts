@@ -1,8 +1,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import type {
+  AttentionFlag,
   DAG,
   DAGNode,
+  PRSummary,
   QualityReport,
   ServerEvent,
   Session,
@@ -113,19 +115,32 @@ function makeMockRepo(dag: DAG): MockRepo {
 interface MockCtxOptions {
   qualityReport: QualityReport | null;
   parentSession?: Session;
+  taskSession?: Session;
   onLand?: (slug: string) => Promise<void> | void;
   openForReviewError?: Error;
+  openForReviewResult?: PRSummary | null;
+  ciSelfHealMaxAttempts?: number;
 }
 
 interface MockCtxResult {
   ctx: EngineContext;
   emitted: ServerEvent[];
   landCalls: { slug: string }[];
+  metadataPatches: { slug: string; patch: Record<string, unknown> }[];
+  appendedAttention: { slug: string; flag: AttentionFlag }[];
+  waitingInputCalls: { slug: string; reason?: string }[];
 }
 
 function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
   const emitted: ServerEvent[] = [];
   const landCalls: { slug: string }[] = [];
+  const metadataPatches: { slug: string; patch: Record<string, unknown> }[] = [];
+  const appendedAttention: { slug: string; flag: AttentionFlag }[] = [];
+  const waitingInputCalls: { slug: string; reason?: string }[] = [];
+
+  const sessionStore = new Map<string, Session>();
+  if (opts.parentSession) sessionStore.set(opts.parentSession.slug, opts.parentSession);
+  if (opts.taskSession) sessionStore.set(opts.taskSession.slug, opts.taskSession);
 
   const ctx = {
     quality: {
@@ -145,15 +160,39 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
         landCalls.push({ slug });
         if (opts.openForReviewError) throw opts.openForReviewError;
         if (opts.onLand) await opts.onLand(slug);
-        return null;
+        return opts.openForReviewResult ?? null;
       },
       retryRebase: async () => {},
     },
     sessions: {
-      get: (slug: string) => (opts.parentSession && opts.parentSession.slug === slug ? opts.parentSession : null),
+      get: (slug: string) => sessionStore.get(slug) ?? null,
       create: async () => {
         throw new Error("not used");
       },
+      setMetadata: (slug: string, patch: Record<string, unknown>) => {
+        metadataPatches.push({ slug, patch });
+        const cur = sessionStore.get(slug);
+        if (cur) {
+          sessionStore.set(slug, { ...cur, metadata: { ...cur.metadata, ...patch } });
+        }
+      },
+      appendAttention: (slug: string, flag: AttentionFlag) => {
+        appendedAttention.push({ slug, flag });
+        const cur = sessionStore.get(slug);
+        if (cur) {
+          sessionStore.set(slug, { ...cur, attention: [...cur.attention, flag] });
+        }
+      },
+      markWaitingInput: (slug: string, reason?: string) => {
+        waitingInputCalls.push({ slug, reason });
+        const cur = sessionStore.get(slug);
+        if (cur) sessionStore.set(slug, { ...cur, status: "waiting_input" });
+      },
+    },
+    runtime: {
+      effective: () => ({
+        ciSelfHealMaxAttempts: opts.ciSelfHealMaxAttempts,
+      }),
     },
     bus: {
       emit: (event: ServerEvent) => {
@@ -162,7 +201,7 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
     } as unknown as EventBus,
   } as unknown as EngineContext;
 
-  return { ctx, emitted, landCalls };
+  return { ctx, emitted, landCalls, metadataPatches, appendedAttention, waitingInputCalls };
 }
 
 function makeStubScheduler(): DagScheduler {
@@ -341,5 +380,161 @@ describe("DagTerminalHandler", () => {
     assert.equal(landCalls.length, 0);
     assert.equal(getNode("n1")?.status, "ci-failed");
     assert.match(patches.at(-1)?.patch.failedReason ?? "", /quality gate failed/);
+  });
+
+  test("dag-task with passed quality and PR returned enters ci-pending and wires self-heal", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode } = makeMockRepo(dag);
+    const taskSession = makeSession("sess-1");
+    const pr: PRSummary = {
+      number: 42,
+      url: "https://github.com/x/y/pull/42",
+      state: "open",
+      draft: false,
+      base: "main",
+      head: "minions/sess-1",
+      title: "PR for sess-1",
+    };
+    const { ctx, landCalls, metadataPatches, appendedAttention, waitingInputCalls } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+      taskSession,
+      openForReviewResult: pr,
+    });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(taskSession);
+
+    assert.equal(landCalls.length, 1, "openForReview was called");
+    assert.equal(getNode("n1")?.status, "ci-pending", "node enters ci-pending, not landed");
+    assert.equal(getNode("n1")?.completedAt, undefined, "completedAt is not set for ci-pending");
+
+    const metaPatch = metadataPatches.find(
+      (p) => p.slug === "sess-1" && p.patch["selfHealCi"] === true,
+    );
+    assert.ok(metaPatch, "selfHealCi metadata is set");
+    assert.equal(metaPatch.patch["ciSelfHealAttempts"], 0, "ciSelfHealAttempts seeded to 0");
+
+    const ciPending = appendedAttention.find(
+      (a) => a.slug === "sess-1" && a.flag.kind === "ci_pending",
+    );
+    assert.ok(ciPending, "ci_pending attention appended to dag-task session");
+
+    assert.equal(waitingInputCalls.length, 1, "session marked waiting_input");
+    assert.equal(waitingInputCalls[0]?.slug, "sess-1");
+  });
+
+  test("dag-task with ciSelfHealConcluded=success skips ci-pending and lands directly", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode } = makeMockRepo(dag);
+    const taskSession = makeSession("sess-1");
+    taskSession.metadata = { ciSelfHealConcluded: "success" };
+    const pr: PRSummary = {
+      number: 42,
+      url: "https://github.com/x/y/pull/42",
+      state: "open",
+      draft: false,
+      base: "main",
+      head: "minions/sess-1",
+      title: "PR for sess-1",
+    };
+    const { ctx, metadataPatches, appendedAttention, waitingInputCalls } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+      taskSession,
+      openForReviewResult: pr,
+    });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(taskSession);
+
+    assert.equal(getNode("n1")?.status, "landed", "node lands when CI already concluded success");
+    assert.equal(metadataPatches.length, 0, "no self-heal metadata wiring on success re-entry");
+    assert.equal(appendedAttention.length, 0, "no ci_pending attention on success re-entry");
+    assert.equal(waitingInputCalls.length, 0, "no waiting_input transition on success re-entry");
+  });
+
+  test("dag-task with ciSelfHealConcluded=exhausted marks node ci-failed", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode, patches } = makeMockRepo(dag);
+    const parent = makeSession("root-1");
+    const taskSession = makeSession("sess-1");
+    taskSession.metadata = { ciSelfHealConcluded: "exhausted" };
+    const pr: PRSummary = {
+      number: 42,
+      url: "https://github.com/x/y/pull/42",
+      state: "open",
+      draft: false,
+      base: "main",
+      head: "minions/sess-1",
+      title: "PR for sess-1",
+    };
+    const { ctx, emitted } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+      taskSession,
+      parentSession: parent,
+      openForReviewResult: pr,
+    });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(taskSession);
+
+    assert.equal(getNode("n1")?.status, "ci-failed");
+    assert.match(patches.at(-1)?.patch.failedReason ?? "", /self-heal exhausted/);
+    assert.ok(
+      emitted.some((e) => e.kind === "session_updated"),
+      "ci_failed flag raised on parent",
+    );
+  });
+
+  test("dag-task with maxAttempts=0 lands directly without wiring self-heal", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode } = makeMockRepo(dag);
+    const taskSession = makeSession("sess-1");
+    const pr: PRSummary = {
+      number: 42,
+      url: "https://github.com/x/y/pull/42",
+      state: "open",
+      draft: false,
+      base: "main",
+      head: "minions/sess-1",
+      title: "PR for sess-1",
+    };
+    const { ctx, metadataPatches, appendedAttention, waitingInputCalls } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+      taskSession,
+      openForReviewResult: pr,
+      ciSelfHealMaxAttempts: 0,
+    });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(taskSession);
+
+    assert.equal(getNode("n1")?.status, "landed", "node lands when self-heal disabled");
+    assert.equal(metadataPatches.length, 0, "no self-heal metadata when maxAttempts=0");
+    assert.equal(appendedAttention.length, 0, "no ci_pending attention when maxAttempts=0");
+    assert.equal(waitingInputCalls.length, 0, "no waiting_input transition when maxAttempts=0");
   });
 });

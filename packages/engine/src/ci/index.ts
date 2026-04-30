@@ -408,7 +408,7 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
           prNumber,
         );
       } else if (decision.kind === "exhausted") {
-        applySelfHealExhausted(slug, fresh.attention, decision.failedNames, decision.attempts);
+        await applySelfHealExhausted(slug, fresh.attention, decision.failedNames, decision.attempts);
       }
     } else {
       const update = computeCiAttentionUpdate(
@@ -451,6 +451,11 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
       "ci.self-heal.success",
       { kind: "session", id: slug },
     );
+    try {
+      await ctx.dags.onSessionCiTerminal(slug);
+    } catch (err) {
+      log.warn("ci self-heal: dag node landing failed", { slug, err: (err as Error).message });
+    }
   }
 
   async function applySelfHealRetry(
@@ -488,12 +493,12 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     );
   }
 
-  function applySelfHealExhausted(
+  async function applySelfHealExhausted(
     slug: string,
     currentAttention: AttentionFlag[],
     failedNames: string[],
     attempts: number,
-  ): void {
+  ): Promise<void> {
     ctx.sessions.setMetadata(slug, {
       selfHealCi: false,
       ciSelfHealConcluded: "exhausted",
@@ -512,6 +517,14 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
       { kind: "session", id: slug },
       { attempts, failedChecks: failedNames },
     );
+    try {
+      await ctx.dags.onSessionCiTerminal(slug);
+    } catch (err) {
+      log.warn("ci self-heal exhausted: dag node update failed", {
+        slug,
+        err: (err as Error).message,
+      });
+    }
   }
 
   async function onPrUpdated(slug: string): Promise<void> {

@@ -4,6 +4,16 @@ import type { DagRepo } from "./model.js";
 import type { Logger } from "../logger.js";
 import type { DagScheduler } from "./scheduler.js";
 
+const DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS = 3;
+
+function readSelfHealMaxAttempts(ctx: EngineContext): number {
+  const raw = ctx.runtime.effective()["ciSelfHealMaxAttempts"];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS;
+  }
+  return Math.floor(raw);
+}
+
 export class DagTerminalHandler {
   constructor(
     private readonly repo: DagRepo,
@@ -68,15 +78,66 @@ export class DagTerminalHandler {
     }
 
     try {
-      await this.ctx.landing.openForReview(session.slug);
+      const pr = await this.ctx.landing.openForReview(session.slug);
+      const fresh = this.ctx.sessions.get(session.slug);
+      const concluded = fresh?.metadata["ciSelfHealConcluded"];
+      const maxAttempts = readSelfHealMaxAttempts(this.ctx);
+
+      if (!pr || concluded === "success" || maxAttempts === 0) {
+        this.repo.updateNode(node.id, {
+          status: "landed",
+          completedAt: new Date().toISOString(),
+          failedReason: null,
+        });
+        this.log.info("dag node landed", { dagId: dag.id, nodeId: node.id, sessionSlug: session.slug });
+        await this.scheduler.tick(dag.id);
+        await this.maybeReleaseShipParent(dag.id);
+        return;
+      }
+
+      if (concluded === "exhausted") {
+        this.repo.updateNode(node.id, {
+          status: "ci-failed",
+          failedReason: "self-heal exhausted",
+          completedAt: new Date().toISOString(),
+        });
+        this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
+        await this.scheduler.tick(dag.id);
+        return;
+      }
+
       this.repo.updateNode(node.id, {
-        status: "landed",
-        completedAt: new Date().toISOString(),
+        status: "ci-pending",
         failedReason: null,
       });
-      this.log.info("dag node landed", { dagId: dag.id, nodeId: node.id, sessionSlug: session.slug });
+
+      const alreadySelfHealing = fresh?.metadata["selfHealCi"] === true;
+      if (!alreadySelfHealing) {
+        this.ctx.sessions.setMetadata(session.slug, {
+          selfHealCi: true,
+          ciSelfHealAttempts: 0,
+        });
+      }
+      const hasCiPending = (fresh?.attention ?? []).some((a) => a.kind === "ci_pending");
+      if (!hasCiPending) {
+        this.ctx.sessions.appendAttention(session.slug, {
+          kind: "ci_pending",
+          message: "Waiting for CI to complete on the dag-task PR",
+          raisedAt: new Date().toISOString(),
+        });
+      }
+      this.ctx.sessions.markWaitingInput(
+        session.slug,
+        "ci self-heal: parking until CI reports terminal state",
+      );
+
+      this.log.info("dag node entered ci-pending", {
+        dagId: dag.id,
+        nodeId: node.id,
+        sessionSlug: session.slug,
+        prNumber: pr.number,
+      });
       await this.scheduler.tick(dag.id);
-      await this.maybeReleaseShipParent(dag.id);
     } catch (err) {
       const message = (err as Error).message;
       if (message.includes("rebase") || message.includes("conflict")) {
