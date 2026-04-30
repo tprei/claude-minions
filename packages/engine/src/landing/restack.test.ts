@@ -154,7 +154,16 @@ function makeHarness(sessions: Session[]): RestackHarness {
 
 const noopDagRepo: DagRepo = {
   list: () => [],
+  getNodeBySession: () => null,
+  byNodeSession: () => null,
+  getNode: () => null,
+  updateNode: () => {
+    throw new Error("noop dag repo: updateNode not implemented");
+  },
 } as unknown as DagRepo;
+
+const alwaysExistsBranch = async () => true;
+const noopRebase = async () => {};
 
 describe("RestackManager", () => {
   test("rebase waits for in-flight session turn holding the slug mutex", async () => {
@@ -162,7 +171,10 @@ describe("RestackManager", () => {
     const child = buildSession("child", { baseBranch: "main", branch: "minions/child" });
 
     const h = makeHarness([parent, child]);
-    const restack = new RestackManager(h.ctx, noopDagRepo, createLogger("error"));
+    const restack = new RestackManager(h.ctx, noopDagRepo, createLogger("error"), {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+    });
 
     // Simulate a long-running provider turn holding the child's slug mutex.
     let turnCompleted = false;
@@ -212,7 +224,10 @@ describe("RestackManager", () => {
     };
     h.ctx.sessions.create = async () => buildSession("resolver");
 
-    const restack = new RestackManager(h.ctx, noopDagRepo, createLogger("error"));
+    const restack = new RestackManager(h.ctx, noopDagRepo, createLogger("error"), {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+    });
     await restack.restackChildren("parent");
 
     const acquire = h.audit.filter((e) => e.action === "restack:session:mutex-acquire");

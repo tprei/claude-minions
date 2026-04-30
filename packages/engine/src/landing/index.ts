@@ -9,8 +9,16 @@ import { RestackManager } from "./restack.js";
 import { formatStackComment } from "./stackComment.js";
 import { pushBranch as defaultPushBranch } from "./push.js";
 import { ensurePullRequest as defaultEnsurePullRequest, type EnsurePullRequestArgs } from "./openPR.js";
+import {
+  applyLiveBase,
+  defaultBranchExists,
+  defaultRebaseOnto,
+  type BranchExistsFn,
+  type RebaseOntoFn,
+} from "./baseResolver.js";
 import { EngineError } from "../errors.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
+import type { SessionStateUpdater } from "./sessionStateUpdater.js";
 
 export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
 export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
@@ -21,15 +29,14 @@ export type EditPullRequestBaseFn = (args: {
   log: Logger;
 }) => Promise<void>;
 
-export interface SessionStateUpdater {
-  update(slug: string, patch: { baseBranch?: string }): void;
-  setPr(slug: string, pr: PRSummary | null): void;
-}
+export type { SessionStateUpdater } from "./sessionStateUpdater.js";
 
 export interface LandingManagerDeps {
   pushBranch?: PushBranchFn;
   ensurePullRequest?: EnsurePullRequestFn;
   editPullRequestBase?: EditPullRequestBaseFn;
+  branchExistsOnRemote?: BranchExistsFn;
+  rebaseOnto?: RebaseOntoFn;
   sessionRepo?: SessionStateUpdater | null;
 }
 
@@ -64,6 +71,8 @@ export class LandingManager {
   private readonly pushBranch: PushBranchFn;
   private readonly ensurePullRequest: EnsurePullRequestFn;
   private readonly editPullRequestBase: EditPullRequestBaseFn;
+  private readonly branchExistsOnRemote: BranchExistsFn;
+  private readonly rebaseOnto: RebaseOntoFn;
   private readonly sessionRepo: SessionStateUpdater | null;
 
   constructor(
@@ -76,6 +85,8 @@ export class LandingManager {
     this.pushBranch = deps.pushBranch ?? defaultPushBranch;
     this.ensurePullRequest = deps.ensurePullRequest ?? defaultEnsurePullRequest;
     this.editPullRequestBase = deps.editPullRequestBase ?? defaultEditPullRequestBase;
+    this.branchExistsOnRemote = deps.branchExistsOnRemote ?? defaultBranchExists;
+    this.rebaseOnto = deps.rebaseOnto ?? defaultRebaseOnto;
     this.sessionRepo = deps.sessionRepo ?? null;
   }
 
@@ -250,11 +261,22 @@ export class LandingManager {
       return;
     }
 
+    await applyLiveBase(slug, {
+      ctx: this.ctx,
+      dagRepo: this.dagRepo,
+      log: this.log,
+      sessionRepo: this.sessionRepo,
+      branchExists: this.branchExistsOnRemote,
+      rebaseOnto: this.rebaseOnto,
+    });
+
+    const refreshedAfterBase = this.ctx.sessions.get(slug) ?? session;
+
     this.ctx.audit.record(
       "system",
       "landing.push.start",
       { kind: "session", id: slug },
-      { branch: session.branch, baseBranch: session.baseBranch ?? null },
+      { branch: refreshedAfterBase.branch, baseBranch: refreshedAfterBase.baseBranch ?? null },
     );
     try {
       await this.pushBranch(session.worktreePath, session.branch, this.log);
@@ -278,7 +300,7 @@ export class LandingManager {
       "system",
       "landing.pr.ensure.start",
       { kind: "session", id: slug },
-      { branch: session.branch, baseBranch: session.baseBranch ?? null },
+      { branch: refreshedAfterBase.branch, baseBranch: refreshedAfterBase.baseBranch ?? null },
     );
     try {
       await this.ensurePullRequest({ ctx: this.ctx, slug, log: this.log });
@@ -442,7 +464,9 @@ export function createLandingSubsystem(
   const { ctx, log, dagRepo, db } = deps;
 
   const sessionRepo = new SessionRepo(db);
-  const restack = new RestackManager(ctx, dagRepo, log.child({ subsystem: "restack" }));
+  const restack = new RestackManager(ctx, dagRepo, log.child({ subsystem: "restack" }), {
+    sessionRepo,
+  });
   const manager = new LandingManager(
     ctx,
     dagRepo,
