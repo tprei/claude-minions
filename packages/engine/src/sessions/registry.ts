@@ -104,7 +104,7 @@ export interface RegistryDeps {
   ctx: EngineContext;
 }
 
-const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
+const DEFAULT_SPAWN_TIMEOUT_MS = 120_000;
 const STUCK_PENDING_GRACE_MS = 60_000;
 const STUCK_PENDING_SWEEP_INTERVAL_MS = 30_000;
 
@@ -471,7 +471,16 @@ export class SessionRegistry {
       ctx.audit.record("operator", "session.create", { kind: "session", id: slug });
 
       try {
-        await this.setupAndSpawn(slug, req, session, providerName);
+        await withTimeout(
+          this.setupAndSpawn(slug, req, session, providerName),
+          spawnTimeoutMs,
+          () =>
+            new EngineError(
+              "upstream",
+              `setupAndSpawn timed out after ${spawnTimeoutMs}ms`,
+              { provider: providerName, sessionSlug: slug, op: "setup" },
+            ),
+        );
       } catch (err) {
         log.error("session setup failed", { slug, err: String(err) });
         this.failSessionWithAttention(slug, `Spawn failed: ${String(err)}`);
@@ -677,25 +686,16 @@ export class SessionRegistry {
     log.info("setupAndSpawn:provider.spawn invoking", { slug, provider: providerName });
     let handle: ProviderHandle;
     try {
-      handle = await withTimeout(
-        provider.spawn({
-          sessionSlug: slug,
-          worktree: worktreePath,
-          prompt: req.prompt,
-          modelHint: req.modelHint,
-          env,
-          preamble,
-          mcpConfigPath,
-          permissionTier,
-        }),
-        spawnTimeoutMs,
-        () =>
-          new EngineError(
-            "upstream",
-            `provider.spawn timed out after ${spawnTimeoutMs}ms`,
-            { provider: providerName, sessionSlug: slug, op: "spawn" },
-          ),
-      );
+      handle = await provider.spawn({
+        sessionSlug: slug,
+        worktree: worktreePath,
+        prompt: req.prompt,
+        modelHint: req.modelHint,
+        env,
+        preamble,
+        mcpConfigPath,
+        permissionTier,
+      });
     } catch (err) {
       log.error("setupAndSpawn:provider.spawn failed", { slug, err: String(err) });
       throw err;
