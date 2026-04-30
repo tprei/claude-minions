@@ -288,6 +288,14 @@ const fields: RuntimeField[] = [
     group: "maintenance",
     applies: "restart",
   },
+  {
+    key: "crashLogDir",
+    label: "Crash log directory",
+    type: "string",
+    default: "~/.minions/crashes",
+    group: "execution",
+    applies: "restart",
+  },
 ];
 
 export const runtimeConfigSchema: RuntimeConfigSchema = {

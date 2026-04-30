@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
+import os from "node:os";
 import { loadEnv } from "./env.js";
 import { isEngineError } from "./errors.js";
 
@@ -117,5 +119,25 @@ describe("loadEnv CORS origins", () => {
       MINIONS_CORS_ORIGINS: "https://a.example.com, https://b.example.com",
     });
     assert.deepEqual(env.corsOrigins, ["https://a.example.com", "https://b.example.com"]);
+  });
+});
+
+describe("loadEnv crashLogDir", () => {
+  it("defaults to an absolute path under the user's home directory containing .minions/crashes", () => {
+    const env = loadEnv(safeEnv);
+    assert.equal(path.isAbsolute(env.crashLogDir), true);
+    assert.equal(env.crashLogDir, path.join(os.homedir(), ".minions", "crashes"));
+    assert.match(env.crashLogDir, /\.minions[/\\]crashes$/);
+  });
+
+  it("honors an explicit absolute MINIONS_CRASH_LOG_DIR", () => {
+    const env = loadEnv({ ...safeEnv, MINIONS_CRASH_LOG_DIR: "/tmp/x" });
+    assert.equal(env.crashLogDir, "/tmp/x");
+  });
+
+  it("resolves a relative MINIONS_CRASH_LOG_DIR against process.cwd()", () => {
+    const env = loadEnv({ ...safeEnv, MINIONS_CRASH_LOG_DIR: "./foo" });
+    assert.equal(path.isAbsolute(env.crashLogDir), true);
+    assert.equal(env.crashLogDir, path.resolve(process.cwd(), "./foo"));
   });
 });
