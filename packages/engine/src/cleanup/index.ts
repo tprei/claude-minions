@@ -50,6 +50,26 @@ const INELIGIBLE_RUNTIME_STATUSES: ReadonlySet<string> = new Set([
 const DAY_MS = 86_400_000;
 const PREVIEW_DU_CONCURRENCY = 4;
 const PREVIEW_DU_TIMEOUT_MS = 5_000;
+const EXECUTE_CONCURRENCY = 8;
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  n: number,
+  fn: (t: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let i = 0;
+  const workers = Array(Math.min(n, items.length))
+    .fill(null)
+    .map(async () => {
+      while (i < items.length) {
+        const idx = i++;
+        results[idx] = await fn(items[idx]!);
+      }
+    });
+  await Promise.all(workers);
+  return results;
+}
 
 interface PageCursorShape {
   updatedAt: string;
@@ -176,23 +196,30 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
   }
 
   async function execute(req: CleanupExecuteRequest): Promise<CleanupExecuteResponse> {
-    const errors: CleanupExecuteError[] = [];
-    let bytesReclaimed = 0;
-    let deleted = 0;
+    interface SlugOutcome {
+      deleted: boolean;
+      bytesReclaimed: number;
+      errors: CleanupExecuteError[];
+    }
 
-    for (const slug of req.slugs) {
+    async function processSlug(slug: string): Promise<SlugOutcome> {
+      const slugErrors: CleanupExecuteError[] = [];
       const s = sessions.get(slug);
       if (!s) {
-        errors.push({ slug, code: "not_found", message: `Session ${slug} not found` });
-        continue;
+        return {
+          deleted: false,
+          bytesReclaimed: 0,
+          errors: [{ slug, code: "not_found", message: `Session ${slug} not found` }],
+        };
       }
       if (INELIGIBLE_RUNTIME_STATUSES.has(s.status)) {
-        errors.push({
-          slug,
-          code: "ineligible_status",
-          message: `Session ${slug} status=${s.status}`,
-        });
-        continue;
+        return {
+          deleted: false,
+          bytesReclaimed: 0,
+          errors: [
+            { slug, code: "ineligible_status", message: `Session ${slug} status=${s.status}` },
+          ],
+        };
       }
 
       let measuredBytes = 0;
@@ -206,7 +233,7 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
           await removeWorktree(reposDir, worktreeRoot, s.repoId, slug, log);
           worktreeRemoved = true;
         } catch (err) {
-          errors.push({
+          slugErrors.push({
             slug,
             code: "worktree_remove_failed",
             message: String(err),
@@ -233,8 +260,8 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
       try {
         await sessions.delete(slug);
       } catch (err) {
-        errors.push({ slug, code: "internal", message: String(err) });
-        continue;
+        slugErrors.push({ slug, code: "internal", message: String(err) });
+        return { deleted: false, bytesReclaimed: 0, errors: slugErrors };
       }
 
       audit.record(
@@ -244,8 +271,22 @@ export function makeCleanupSubsystem(deps: CleanupSubsystemDeps): CleanupSubsyst
         { bytesReclaimed: measuredBytes, removeWorktree: req.removeWorktree },
       );
 
-      deleted++;
-      if (worktreeRemoved) bytesReclaimed += measuredBytes;
+      return {
+        deleted: true,
+        bytesReclaimed: worktreeRemoved ? measuredBytes : 0,
+        errors: slugErrors,
+      };
+    }
+
+    const outcomes = await runWithConcurrency(req.slugs, EXECUTE_CONCURRENCY, processSlug);
+
+    const errors: CleanupExecuteError[] = [];
+    let bytesReclaimed = 0;
+    let deleted = 0;
+    for (const o of outcomes) {
+      if (o.deleted) deleted++;
+      bytesReclaimed += o.bytesReclaimed;
+      if (o.errors.length > 0) errors.push(...o.errors);
     }
 
     return { deleted, bytesReclaimed, errors };
