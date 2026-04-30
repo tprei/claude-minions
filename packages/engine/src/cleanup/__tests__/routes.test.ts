@@ -363,4 +363,85 @@ describe("cleanup routes", () => {
       .c;
     assert.equal(afterCount, beforeCount);
   });
+
+  test("POST /api/cleanup/execute deletes 50 sessions in parallel with concurrency cap of 8", async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    const slugs: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const slug = `bulk-exec-${i.toString().padStart(2, "0")}`;
+      slugs.push(slug);
+      insertSession(h.db, slug, "completed", tenDaysAgo, null, null, null);
+    }
+
+    const beforeCount = (h.db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get() as { c: number })
+      .c;
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/cleanup/execute",
+      payload: { slugs, removeWorktree: false },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as CleanupExecuteResponse;
+    assert.equal(body.deleted, 50);
+    assert.deepEqual(body.errors, []);
+
+    const afterCount = (h.db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get() as { c: number })
+      .c;
+    assert.equal(afterCount, beforeCount - 50);
+  });
+
+  test("execute() bounds in-flight session deletes at concurrency cap of 8", async () => {
+    const N = 50;
+    const slugs = Array.from({ length: N }, (_, i) => `cap-${i}`);
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const completed: string[] = [];
+
+    const stubSessions = {
+      get: (slug: string) =>
+        ({
+          slug,
+          title: slug,
+          status: "completed",
+          worktreePath: null,
+          repoId: null,
+          branch: null,
+        }) as unknown as ReturnType<SessionRegistry["get"]>,
+      listPaged: () => ({ items: [], nextCursor: undefined }),
+      delete: async (slug: string) => {
+        inFlight++;
+        if (inFlight > maxInFlight) maxInFlight = inFlight;
+        await new Promise((r) => setTimeout(r, 15));
+        inFlight--;
+        completed.push(slug);
+      },
+    } as unknown as EngineContext["sessions"];
+
+    const stubAudit: EngineContext["audit"] = { record: () => {}, list: () => [] };
+    const stubLog = createLogger("error");
+    const stubBus = new EventBus();
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cleanup-cap-test-"));
+
+    const subsystem = makeCleanupSubsystem({
+      sessions: stubSessions,
+      audit: stubAudit,
+      workspaceDir: tmpDir,
+      reposDir: tmpDir,
+      worktreeRoot: tmpDir,
+      log: stubLog,
+      bus: stubBus,
+    });
+
+    const result = await subsystem.execute({ slugs, removeWorktree: false });
+
+    assert.equal(result.deleted, N);
+    assert.deepEqual(result.errors, []);
+    assert.equal(completed.length, N);
+    assert.ok(maxInFlight <= 8, `maxInFlight ${maxInFlight} must not exceed 8`);
+    assert.ok(maxInFlight >= 2, `maxInFlight ${maxInFlight} should show parallelism`);
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
 });
