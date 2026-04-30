@@ -633,7 +633,11 @@ export class SessionRegistry {
 
     const homeDir = paths.home(providerName);
     await ensureDir(homeDir);
-    await writeSessionSettings(homeDir, worktreePath);
+    await writeSessionSettings(homeDir, worktreePath, {
+      slug,
+      policyHooksEnabled:
+        ctx.runtime.effective()["policyHooksEnabled"] !== false,
+    });
 
     const env: Record<string, string> = {
       HOME: homeDir,
