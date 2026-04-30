@@ -159,7 +159,10 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
       close: async () => {},
       delete: async () => {},
       reply: async () => {},
-      setDagId: () => {},
+      setDagId: (slug: string, dagId: string) => {
+        const target = spawnedSessions.find((s) => s.slug === slug);
+        if (target) target.dagId = dagId;
+      },
       setMetadata: () => {},
       markCompleted: () => {},
       markWaitingInput: () => {},
@@ -235,6 +238,25 @@ describe("DagScheduler", () => {
 
     const cNode = repo.getNode("C");
     assert.equal(cNode?.status, "pending", "C should still be pending");
+  });
+
+  test("spawned dag-task session has dagId set to the parent DAG id", async () => {
+    const nodeA = makeNode("A", "pending");
+    const dag = makeDag("dag1", [nodeA]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 1, "session spawned for A");
+    const spawned = spawnedSessions[0]!;
+    assert.equal(
+      spawned.dagId,
+      "dag1",
+      "spawned session.dagId points at the parent DAG (not null)",
+    );
   });
 
   test("tick spawns C when B is marked done", async () => {
