@@ -13,6 +13,7 @@ import { registerDagRoutes } from "../../dag/routes.js";
 import { registerMemoryRoutes } from "./memories.js";
 import { registerMcpRoute } from "../../memory/mcpRoute.js";
 import { registerAuditRoutes } from "./audit.js";
+import { registerEngineLifecycleRoutes } from "./engine-lifecycle.js";
 import { registerAttentionRoutes } from "./attention.js";
 import { registerPushRoutes } from "./push.js";
 import { registerRuntimeRoutes } from "./runtime.js";
@@ -38,6 +39,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: EngineContext): 
   registerMemoryRoutes(app, ctx);
   registerMcpRoute(app, ctx);
   registerAuditRoutes(app, ctx);
+  registerEngineLifecycleRoutes(app, ctx);
   registerAttentionRoutes(app, ctx);
   registerPushRoutes(app, ctx);
   registerRuntimeRoutes(app, ctx);

@@ -123,6 +123,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
       },
       list: () => audit.slice(),
     },
+    lifecycle: {} as EngineContext["lifecycle"],
     mutex: new KeyedMutex(),
     runtime: {
       schema: () => ({ groups: [], fields: [] }),
@@ -492,6 +493,7 @@ function makeUpstreamHarness(opts: {
       },
       list: () => audit.slice(),
     },
+    lifecycle: {} as EngineContext["lifecycle"],
     mutex: new KeyedMutex(),
     runtime: {
       schema: () => ({ groups: [], fields: [] }),

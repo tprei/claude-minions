@@ -6,6 +6,7 @@ export * from "./checkpoint.js";
 export * from "./memory.js";
 export * from "./external-task.js";
 export * from "./audit.js";
+export * from "./lifecycle.js";
 export * from "./quality.js";
 export * from "./readiness.js";
 export * from "./pr.js";

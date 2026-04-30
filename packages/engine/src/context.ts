@@ -127,6 +127,8 @@ export interface EngineContext {
     list: (limit?: number) => import("@minions/shared").AuditEvent[];
   };
 
+  lifecycle: import("./lifecycle/index.js").LifecycleSubsystem;
+
   resource: {
     latest: () => import("@minions/shared").ResourceSnapshot | null;
     start: () => void;
