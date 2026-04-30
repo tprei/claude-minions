@@ -243,3 +243,68 @@ describe("SessionRegistry.create runtime defaultSessionBudgetUsd fallback", () =
     assert.equal(row.cost_budget_usd, null);
   });
 });
+
+describe("SessionRegistry.create slug suggestions", () => {
+  let db: Database.Database;
+  let bus: EventBus;
+  let registry: SessionRegistry;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    db = makeInMemoryDb();
+    bus = new EventBus();
+    workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "registry-create-slug-"));
+    registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx(),
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  test("collision suffixes the second session with -2", async () => {
+    const first = await registry.create({
+      prompt: "first",
+      mode: "task",
+      slug: "abc123-foo",
+    });
+    const second = await registry.create({
+      prompt: "second",
+      mode: "task",
+      slug: "abc123-foo",
+    });
+
+    assert.equal(first.slug, "abc123-foo");
+    assert.equal(second.slug, "abc123-foo-2");
+
+    const firstRead = registry.get("abc123-foo");
+    assert.ok(firstRead);
+    assert.equal(firstRead!.slug, "abc123-foo");
+
+    const secondRead = registry.get("abc123-foo-2");
+    assert.ok(secondRead);
+    assert.equal(secondRead!.slug, "abc123-foo-2");
+  });
+
+  test("invalid suggestion is rejected with EngineError", async () => {
+    await assert.rejects(
+      registry.create({
+        prompt: "bad slug",
+        mode: "task",
+        slug: "Bad Slug!",
+      }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.equal(err.name, "EngineError");
+        assert.equal((err as unknown as { code: string }).code, "bad_request");
+        return true;
+      },
+    );
+  });
+});
