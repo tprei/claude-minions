@@ -1,7 +1,29 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import os from "node:os";
 import { resolveWorktreeGitPaths } from "../providers/claudeCode.js";
 import { ensureDir } from "../util/fs.js";
+
+const SHARED_AUTH_FILES = ["credentials.json", ".credentials.json"];
+
+async function symlinkOperatorAuth(claudeDir: string): Promise<void> {
+  const operatorClaudeDir = path.join(os.homedir(), ".claude");
+  for (const filename of SHARED_AUTH_FILES) {
+    const src = path.join(operatorClaudeDir, filename);
+    try {
+      await fs.access(src);
+    } catch {
+      continue;
+    }
+    const dst = path.join(claudeDir, filename);
+    try {
+      await fs.unlink(dst);
+    } catch {
+      // ok if missing
+    }
+    await fs.symlink(src, dst);
+  }
+}
 
 export async function writeSessionSettings(
   homeDir: string,
@@ -33,4 +55,6 @@ export async function writeSessionSettings(
     JSON.stringify(settings, null, 2),
     "utf8",
   );
+
+  await symlinkOperatorAuth(claudeDir);
 }
