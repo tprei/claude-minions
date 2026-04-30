@@ -743,6 +743,12 @@ export class SessionRegistry {
 
       const finalStatus: SessionStatus = code === 0 ? "completed" : "failed";
 
+      // Commit the terminal status BEFORE notifying subsystems. Otherwise
+      // dags.onSessionTerminal reads the still-'running' row and marks the
+      // node failed with "session terminated with status: running".
+      const now = nowIso();
+      this.updateSessionStatus.run(finalStatus, now, now, slug);
+
       try {
         await ctx.dags.onSessionTerminal(slug);
       } catch (err) {
@@ -764,19 +770,6 @@ export class SessionRegistry {
         });
         if (continued) return;
       }
-
-      const latestRow = this.getSessionRow(slug);
-      if (latestRow?.status === "waiting_input") {
-        // Subsystem (e.g. ship coordinator) parked the session in waiting_input
-        // while it waits for an external trigger (e.g. DAG completion). Don't
-        // overwrite that with the exit-code-derived status; the session is alive
-        // pending a wake.
-        this.emitUpdated(this.buildSession(latestRow));
-        return;
-      }
-
-      const now = nowIso();
-      this.updateSessionStatus.run(finalStatus, now, now, slug);
 
       const updatedRow = this.getSessionRow(slug)!;
       this.emitUpdated(this.buildSession(updatedRow));
