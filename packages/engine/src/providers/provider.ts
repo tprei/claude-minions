@@ -11,6 +11,8 @@ export interface ProviderSpawnOpts {
   mcpConfigPath?: string;
   additionalPrompt?: string;
   permissionTier?: PermissionTier;
+  worktreeGitDir?: string;
+  worktreeGitCommonDir?: string;
 }
 
 export interface ProviderResumeOpts {
@@ -21,6 +23,8 @@ export interface ProviderResumeOpts {
   mcpConfigPath?: string;
   additionalPrompt?: string;
   permissionTier?: PermissionTier;
+  worktreeGitDir?: string;
+  worktreeGitCommonDir?: string;
 }
 
 export interface ProviderHandle {
