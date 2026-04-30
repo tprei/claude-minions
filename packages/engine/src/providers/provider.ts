@@ -77,6 +77,13 @@ export interface ProviderTurnCompletedEvent {
   kind: "turn_completed";
   outcome: "success" | "stopped" | "errored" | "needs_input";
   stopReason?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+  };
+  costUsd?: number;
 }
 
 export interface ProviderStatusEvent {

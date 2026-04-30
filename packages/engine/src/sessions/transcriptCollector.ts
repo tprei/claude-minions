@@ -2,22 +2,17 @@ import type Database from "better-sqlite3";
 import type { EventBus } from "../bus/eventBus.js";
 import type { ProviderEvent } from "../providers/provider.js";
 import type { Logger } from "../logger.js";
+import type { EngineContext } from "../context.js";
 import { newEventId } from "../util/ids.js";
 import { nowIso } from "../util/time.js";
 import { eventToRow, rowToTranscriptEvent, rowToSession, type SessionRow } from "./mapper.js";
-
-interface SessionStatsRow {
-  stats_turns: number;
-  stats_tool_calls: number;
-  stats_input_tokens: number;
-  stats_output_tokens: number;
-  stats_cost_usd: number;
-}
+import { maybeApplyBudgetCap } from "./budgetCap.js";
 
 export interface TranscriptCollectorDeps {
   db: Database.Database;
   bus: EventBus;
   log: Logger;
+  ctx?: EngineContext;
 }
 
 export class TranscriptCollector {
@@ -44,6 +39,11 @@ export class TranscriptCollector {
       `UPDATE sessions SET
          stats_turns = stats_turns + ?,
          stats_tool_calls = stats_tool_calls + ?,
+         stats_input_tokens = stats_input_tokens + ?,
+         stats_output_tokens = stats_output_tokens + ?,
+         stats_cache_read_tokens = stats_cache_read_tokens + ?,
+         stats_cache_creation_tokens = stats_cache_creation_tokens + ?,
+         stats_cost_usd = stats_cost_usd + ?,
          updated_at = ?,
          last_turn_at = CASE WHEN ? > 0 THEN ? ELSE last_turn_at END
        WHERE slug = ?`,
@@ -79,13 +79,39 @@ export class TranscriptCollector {
     this.deps.bus.emit({ kind: "session_updated", session });
   }
 
+  private applyStatsDelta(
+    slug: string,
+    timestamp: string,
+    turnDelta: number,
+    toolCallDelta: number,
+    inputTokensDelta: number,
+    outputTokensDelta: number,
+    cacheReadDelta: number,
+    cacheCreationDelta: number,
+    costDelta: number,
+  ): void {
+    this.updateStatsStmt.run(
+      turnDelta,
+      toolCallDelta,
+      inputTokensDelta,
+      outputTokensDelta,
+      cacheReadDelta,
+      cacheCreationDelta,
+      costDelta,
+      timestamp,
+      turnDelta,
+      timestamp,
+      slug,
+    );
+  }
+
   async collect(
     slug: string,
     events: AsyncIterable<ProviderEvent>,
     onExternalId?: (id: string) => void,
     startTurn = 0,
   ): Promise<void> {
-    const { bus, log } = this.deps;
+    const { bus, log, ctx } = this.deps;
     let turn = startTurn;
     let turnDelta = 0;
     let toolCallDelta = 0;
@@ -126,17 +152,43 @@ export class TranscriptCollector {
       bus.emit({ kind: "transcript_event", sessionSlug: slug, event: transcriptEv });
 
       if (ev.kind === "turn_completed") {
-        if (turnDelta > 0 || toolCallDelta > 0) {
-          this.updateStatsStmt.run(
+        const usage = ev.usage ?? {};
+        const inputTokensDelta = usage.inputTokens ?? 0;
+        const outputTokensDelta = usage.outputTokens ?? 0;
+        const cacheReadDelta = usage.cacheReadTokens ?? 0;
+        const cacheCreationDelta = usage.cacheCreationTokens ?? 0;
+        const costDelta = ev.costUsd ?? 0;
+
+        const hasStatsDelta =
+          turnDelta > 0 ||
+          toolCallDelta > 0 ||
+          inputTokensDelta > 0 ||
+          outputTokensDelta > 0 ||
+          cacheReadDelta > 0 ||
+          cacheCreationDelta > 0 ||
+          costDelta > 0;
+
+        if (hasStatsDelta) {
+          this.applyStatsDelta(
+            slug,
+            timestamp,
             turnDelta,
             toolCallDelta,
-            timestamp,
-            turnDelta,
-            timestamp,
-            slug,
+            inputTokensDelta,
+            outputTokensDelta,
+            cacheReadDelta,
+            cacheCreationDelta,
+            costDelta,
           );
           turnDelta = 0;
           toolCallDelta = 0;
+        }
+
+        if (ctx && costDelta > 0) {
+          const newCostRow = this.getSessionForBusStmt.get(slug) as SessionRow | undefined;
+          if (newCostRow) {
+            maybeApplyBudgetCap(ctx, slug, newCostRow.stats_cost_usd);
+          }
         }
 
         if (ev.outcome === "needs_input") {
@@ -147,14 +199,7 @@ export class TranscriptCollector {
     }
 
     if (turnDelta > 0 || toolCallDelta > 0) {
-      this.updateStatsStmt.run(
-        turnDelta,
-        toolCallDelta,
-        nowIso(),
-        turnDelta,
-        nowIso(),
-        slug,
-      );
+      this.applyStatsDelta(slug, nowIso(), turnDelta, toolCallDelta, 0, 0, 0, 0, 0);
     }
 
     log.debug("transcript collector done", { slug });

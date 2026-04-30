@@ -179,6 +179,49 @@ describe("TranscriptCollector", () => {
     assert.equal(row?.stats_tool_calls, 1);
   });
 
+  test("turn_completed event with costUsd merges into stats_cost_usd", async () => {
+    const slug = "test-session-cost";
+    insertTestSession(db, slug);
+
+    const events: ProviderEvent[] = [
+      { kind: "turn_started" },
+      {
+        kind: "turn_completed",
+        outcome: "success",
+        costUsd: 0.42,
+        usage: { inputTokens: 11, outputTokens: 7, cacheReadTokens: 3, cacheCreationTokens: 5 },
+      },
+    ];
+
+    async function* gen(): AsyncIterable<ProviderEvent> {
+      for (const ev of events) yield ev;
+    }
+
+    await collector.collect(slug, gen());
+
+    const row = db
+      .prepare(
+        `SELECT stats_cost_usd, stats_input_tokens, stats_output_tokens,
+                stats_cache_read_tokens, stats_cache_creation_tokens, stats_turns
+         FROM sessions WHERE slug = ?`,
+      )
+      .get(slug) as {
+        stats_cost_usd: number;
+        stats_input_tokens: number;
+        stats_output_tokens: number;
+        stats_cache_read_tokens: number;
+        stats_cache_creation_tokens: number;
+        stats_turns: number;
+      };
+
+    assert.ok(Math.abs(row.stats_cost_usd - 0.42) < 1e-9, `expected 0.42, got ${row.stats_cost_usd}`);
+    assert.equal(row.stats_input_tokens, 11);
+    assert.equal(row.stats_output_tokens, 7);
+    assert.equal(row.stats_cache_read_tokens, 3);
+    assert.equal(row.stats_cache_creation_tokens, 5);
+    assert.equal(row.stats_turns, 1);
+  });
+
   test("session_id event triggers onExternalId callback", async () => {
     const slug = "test-session-7";
     insertTestSession(db, slug);

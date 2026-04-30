@@ -132,6 +132,7 @@ function makeMockCtx(opts: {
           .run(dagId, slug);
       },
       markWaitingInput: () => {},
+      appendAttention: () => {},
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({
