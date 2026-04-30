@@ -52,6 +52,45 @@ describe("claudeCode argv :: permissionTier", () => {
       assert.ok(indexOfPair(args, "--add-dir", WORKTREE) >= 0, "worktree tier must pass --add-dir <worktree>");
     });
 
+    test("tier=worktree without git-dir opts emits only --add-dir <worktree>", () => {
+      const args = buildSpawnArgs({ ...baseSpawn, permissionTier: "worktree" });
+      const addDirCount = args.filter((a) => a === "--add-dir").length;
+      assert.equal(addDirCount, 1, "exactly one --add-dir entry expected");
+      assert.ok(!args.includes("undefined"), "must not emit literal 'undefined' for missing git paths");
+    });
+
+    test("tier=worktree forwards --add-dir for worktreeGitDir and worktreeGitCommonDir", () => {
+      const args = buildSpawnArgs({
+        ...baseSpawn,
+        permissionTier: "worktree",
+        worktreeGitDir: "/fake/git/dir",
+        worktreeGitCommonDir: "/fake/common",
+      });
+      assert.ok(indexOfPair(args, "--add-dir", WORKTREE) >= 0, "worktree --add-dir must be present");
+      assert.ok(indexOfPair(args, "--add-dir", "/fake/git/dir") >= 0, "gitDir must be passed via --add-dir");
+      assert.ok(indexOfPair(args, "--add-dir", "/fake/common") >= 0, "gitCommonDir must be passed via --add-dir");
+    });
+
+    test("tier=read ignores worktreeGitDir/worktreeGitCommonDir", () => {
+      const args = buildSpawnArgs({
+        ...baseSpawn,
+        permissionTier: "read",
+        worktreeGitDir: "/fake/git/dir",
+        worktreeGitCommonDir: "/fake/common",
+      });
+      assert.ok(!args.includes("--add-dir"), "read tier must not emit any --add-dir even when git paths provided");
+    });
+
+    test("tier=full ignores worktreeGitDir/worktreeGitCommonDir", () => {
+      const args = buildSpawnArgs({
+        ...baseSpawn,
+        permissionTier: "full",
+        worktreeGitDir: "/fake/git/dir",
+        worktreeGitCommonDir: "/fake/common",
+      });
+      assert.ok(!args.includes("--add-dir"), "full tier must not emit any --add-dir even when git paths provided");
+    });
+
     test("tier=full uses --dangerously-skip-permissions", () => {
       const args = buildSpawnArgs({ ...baseSpawn, permissionTier: "full" });
       assert.ok(args.includes(DANGEROUS), "full tier must use --dangerously-skip-permissions");
@@ -97,6 +136,45 @@ describe("claudeCode argv :: permissionTier", () => {
       assert.ok(!args.includes(DANGEROUS));
       assert.ok(hasSequentialFlags(args, ACCEPT_EDITS_FLAGS));
       assert.ok(indexOfPair(args, "--add-dir", WORKTREE) >= 0);
+    });
+
+    test("tier=worktree without git-dir opts emits only --add-dir <worktree>", () => {
+      const args = buildResumeArgs({ ...baseResume, permissionTier: "worktree" });
+      const addDirCount = args.filter((a) => a === "--add-dir").length;
+      assert.equal(addDirCount, 1, "exactly one --add-dir entry expected");
+      assert.ok(!args.includes("undefined"), "must not emit literal 'undefined' for missing git paths");
+    });
+
+    test("tier=worktree forwards --add-dir for worktreeGitDir and worktreeGitCommonDir", () => {
+      const args = buildResumeArgs({
+        ...baseResume,
+        permissionTier: "worktree",
+        worktreeGitDir: "/fake/git/dir",
+        worktreeGitCommonDir: "/fake/common",
+      });
+      assert.ok(indexOfPair(args, "--add-dir", WORKTREE) >= 0);
+      assert.ok(indexOfPair(args, "--add-dir", "/fake/git/dir") >= 0);
+      assert.ok(indexOfPair(args, "--add-dir", "/fake/common") >= 0);
+    });
+
+    test("tier=read ignores worktreeGitDir/worktreeGitCommonDir", () => {
+      const args = buildResumeArgs({
+        ...baseResume,
+        permissionTier: "read",
+        worktreeGitDir: "/fake/git/dir",
+        worktreeGitCommonDir: "/fake/common",
+      });
+      assert.ok(!args.includes("--add-dir"));
+    });
+
+    test("tier=full ignores worktreeGitDir/worktreeGitCommonDir", () => {
+      const args = buildResumeArgs({
+        ...baseResume,
+        permissionTier: "full",
+        worktreeGitDir: "/fake/git/dir",
+        worktreeGitCommonDir: "/fake/common",
+      });
+      assert.ok(!args.includes("--add-dir"));
     });
 
     test("tier=full uses --dangerously-skip-permissions", () => {
