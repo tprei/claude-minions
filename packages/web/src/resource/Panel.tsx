@@ -5,6 +5,7 @@ import { severity, SEVERITY_STROKES, type Severity } from "./severity.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Sheet } from "../components/Sheet.js";
 import { PANEL_RESOURCE, usePanelLayout } from "../util/panelLayout.js";
+import { fmtBytes } from "../util/time.js";
 
 interface Props {
   connId: string;
@@ -138,6 +139,7 @@ function ResourceBody({ connId }: Props): ReactElement {
   const memValues = history.map(s => s.memory.rssBytes);
   const lagValues = history.map(s => s.eventLoop.lagMs);
   const diskFreeValues = history.map(diskFreePct);
+  const workspaceValues = history.map(s => s.disk.workspaceUsedBytes);
 
   const cpuPct = Math.round(latest.cpu.usagePct);
   const memPct = pct(latest.memory.usedBytes, latest.memory.limitBytes);
@@ -151,6 +153,7 @@ function ResourceBody({ connId }: Props): ReactElement {
 
   const memDomain = Math.max(latest.memory.limitBytes, ...memValues);
   const lagDomain = Math.max(...lagValues, 50);
+  const workspaceDomain = Math.max(...workspaceValues, 1);
 
   return (
     <div className="card p-4 flex flex-col gap-3 text-sm">
@@ -191,6 +194,14 @@ function ResourceBody({ connId }: Props): ReactElement {
         values={diskFreeValues}
         domainMax={100}
         sev={diskSev}
+      />
+
+      <Row
+        title="Workspace size"
+        detail={fmtBytes(latest.disk.workspaceUsedBytes)}
+        values={workspaceValues}
+        domainMax={workspaceDomain}
+        sev="ok"
       />
 
       <div className="flex gap-3 text-xs text-fg-muted border-t border-border pt-3 tabular-nums">

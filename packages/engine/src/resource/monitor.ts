@@ -1,27 +1,40 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type Database from "better-sqlite3";
 import type { ResourceSnapshot } from "@minions/shared";
 import { bytesAvailable } from "../util/fs.js";
-
-const execFileAsync = promisify(execFile);
-
-async function workspaceUsedBytes(path: string): Promise<number> {
-  try {
-    const { stdout } = await execFileAsync("du", ["-sb", path], { timeout: 5_000 });
-    const n = Number.parseInt(stdout.split(/\s+/)[0] ?? "0", 10);
-    return Number.isFinite(n) ? n : 0;
-  } catch {
-    return 0;
-  }
-}
+import { diskUsage } from "../util/diskUsage.js";
 import {
   readCpuLimit,
   readMemoryLimit,
   readCpuUsageSample,
   type CpuUsageSample,
 } from "./cgroup.js";
+
+const WORKSPACE_USAGE_TTL_MS = 60_000;
+
+let workspaceUsageCache: { bytes: number; mtime: number } | null = null;
+let workspaceUsageInflight = false;
+
+function getWorkspaceUsedBytes(workspaceDir: string): number {
+  const now = Date.now();
+  if (workspaceUsageCache && now - workspaceUsageCache.mtime < WORKSPACE_USAGE_TTL_MS) {
+    return workspaceUsageCache.bytes;
+  }
+  if (!workspaceUsageInflight) {
+    workspaceUsageInflight = true;
+    void diskUsage(workspaceDir)
+      .then((r) => {
+        workspaceUsageCache = { bytes: r.bytes, mtime: Date.now() };
+      })
+      .catch(() => {
+        /* swallow; keep stale value, retry on next tick */
+      })
+      .finally(() => {
+        workspaceUsageInflight = false;
+      });
+  }
+  return workspaceUsageCache?.bytes ?? 0;
+}
 
 interface SessionCounts {
   total: number;
@@ -57,11 +70,10 @@ export class ResourceMonitor {
   async sample(): Promise<ResourceSnapshot> {
     this.lagMonitor.enable();
 
-    const [cpuLimit, memLimit, diskInfo, workspaceBytes, currentCpuSample] = await Promise.all([
+    const [cpuLimit, memLimit, diskInfo, currentCpuSample] = await Promise.all([
       readCpuLimit(),
       readMemoryLimit(),
       bytesAvailable(this.workspaceDir),
-      workspaceUsedBytes(this.workspaceDir),
       readCpuUsageSample(),
     ]);
 
@@ -100,7 +112,7 @@ export class ResourceMonitor {
         usedBytes: diskInfo.used,
         totalBytes: diskInfo.total,
         workspacePath: this.workspaceDir,
-        workspaceUsedBytes: workspaceBytes,
+        workspaceUsedBytes: getWorkspaceUsedBytes(this.workspaceDir),
       },
       eventLoop: {
         lagMs: Number.isFinite(lagMs) ? lagMs : 0,
