@@ -33,10 +33,7 @@ export class CiBabysitter {
     const sessions = this.ctx.sessions.list().filter((s) => {
       if (!s.pr || s.pr.state !== "open") return false;
       if (s.status === "failed" || s.status === "cancelled") return false;
-      const ciTerminal = s.attention.some(
-        (a) => a.kind === "ci_failed" || a.kind === "ci_passed",
-      );
-      return !ciTerminal;
+      return true;
     });
 
     if (sessions.length === 0) {
