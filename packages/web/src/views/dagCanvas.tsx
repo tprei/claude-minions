@@ -4,6 +4,8 @@ import ReactFlow, {
   Controls,
   MiniMap,
   MarkerType,
+  ReactFlowProvider,
+  useReactFlow,
   type NodeTypes,
   type Edge,
   type Node,
@@ -27,7 +29,7 @@ import { Modal } from "../components/Modal.js";
 import { Button } from "../components/Button.js";
 import { retryDagNode } from "../transport/rest.js";
 import { cx } from "../util/classnames.js";
-import { PANEL_DAG_CANVAS, usePanelLayout } from "../util/panelLayout.js";
+import { PANEL_DAG_CANVAS, usePanelLayout, type Breakpoint } from "../util/panelLayout.js";
 import { getViewport, setViewport, type Viewport } from "./dagViewport.js";
 import "reactflow/dist/style.css";
 
@@ -223,6 +225,7 @@ interface CanvasProps {
   dag: DAG;
   connectionId: string | null;
   onSelectDag: (id: string) => void;
+  breakpoint: Breakpoint;
 }
 
 function transitiveDescendants(dag: DAG, rootId: string): DAGNode[] {
@@ -242,7 +245,52 @@ function transitiveDescendants(dag: DAG, rootId: string): DAGNode[] {
   return dag.nodes.filter((n) => set.has(n.id));
 }
 
-function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
+interface DagCanvasFlowProps {
+  dag: DAG;
+  nodes: Node[];
+  edges: Edge[];
+  defaultViewport: RFViewport | undefined;
+  breakpoint: Breakpoint;
+  onMove: OnMove;
+  onNodeDoubleClick: (event: React.MouseEvent, node: Node) => void;
+}
+
+function DagCanvasFlow({
+  dag,
+  nodes,
+  edges,
+  defaultViewport,
+  breakpoint,
+  onMove,
+  onNodeDoubleClick,
+}: DagCanvasFlowProps) {
+  const rf = useReactFlow();
+  const isMobile = breakpoint === "mobile";
+
+  useEffect(() => {
+    rf.fitView({ padding: 0.15, duration: 200 });
+  }, [rf, dag.id, breakpoint, nodes.length]);
+
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={NODE_TYPES}
+      fitView={isMobile ? undefined : !defaultViewport}
+      defaultViewport={isMobile ? undefined : defaultViewport}
+      onInit={(instance) => instance.fitView({ padding: 0.15, duration: 0 })}
+      onMove={onMove}
+      onNodeDoubleClick={onNodeDoubleClick}
+      proOptions={{ hideAttribution: true }}
+    >
+      <Background color="#27272a" gap={20} />
+      <Controls className="!bg-bg-elev !border-border" />
+      <MiniMap className="!bg-bg-elev !border-border" nodeColor="#3f3f46" />
+    </ReactFlow>
+  );
+}
+
+function DagCanvasInner({ dag, connectionId, onSelectDag, breakpoint }: CanvasProps) {
   const dagsMap = useDagStore(
     (s) => (connectionId ? s.byConnection.get(connectionId) ?? EMPTY_DAGS : EMPTY_DAGS),
   );
@@ -359,6 +407,7 @@ function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
   const handleMove = useCallback<OnMove>(
     (_event, viewport) => {
       if (!connectionId) return;
+      if (breakpoint === "mobile") return;
       if (saveTimer.current !== null) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
         setViewport(connectionId, dag.id, {
@@ -368,7 +417,7 @@ function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
         });
       }, 200);
     },
-    [connectionId, dag.id],
+    [connectionId, dag.id, breakpoint],
   );
 
   const handleNodeDoubleClick = useCallback(
@@ -396,20 +445,17 @@ function DagCanvasInner({ dag, connectionId, onSelectDag }: CanvasProps) {
 
   return (
     <div className="w-full h-full">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={NODE_TYPES}
-        fitView={!defaultViewport}
-        defaultViewport={defaultViewport}
-        onMove={handleMove}
-        onNodeDoubleClick={handleNodeDoubleClick}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background color="#27272a" gap={20} />
-        <Controls className="!bg-bg-elev !border-border" />
-        <MiniMap className="!bg-bg-elev !border-border" nodeColor="#3f3f46" />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <DagCanvasFlow
+          dag={dag}
+          nodes={nodes}
+          edges={edges}
+          defaultViewport={defaultViewport}
+          breakpoint={breakpoint}
+          onMove={handleMove}
+          onNodeDoubleClick={handleNodeDoubleClick}
+        />
+      </ReactFlowProvider>
       <Modal
         open={retryNode !== null}
         onClose={closeRetryModal}
@@ -477,15 +523,14 @@ interface Props {
   dagId?: string;
 }
 
-function DagCanvasChrome({ children }: { children: ReactNode }) {
-  const { collapsed, breakpoint, toggleCollapsed } = usePanelLayout(
-    PANEL_DAG_CANVAS,
-    {
-      defaultSize: DAG_DEFAULT_WIDTH,
-      minSize: DAG_MIN_WIDTH,
-      maxSize: DAG_MAX_WIDTH,
-    },
-  );
+interface DagCanvasChromeProps {
+  children: ReactNode;
+  breakpoint: Breakpoint;
+  collapsed: boolean;
+  toggleCollapsed: () => void;
+}
+
+function DagCanvasChrome({ children, breakpoint, collapsed, toggleCollapsed }: DagCanvasChromeProps) {
   const isMobile = breakpoint === "mobile";
 
   return (
@@ -528,6 +573,15 @@ export function DagCanvasView({ dagId }: Props) {
   );
   const dags = useMemo(() => Array.from(dagsMap.values()), [dagsMap]);
 
+  const { collapsed, breakpoint, toggleCollapsed } = usePanelLayout(
+    PANEL_DAG_CANVAS,
+    {
+      defaultSize: DAG_DEFAULT_WIDTH,
+      minSize: DAG_MIN_WIDTH,
+      maxSize: DAG_MAX_WIDTH,
+    },
+  );
+
   const selectDag = useCallback(
     (id: string) => {
       const { view, sessionSlug, query } = parseUrl();
@@ -551,7 +605,11 @@ export function DagCanvasView({ dagId }: Props) {
 
   if (!selected) {
     return (
-      <DagCanvasChrome>
+      <DagCanvasChrome
+        breakpoint={breakpoint}
+        collapsed={collapsed}
+        toggleCollapsed={toggleCollapsed}
+      >
         <div className="p-6 overflow-y-auto">
           <h2 className="text-sm font-medium text-fg-muted mb-4">Select a DAG</h2>
           {dags.length === 0 && (
@@ -578,7 +636,11 @@ export function DagCanvasView({ dagId }: Props) {
   }
 
   return (
-    <DagCanvasChrome>
+    <DagCanvasChrome
+      breakpoint={breakpoint}
+      collapsed={collapsed}
+      toggleCollapsed={toggleCollapsed}
+    >
       <div className="flex flex-col h-full">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 border-b border-border bg-bg-soft text-sm">
           <button
@@ -597,6 +659,7 @@ export function DagCanvasView({ dagId }: Props) {
             dag={selected}
             connectionId={activeId}
             onSelectDag={selectDag}
+            breakpoint={breakpoint}
           />
         </div>
       </div>
