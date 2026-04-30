@@ -3,19 +3,21 @@ import type { SessionStatus } from "./session.js";
 export const CLEANUPABLE_STATUSES = ["completed", "failed", "cancelled"] as const;
 export type CleanupableStatus = (typeof CLEANUPABLE_STATUSES)[number];
 
+export const CLEANUP_DEFAULT_LIMIT = 100;
+export const CLEANUP_MAX_LIMIT = 500;
+
 export interface CleanupCandidate {
   slug: string;
   title: string;
   status: SessionStatus;
   completedAt: string | null;
   worktreePath: string | null;
-  worktreeBytes: number;
   branch: string | null;
 }
 
 export interface CleanupCandidatesResponse {
   items: CleanupCandidate[];
-  truncated: boolean;
+  nextCursor: string | null;
 }
 
 export interface CleanupPreviewRequest {

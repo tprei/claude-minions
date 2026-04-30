@@ -357,10 +357,22 @@ export interface UploadResponse {
 
 export function fetchCleanupCandidates(
   conn: Connection,
-  opts: { olderThanDays: number; statuses: CleanupableStatus[] },
+  opts: {
+    olderThanDays: number;
+    statuses: CleanupableStatus[];
+    limit?: number;
+    cursor?: string | null;
+  },
 ): Promise<CleanupCandidatesResponse> {
-  const qs = `olderThanDays=${opts.olderThanDays}&statuses=${opts.statuses.join(",")}`;
-  return apiFetch<CleanupCandidatesResponse>(conn, `/api/cleanup/candidates?${qs}`);
+  const params = new URLSearchParams();
+  params.set("olderThanDays", String(opts.olderThanDays));
+  params.set("statuses", opts.statuses.join(","));
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.cursor) params.set("cursor", opts.cursor);
+  return apiFetch<CleanupCandidatesResponse>(
+    conn,
+    `/api/cleanup/candidates?${params.toString()}`,
+  );
 }
 
 export function previewCleanup(

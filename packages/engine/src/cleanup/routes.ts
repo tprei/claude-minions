@@ -1,18 +1,20 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   CLEANUPABLE_STATUSES,
-  type CleanupCandidatesResponse,
+  CLEANUP_DEFAULT_LIMIT,
+  CLEANUP_MAX_LIMIT,
   type CleanupableStatus,
 } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import { EngineError } from "../errors.js";
 
-const MAX_CANDIDATES = 200;
 const STATUS_SET: ReadonlySet<string> = new Set(CLEANUPABLE_STATUSES);
 
 interface CandidatesQuery {
   olderThanDays?: string;
   statuses?: string;
+  limit?: string;
+  cursor?: string;
 }
 
 function parseStatuses(raw: string): CleanupableStatus[] {
@@ -31,6 +33,22 @@ function parseOlderThanDays(raw: string): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) {
     throw new EngineError("bad_request", "olderThanDays must be a non-negative number");
+  }
+  return n;
+}
+
+function parseLimit(raw: string | undefined): number {
+  if (raw === undefined) return CLEANUP_DEFAULT_LIMIT;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    throw new EngineError("bad_request", "limit must be a positive integer");
+  }
+  if (n > CLEANUP_MAX_LIMIT) {
+    throw new EngineError(
+      "bad_request",
+      `limit must be <= ${CLEANUP_MAX_LIMIT}`,
+      { max: CLEANUP_MAX_LIMIT, requested: n },
+    );
   }
   return n;
 }
@@ -61,12 +79,16 @@ export function registerCleanupRoutes(app: FastifyInstance, ctx: EngineContext):
       const statuses = req.query.statuses
         ? parseStatuses(req.query.statuses)
         : [...CLEANUPABLE_STATUSES];
+      const limit = parseLimit(req.query.limit);
+      const cursor = req.query.cursor ?? null;
 
-      const all = await ctx.cleanup.selectCandidates({ olderThanDays, statuses });
-      const truncated = all.length > MAX_CANDIDATES;
-      const items = truncated ? all.slice(0, MAX_CANDIDATES) : all;
-      const body: CleanupCandidatesResponse = { items, truncated };
-      return reply.send(body);
+      const result = await ctx.cleanup.selectCandidates({
+        olderThanDays,
+        statuses,
+        limit,
+        cursor,
+      });
+      return reply.send(result);
     },
   );
 

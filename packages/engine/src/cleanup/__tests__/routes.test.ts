@@ -226,9 +226,80 @@ describe("cleanup routes", () => {
     });
     assert.equal(res.statusCode, 200);
     const body = res.json() as CleanupCandidatesResponse;
-    assert.equal(body.truncated, false);
+    assert.equal(body.nextCursor, null);
     assert.equal(body.items.length, 1);
     assert.equal(body.items[0]!.slug, h.completedSlug);
+    assert.equal(
+      "worktreeBytes" in (body.items[0] as unknown as Record<string, unknown>),
+      false,
+      "list endpoint must not return worktree byte sizes",
+    );
+  });
+
+  test("GET /api/cleanup/candidates rejects limit > 500", async () => {
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/cleanup/candidates?olderThanDays=0&limit=501",
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  test("GET /api/cleanup/candidates paginates 500 sessions in 100-row pages", async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    for (let i = 0; i < 500; i++) {
+      insertSession(h.db, `bulk-${i.toString().padStart(4, "0")}`, "completed", tenDaysAgo, null, null, null);
+    }
+
+    const t0 = Date.now();
+    const first = await h.app.inject({
+      method: "GET",
+      url: "/api/cleanup/candidates?olderThanDays=0&limit=100",
+    });
+    const elapsed = Date.now() - t0;
+    assert.equal(first.statusCode, 200);
+    const firstBody = first.json() as CleanupCandidatesResponse;
+    assert.equal(firstBody.items.length, 100, "first page must hold 100 rows");
+    assert.ok(firstBody.nextCursor, "first page must yield a cursor for next page");
+    assert.ok(elapsed < 2000, `first page should return quickly without du, took ${elapsed}ms`);
+
+    const seen = new Set(firstBody.items.map((c) => c.slug));
+    async function fetchPage(c: string): Promise<CleanupCandidatesResponse> {
+      const r = await h.app.inject({
+        method: "GET",
+        url: `/api/cleanup/candidates?olderThanDays=0&limit=100&cursor=${encodeURIComponent(c)}`,
+      });
+      assert.equal(r.statusCode, 200);
+      return r.json() as CleanupCandidatesResponse;
+    }
+
+    let cursor: string | null = firstBody.nextCursor;
+    let pages = 1;
+    while (cursor !== null) {
+      const body = await fetchPage(cursor);
+      for (const item of body.items) {
+        assert.equal(seen.has(item.slug), false, `duplicate slug ${item.slug} across pages`);
+        seen.add(item.slug);
+      }
+      cursor = body.nextCursor;
+      pages++;
+      if (pages > 20) throw new Error("pagination did not terminate");
+    }
+
+    assert.ok(seen.size >= 500, `expected at least 500 unique slugs, got ${seen.size}`);
+  });
+
+  test("POST /api/cleanup/preview computes selection size within budget", async () => {
+    const t0 = Date.now();
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/cleanup/preview",
+      payload: { slugs: [h.completedSlug], removeWorktree: true },
+    });
+    const elapsed = Date.now() - t0;
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as CleanupPreviewResponse;
+    assert.ok(body.totalBytes > 0, `expected totalBytes > 0, got ${body.totalBytes}`);
+    assert.ok(elapsed < 30_000, `preview must complete within 30s, took ${elapsed}ms`);
   });
 
   test("POST /api/cleanup/preview marks the running session as ineligible", async () => {

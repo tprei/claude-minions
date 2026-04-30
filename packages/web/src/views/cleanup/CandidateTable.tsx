@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import type { CleanupCandidate, SessionStatus } from "@minions/shared";
-import { fmtBytes, relTime } from "../../util/time.js";
+import { relTime } from "../../util/time.js";
 import { cx } from "../../util/classnames.js";
 
 interface Props {
@@ -52,7 +52,6 @@ export function CandidateTable({ candidates, selected, onToggle, onToggleAll }: 
             <th className="text-left px-3 py-2 font-normal">status</th>
             <th className="text-left px-3 py-2 font-normal">completed</th>
             <th className="text-left px-3 py-2 font-normal">branch</th>
-            <th className="text-right px-3 py-2 font-normal">bytes</th>
           </tr>
         </thead>
         <tbody>
@@ -87,9 +86,6 @@ export function CandidateTable({ candidates, selected, onToggle, onToggleAll }: 
                 </td>
                 <td className="px-3 py-2 text-xs font-mono text-fg-muted truncate max-w-[10rem]">
                   {c.branch ?? "—"}
-                </td>
-                <td className="px-3 py-2 text-xs font-mono text-fg text-right">
-                  {fmtBytes(c.worktreeBytes)}
                 </td>
               </tr>
             );
