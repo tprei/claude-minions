@@ -691,11 +691,13 @@ export class SessionRegistry {
 
       const finalStatus: SessionStatus = code === 0 ? "completed" : "failed";
 
-      // Commit the terminal status BEFORE notifying subsystems. Otherwise
-      // dags.onSessionTerminal reads the still-'running' row and marks the
+      // Commit the terminal status BEFORE downstream handlers fire so they read
+      // the true final state via ctx.sessions.get(). If we deferred the write,
+      // dag-terminal would see the pre-terminal 'running' value and mark the
       // node failed with "session terminated with status: running".
       const now = nowIso();
       this.updateSessionStatus.run(finalStatus, now, now, slug);
+      this.emitUpdated(this.buildSession(this.getSessionRow(slug)!));
 
       try {
         await ctx.dags.onSessionTerminal(slug);
@@ -712,15 +714,11 @@ export class SessionRegistry {
       }
 
       if (finalStatus === "completed") {
-        const continued = await this.continueWithQueuedReplies(slug, providerName).catch((err) => {
+        await this.continueWithQueuedReplies(slug, providerName).catch((err) => {
           log.error("continueWithQueuedReplies failed", { slug, err: String(err) });
           return false;
         });
-        if (continued) return;
       }
-
-      const updatedRow = this.getSessionRow(slug)!;
-      this.emitUpdated(this.buildSession(updatedRow));
     }).catch((err) => {
       log.error("handle waitForExit error", { slug, err: String(err) });
     });
