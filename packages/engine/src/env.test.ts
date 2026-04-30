@@ -76,6 +76,18 @@ describe("loadEnv token validation", () => {
     const env = loadEnv({ MINIONS_TOKEN: "a-real-secret" });
     assert.equal(env.token, "a-real-secret");
   });
+
+  it("accepts 'devtoken' (the .env.local.example default) without the escape hatch", () => {
+    const env = loadEnv({ MINIONS_TOKEN: "devtoken" });
+    assert.equal(env.token, "devtoken");
+  });
+
+  it("only rejects the two literal values named in the error message", () => {
+    for (const candidate of ["dev", "devtoken", "CHANGEME", " changeme", "changeme ", "0", "x"]) {
+      const env = loadEnv({ MINIONS_TOKEN: candidate });
+      assert.equal(env.token, candidate, `expected ${JSON.stringify(candidate)} to be accepted`);
+    }
+  });
 });
 
 describe("loadEnv CORS origins", () => {
