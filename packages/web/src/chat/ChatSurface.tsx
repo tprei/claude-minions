@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { Session } from "@minions/shared";
+import type { Session, SessionStatus } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS, EMPTY_TRANSCRIPTS } from "../store/sessionStore.js";
 import { useRootStore } from "../store/root.js";
 import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
 import { Diff } from "../components/Diff.js";
+import { Button } from "../components/Button.js";
 import { type Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
 import { HelpModal } from "./HelpModal.js";
@@ -12,6 +13,7 @@ import { CostModal } from "./CostModal.js";
 import { QuickActions } from "./quickActions.js";
 import { RecoveryFooter } from "./RecoveryFooter.js";
 import { PRPanel } from "./PRPanel.js";
+import { CancelSessionDialog } from "./cancelSession.js";
 import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
@@ -32,6 +34,12 @@ const SURFACE_TABS: Tab[] = [
   { id: "screenshots", label: "Screenshots" },
   { id: "dag", label: "DAG status" },
 ];
+
+const CANCELLABLE_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  "pending",
+  "running",
+  "waiting_input",
+]);
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 720;
@@ -261,6 +269,7 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
   const conn = useRootStore((s) => s.getActiveConnection());
   const [landing, setLanding] = useState(false);
   const [landError, setLandError] = useState<string | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   function navTo(view: "list" | "dag", slug?: string | null, dagId?: string) {
     const activeId = useConnectionStore.getState().activeId;
@@ -275,6 +284,8 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
     session.status === "completed" &&
     !!session.branch &&
     !session.pr;
+
+  const canCancel = !!conn && CANCELLABLE_STATUSES.has(session.status);
 
   const handleLand = async () => {
     if (!conn || landing) return;
@@ -310,6 +321,16 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
             {landing ? "Landing…" : "Land"}
           </button>
         )}
+        {canCancel && (
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => setCancelOpen(true)}
+            title="Cancel session"
+          >
+            Cancel
+          </Button>
+        )}
         <button
           type="button"
           onClick={onClose}
@@ -319,6 +340,14 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
           ×
         </button>
       </div>
+      {conn && (
+        <CancelSessionDialog
+          open={cancelOpen}
+          onClose={() => setCancelOpen(false)}
+          sessions={[{ slug: session.slug, title: session.title }]}
+          conn={conn}
+        />
+      )}
       {landError && (
         <p className="text-[10px] text-err truncate" title={landError}>
           Land failed: {landError}
