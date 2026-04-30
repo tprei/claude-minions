@@ -87,7 +87,7 @@ export class DagScheduler {
     const maxConcurrent = this.resolveMaxConcurrent();
 
     const runningCount = dag.nodes.filter(
-      (n) => n.status === "running" || n.status === "ready",
+      (n) => n.status === "running" || n.status === "ready" || n.status === "ci-pending",
     ).length;
 
     if (runningCount >= maxConcurrent) return;

@@ -304,6 +304,85 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
       await terminalHandler.handle(session);
     },
 
+    async onSessionCiTerminal(sessionSlug: string): Promise<void> {
+      const node = repo.getNodeBySession(sessionSlug);
+      if (!node) return;
+      if (node.status !== "ci-pending") return;
+      const dag = repo.byNodeSession(sessionSlug);
+      if (!dag) return;
+
+      const session = ctx.sessions.get(sessionSlug);
+      const concluded = session?.metadata["ciSelfHealConcluded"];
+
+      let outcome: "landed" | "ci-failed";
+      if (concluded === "success") {
+        repo.updateNode(node.id, {
+          status: "landed",
+          completedAt: new Date().toISOString(),
+          failedReason: null,
+        });
+        outcome = "landed";
+        ctx.audit.record(
+          "system",
+          "dag.node.ci-landed",
+          { kind: "dag-node", id: node.id },
+          { dagId: dag.id, sessionSlug },
+        );
+      } else if (concluded === "exhausted") {
+        repo.updateNode(node.id, {
+          status: "ci-failed",
+          failedReason: "ci self-heal exhausted",
+          completedAt: new Date().toISOString(),
+        });
+        outcome = "ci-failed";
+        const parent = dag.rootSessionSlug
+          ? ctx.sessions.get(dag.rootSessionSlug)
+          : null;
+        if (parent) {
+          const flags = [
+            ...parent.attention,
+            {
+              kind: "ci_failed" as const,
+              message: `DAG node ${node.id} failed CI after self-heal retries`,
+              raisedAt: new Date().toISOString(),
+            },
+          ];
+          ctx.bus.emit({
+            kind: "session_updated",
+            session: { ...parent, attention: flags },
+          });
+        }
+        ctx.audit.record(
+          "system",
+          "dag.node.ci-failed",
+          { kind: "dag-node", id: node.id },
+          { dagId: dag.id, sessionSlug },
+        );
+      } else {
+        return;
+      }
+
+      await scheduler.tick(dag.id);
+
+      if (outcome === "landed") {
+        const refreshed = repo.get(dag.id);
+        if (refreshed?.status === "completed" && refreshed.rootSessionSlug) {
+          const parent = ctx.sessions.get(refreshed.rootSessionSlug);
+          if (parent && parent.mode === "ship" && parent.shipStage === "dag") {
+            try {
+              await ctx.ship.advance(refreshed.rootSessionSlug, "verify");
+              await ctx.sessions.kickReplyQueue(refreshed.rootSessionSlug);
+            } catch (err) {
+              log.error("failed to release ship parent after dag ci-landed", {
+                dagId: refreshed.id,
+                err: (err as Error).message,
+              });
+            }
+          }
+        }
+      }
+    },
+
     async retry(dagId: string, nodeId: string): Promise<void> {
       const dag = repo.get(dagId);
       if (!dag) throw new EngineError("not_found", `dag not found: ${dagId}`);

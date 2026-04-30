@@ -53,6 +53,7 @@ export interface EngineContext {
     get: (id: string) => import("@minions/shared").DAG | null;
     splitNode: (req: import("@minions/shared").DAGSplitRequest) => Promise<import("@minions/shared").DAG>;
     onSessionTerminal: (sessionSlug: string) => Promise<void>;
+    onSessionCiTerminal: (sessionSlug: string) => Promise<void>;
     retry: (dagId: string, nodeId: string) => Promise<void>;
     cancel: (dagId: string) => Promise<void>;
     forceLand: (dagId: string, nodeId: string) => Promise<void>;
