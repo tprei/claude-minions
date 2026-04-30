@@ -74,11 +74,18 @@ export function resolveAdmissionLimits(runtime: RuntimeOverrides): AdmissionLimi
   };
 }
 
+export function isAdmissionUnlimited(runtime: RuntimeOverrides): boolean {
+  return runtime.admissionUnlimited === true;
+}
+
 export function checkAdmission(
   cls: SessionClass,
   runningByClass: RunningByClass,
   runtime: RuntimeOverrides,
 ): AdmissionDecision {
+  if (isAdmissionUnlimited(runtime)) {
+    return { admit: true };
+  }
   const limits = resolveAdmissionLimits(runtime);
   const total =
     runningByClass.interactive +

@@ -15,6 +15,7 @@ interface RuntimeStore {
     values: RuntimeOverrides,
     effective: RuntimeOverrides,
   ) => void;
+  remove: (connId: string) => void;
 }
 
 export const useRuntimeStore = create<RuntimeStore>((set) => ({
@@ -24,6 +25,15 @@ export const useRuntimeStore = create<RuntimeStore>((set) => ({
     set(s => {
       const byConnection = new Map(s.byConnection);
       byConnection.set(connId, { schema, values, effective });
+      return { byConnection };
+    });
+  },
+
+  remove(connId) {
+    set(s => {
+      if (!s.byConnection.has(connId)) return s;
+      const byConnection = new Map(s.byConnection);
+      byConnection.delete(connId);
       return { byConnection };
     });
   },

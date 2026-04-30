@@ -3,6 +3,8 @@ import type { RuntimeConfigResponse, RuntimeOverrides } from "@minions/shared";
 import { AutoForm } from "./autoForm.js";
 import { Banner } from "../components/Banner.js";
 import { useApiMutation } from "../hooks/useApiMutation.js";
+import { useConnectionStore } from "../connections/store.js";
+import { useRuntimeStore } from "../store/runtimeStore.js";
 
 interface Props {
   api: {
@@ -13,6 +15,7 @@ interface Props {
 }
 
 export function RuntimeDrawer({ api, onClose }: Props) {
+  const activeConnId = useConnectionStore(s => s.activeId);
   const [config, setConfig] = useState<RuntimeConfigResponse | null>(null);
   const [draft, setDraft] = useState<RuntimeOverrides>({});
   const [loading, setLoading] = useState(true);
@@ -27,12 +30,15 @@ export function RuntimeDrawer({ api, onClose }: Props) {
       const res = await api.get("/api/config/runtime") as RuntimeConfigResponse;
       setConfig(res);
       setDraft(res.values);
+      if (activeConnId) {
+        useRuntimeStore.getState().replace(activeConnId, res.schema, res.values, res.effective);
+      }
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Failed to load config");
     } finally {
       setLoading(false);
     }
-  }, [api]);
+  }, [api, activeConnId]);
 
   useEffect(() => { void load(); }, [load]);
 

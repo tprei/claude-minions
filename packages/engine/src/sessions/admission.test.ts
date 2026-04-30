@@ -132,4 +132,47 @@ describe("checkAdmission", () => {
     const decision = checkAdmission("interactive", emptyRunningByClass(), {});
     assert.equal(decision.admit, true);
   });
+
+  describe("admissionUnlimited", () => {
+    const UNLIMITED: RuntimeOverrides = { ...RUNTIME, admissionUnlimited: true };
+
+    test("admits dag_task even when totalSlots and dagCap would deny", () => {
+      const running = counts({
+        interactive: 2,
+        autonomous_loop: 2,
+        dag_task: 2,
+        background: 1,
+      });
+      const decision = checkAdmission("dag_task", running, UNLIMITED);
+      assert.equal(decision.admit, true);
+    });
+
+    test("admits autonomous_loop past loopCap", () => {
+      const running = counts({ autonomous_loop: 99 });
+      const decision = checkAdmission("autonomous_loop", running, UNLIMITED);
+      assert.equal(decision.admit, true);
+    });
+
+    test("admits background past backgroundCap", () => {
+      const running = counts({ background: 99 });
+      const decision = checkAdmission("background", running, UNLIMITED);
+      assert.equal(decision.admit, true);
+    });
+
+    test("admits interactive past totalSlots", () => {
+      const running = counts({ interactive: 99 });
+      const decision = checkAdmission("interactive", running, UNLIMITED);
+      assert.equal(decision.admit, true);
+    });
+
+    test("preserves cap behaviour when admissionUnlimited is false", () => {
+      const explicit: RuntimeOverrides = { ...RUNTIME, admissionUnlimited: false };
+      const decision = checkAdmission(
+        "autonomous_loop",
+        counts({ autonomous_loop: 2 }),
+        { ...explicit, admissionLoopCap: 2 },
+      );
+      assert.equal(decision.admit, false);
+    });
+  });
 });
