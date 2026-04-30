@@ -340,10 +340,18 @@ ALTER TABLE sessions ADD COLUMN cost_budget_usd REAL;
 `,
 };
 
+const m006_dag_nodes_ci_summary: Migration = {
+  name: "006_dag_nodes_ci_summary",
+  sql: `
+ALTER TABLE dag_nodes ADD COLUMN ci_summary TEXT;
+`,
+};
+
 export const migrations: Migration[] = [
   m001_initial,
   m002_reply_queue_state,
   m003_session_permission_tier,
   m004_session_bucket,
   m005_session_cost_budget,
+  m006_dag_nodes_ci_summary,
 ];

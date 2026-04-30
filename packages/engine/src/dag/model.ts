@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { DAG, DAGNode, DAGNodeStatus } from "@minions/shared";
+import type { DAG, DAGNode, DAGNodeStatus, DagNodeCiSummary } from "@minions/shared";
 import type { EventBus } from "../bus/eventBus.js";
 import { nowIso } from "../util/time.js";
 import { newSlug } from "../util/ids.js";
@@ -35,6 +35,16 @@ interface DagNodeRow {
   failed_reason: string | null;
   metadata: string;
   ord: number;
+  ci_summary: string | null;
+}
+
+function parseCiSummary(raw: string | null): DagNodeCiSummary | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as DagNodeCiSummary;
+  } catch {
+    return null;
+  }
 }
 
 function rowToNode(row: DagNodeRow): DAGNode {
@@ -48,6 +58,7 @@ function rowToNode(row: DagNodeRow): DAGNode {
     branch: row.branch ?? undefined,
     baseBranch: row.base_branch ?? undefined,
     pr: row.pr_number && row.pr_url ? { number: row.pr_number, url: row.pr_url } : undefined,
+    ciSummary: parseCiSummary(row.ci_summary),
     startedAt: row.started_at ?? undefined,
     completedAt: row.completed_at ?? undefined,
     failedReason: row.failed_reason ?? undefined,
@@ -85,6 +96,7 @@ export class DagRepo {
   private readonly stmtGetDagByNodeSession: Database.Statement;
   private readonly stmtMaxOrd: Database.Statement;
   private readonly stmtDeleteNode: Database.Statement;
+  private readonly stmtSetNodeCiSummary: Database.Statement;
 
   constructor(
     private readonly db: Database.Database,
@@ -104,13 +116,16 @@ export class DagRepo {
     this.stmtGetNodeBySession = db.prepare(`SELECT * FROM dag_nodes WHERE session_slug = ?`);
     this.stmtInsertNode = db.prepare(`
       INSERT INTO dag_nodes(id, dag_id, title, prompt, status, depends_on, session_slug, branch, base_branch,
-        pr_number, pr_url, started_at, completed_at, failed_reason, metadata, ord)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        pr_number, pr_url, started_at, completed_at, failed_reason, metadata, ord, ci_summary)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     this.stmtUpdateNode = db.prepare(`
       UPDATE dag_nodes SET title = ?, prompt = ?, status = ?, depends_on = ?, session_slug = ?,
         branch = ?, base_branch = ?, pr_number = ?, pr_url = ?, started_at = ?, completed_at = ?,
-        failed_reason = ?, metadata = ?, ord = ? WHERE id = ?
+        failed_reason = ?, metadata = ?, ord = ?, ci_summary = ? WHERE id = ?
+    `);
+    this.stmtSetNodeCiSummary = db.prepare(`
+      UPDATE dag_nodes SET ci_summary = ? WHERE id = ?
     `);
     this.stmtGetDagByRootSession = db.prepare(`SELECT * FROM dags WHERE root_session_slug = ?`);
     this.stmtGetDagByNodeSession = db.prepare(`
@@ -209,6 +224,7 @@ export class DagRepo {
       node.failedReason ?? null,
       JSON.stringify(node.metadata),
       ord,
+      node.ciSummary ? JSON.stringify(node.ciSummary) : null,
     );
     const inserted = this.getNode(id);
     if (!inserted) throw new Error(`node not found after insert: ${id}`);
@@ -220,6 +236,8 @@ export class DagRepo {
     if (!current) throw new Error(`dag node not found: ${id}`);
     const nodeRow = this.stmtGetNode.get(id) as DagNodeRow;
     const dagId = nodeRow.dag_id;
+    const nextCiSummary =
+      patch.ciSummary !== undefined ? patch.ciSummary : current.ciSummary ?? null;
     this.stmtUpdateNode.run(
       patch.title ?? current.title,
       patch.prompt ?? current.prompt,
@@ -235,6 +253,7 @@ export class DagRepo {
       patch.failedReason !== undefined ? (patch.failedReason ?? null) : (current.failedReason ?? null),
       JSON.stringify(patch.metadata ?? current.metadata),
       nodeRow.ord,
+      nextCiSummary ? JSON.stringify(nextCiSummary) : null,
       id,
     );
     const updated = this.getNode(id);
@@ -243,6 +262,18 @@ export class DagRepo {
     if (dag) {
       this.bus.emit({ kind: "dag_updated", dag });
     }
+    return updated;
+  }
+
+  setNodeCiSummary(id: string, summary: DagNodeCiSummary | null): DAGNode {
+    const current = this.getNode(id);
+    if (!current) throw new Error(`dag node not found: ${id}`);
+    const nodeRow = this.stmtGetNode.get(id) as DagNodeRow;
+    const dagId = nodeRow.dag_id;
+    this.stmtSetNodeCiSummary.run(summary ? JSON.stringify(summary) : null, id);
+    const updated = this.getNode(id);
+    if (!updated) throw new Error(`node not found after ci summary update: ${id}`);
+    this.bus.emit({ kind: "dag_node_updated", dagId, node: updated });
     return updated;
   }
 

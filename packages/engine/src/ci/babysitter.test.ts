@@ -12,13 +12,15 @@ interface MakeSessionInput {
   attention?: AttentionFlag[];
 }
 
-function makeSession({ slug, status = "running", pr, attention = [] }: MakeSessionInput): Session {
+function makeSession(
+  { slug, status = "running", pr, attention = [], mode = "task" }: MakeSessionInput & { mode?: Session["mode"] },
+): Session {
   const now = new Date().toISOString();
   return {
     slug,
     title: slug,
     prompt: "test",
-    mode: "task",
+    mode,
     status,
     pr,
     attention,
@@ -172,5 +174,17 @@ describe("CiBabysitter.pollAll", () => {
     const bs = new CiBabysitter(makeCtx(sessions, polled), createLogger("error"));
     await bs.pollAll();
     assert.deepEqual(polled.sort(), ["completed", "running"]);
+  });
+
+  test("polls dag-task sessions whose stacked PR is open", async () => {
+    const sessions = [
+      makeSession({ slug: "node-a", status: "completed", mode: "dag-task", pr: openPr(20) }),
+      makeSession({ slug: "node-b", status: "running", mode: "dag-task", pr: openPr(21) }),
+      makeSession({ slug: "ship-parent", status: "running", mode: "ship", pr: openPr(22) }),
+    ];
+    const polled: string[] = [];
+    const bs = new CiBabysitter(makeCtx(sessions, polled), createLogger("error"));
+    await bs.pollAll();
+    assert.deepEqual(polled.sort(), ["node-a", "node-b", "ship-parent"]);
   });
 });

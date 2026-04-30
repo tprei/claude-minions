@@ -1,11 +1,12 @@
 import { create } from "zustand";
-import type { DAG } from "../types.js";
+import type { DAG, DAGNode } from "../types.js";
 
 interface DagStore {
   byConnection: Map<string, Map<string, DAG>>;
   replaceAll: (connId: string, dags: DAG[]) => void;
   upsert: (connId: string, dag: DAG) => void;
   remove: (connId: string, id: string) => void;
+  upsertNode: (connId: string, dagId: string, node: DAGNode) => void;
   /**
    * Apply an optimistic mutation to a DAG. Returns a rollback closure that
    * restores the prior DAG when invoked. No-op if the DAG is missing.
@@ -56,6 +57,20 @@ export const useDagStore = create<DagStore>((set) => ({
     set(s => ({
       byConnection: withSlice(s.byConnection, connId, (slice) => {
         slice.delete(id);
+      }),
+    }));
+  },
+
+  upsertNode(connId, dagId, node) {
+    set(s => ({
+      byConnection: withSlice(s.byConnection, connId, (slice) => {
+        const dag = slice.get(dagId);
+        if (!dag) return;
+        const idx = dag.nodes.findIndex((n) => n.id === node.id);
+        if (idx < 0) return;
+        const nextNodes = dag.nodes.slice();
+        nextNodes[idx] = node;
+        slice.set(dagId, { ...dag, nodes: nextNodes });
       }),
     }));
   },

@@ -12,6 +12,22 @@ export type DAGNodeStatus =
   | "rebase-conflict"
   | "cancelled";
 
+export type DagNodeCiState = "passing" | "failing" | "pending";
+
+export interface DagNodeCiCheck {
+  name: string;
+  bucket: "pass" | "fail" | "pending";
+}
+
+export interface DagNodeCiSummary {
+  state: DagNodeCiState;
+  counts: { passed: number; failed: number; pending: number };
+  checks: DagNodeCiCheck[];
+  prNumber?: number;
+  prUrl?: string;
+  updatedAt: string;
+}
+
 export interface DAGNode {
   id: string;
   title: string;
@@ -22,6 +38,7 @@ export interface DAGNode {
   branch?: string;
   baseBranch?: string;
   pr?: { number: number; url: string };
+  ciSummary?: DagNodeCiSummary | null;
   startedAt?: string;
   completedAt?: string;
   failedReason?: string | null;

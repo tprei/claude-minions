@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import type { AttentionFlag } from "@minions/shared";
-import { computeCiAttentionUpdate, rollupToChecks } from "./index.js";
+import { computeCiAttentionUpdate, rollupToChecks, summarizeChecks } from "./index.js";
 
 describe("rollupToChecks", () => {
   test("returns empty array for null/undefined rollup", () => {
@@ -164,6 +164,45 @@ describe("rollupToChecks", () => {
     assert.equal(checks[0]?.name, "build");
     assert.equal(checks[1]?.bucket, "fail");
     assert.equal(checks[1]?.name, "ci/legacy");
+  });
+});
+
+describe("summarizeChecks", () => {
+  test("empty rollup is pending", () => {
+    const s = summarizeChecks([]);
+    assert.equal(s.state, "pending");
+    assert.deepEqual(s.counts, { passed: 0, failed: 0, pending: 0 });
+    assert.deepEqual(s.checks, []);
+  });
+
+  test("any failing check yields failing state", () => {
+    const s = summarizeChecks([
+      { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci", link: "" },
+      { name: "test", state: "FAILURE", bucket: "fail", workflow: "ci", link: "" },
+      { name: "lint", state: "IN_PROGRESS", bucket: "pending", workflow: "ci", link: "" },
+    ]);
+    assert.equal(s.state, "failing");
+    assert.deepEqual(s.counts, { passed: 1, failed: 1, pending: 1 });
+    assert.equal(s.checks.length, 3);
+    assert.equal(s.checks[1]?.bucket, "fail");
+  });
+
+  test("only pending+pass yields pending", () => {
+    const s = summarizeChecks([
+      { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci", link: "" },
+      { name: "lint", state: "QUEUED", bucket: "pending", workflow: "ci", link: "" },
+    ]);
+    assert.equal(s.state, "pending");
+    assert.deepEqual(s.counts, { passed: 1, failed: 0, pending: 1 });
+  });
+
+  test("all-pass is passing", () => {
+    const s = summarizeChecks([
+      { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci", link: "" },
+      { name: "test", state: "SUCCESS", bucket: "pass", workflow: "ci", link: "" },
+    ]);
+    assert.equal(s.state, "passing");
+    assert.deepEqual(s.counts, { passed: 2, failed: 0, pending: 0 });
   });
 });
 

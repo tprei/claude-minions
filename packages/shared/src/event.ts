@@ -1,6 +1,6 @@
 import type { Session } from "./session.js";
 import type { TranscriptEvent } from "./transcript.js";
-import type { DAG } from "./dag.js";
+import type { DAG, DAGNode } from "./dag.js";
 import type { Memory } from "./memory.js";
 import type { ResourceSnapshot } from "./resource.js";
 
@@ -32,6 +32,12 @@ export interface DagUpdatedEvent {
 export interface DagDeletedEvent {
   kind: "dag_deleted";
   id: string;
+}
+
+export interface DagNodeUpdatedEvent {
+  kind: "dag_node_updated";
+  dagId: string;
+  node: DAGNode;
 }
 
 export interface TranscriptEventEvent {
@@ -94,6 +100,7 @@ export type ServerEvent =
   | DagCreatedEvent
   | DagUpdatedEvent
   | DagDeletedEvent
+  | DagNodeUpdatedEvent
   | TranscriptEventEvent
   | ResourceEvent
   | SessionScreenshotCapturedEvent
