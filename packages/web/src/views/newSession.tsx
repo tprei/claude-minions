@@ -40,6 +40,7 @@ export function NewSessionView({ api }: Props) {
   const [repoId, setRepoId] = useState<string>(defaultRepoId);
   const [baseBranch, setBaseBranch] = useState("main");
   const [modelHint, setModelHint] = useState("");
+  const [costBudgetUsd, setCostBudgetUsd] = useState<number | undefined>(undefined);
   const { attachments, setAttachments, onPaste, onDrop, clear } = useAttachments();
 
   const [submitting, setSubmitting] = useState(false);
@@ -73,6 +74,9 @@ export function NewSessionView({ api }: Props) {
       }
       const hint = modelHint.trim();
       if (hint.length > 0) body.modelHint = hint;
+      if (costBudgetUsd !== undefined && costBudgetUsd > 0) {
+        body.costBudgetUsd = costBudgetUsd;
+      }
       if (attachments.length > 0) {
         body.attachments = attachments.map(a => ({
           name: a.name,
@@ -199,6 +203,24 @@ export function NewSessionView({ api }: Props) {
             onChange={e => setModelHint(e.target.value)}
             placeholder="claude-3-5-sonnet-20241022"
           />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs text-fg-muted">Budget (USD, optional)</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            className="input"
+            min={0}
+            step={0.01}
+            value={costBudgetUsd ?? ""}
+            onChange={e => {
+              const v = e.target.valueAsNumber;
+              setCostBudgetUsd(Number.isFinite(v) && v > 0 ? v : undefined);
+            }}
+            placeholder="No cap"
+          />
+          <p className="text-xs text-fg-subtle">Pause the session when cost reaches this cap.</p>
         </div>
 
         <div className="flex flex-col gap-1.5">

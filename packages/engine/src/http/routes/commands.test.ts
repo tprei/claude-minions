@@ -1,9 +1,12 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
+import Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
 import type { EngineContext } from "../../context.js";
+import type { AttentionFlag, Session } from "@minions/shared";
 import { isEngineError } from "../../errors.js";
+import { migrations } from "../../store/migrations.js";
 import { registerCommandRoutes } from "./commands.js";
 
 describe("POST /api/commands resume-session", () => {
@@ -92,6 +95,204 @@ describe("POST /api/commands resume-session", () => {
 
   it("rejects resume-session with empty sessionSlug with 400", async () => {
     const res = await postCommand({ kind: "resume-session", sessionSlug: "  " });
+    assert.equal(res.status, 400);
+    assert.equal(kickCalls.length, 0);
+  });
+});
+
+describe("POST /api/commands update-session-budget", () => {
+  let app: FastifyInstance;
+  let baseUrl: string;
+  let db: Database.Database;
+  let kickCalls: string[];
+  let auditCalls: Array<{ actor: string; action: string; target?: { kind: string; id: string }; detail?: Record<string, unknown> }>;
+  let busEvents: Array<{ kind: string; session?: Session }>;
+
+  function seedSession(slug: string, attention: AttentionFlag[], costBudgetUsd: number | null = null): void {
+    db.prepare(
+      `INSERT INTO sessions(
+        slug, title, prompt, mode, status, attention, quick_actions,
+        stats_turns, stats_input_tokens, stats_output_tokens, stats_cache_read_tokens,
+        stats_cache_creation_tokens, stats_cost_usd, stats_duration_ms, stats_tool_calls,
+        provider, created_at, updated_at, metadata, cost_budget_usd
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      slug, "title", "prompt", "task", "waiting_input",
+      JSON.stringify(attention), JSON.stringify([]),
+      0, 0, 0, 0, 0, 0, 0, 0,
+      "test", new Date().toISOString(), new Date().toISOString(), JSON.stringify({}),
+      costBudgetUsd,
+    );
+  }
+
+  function getRow(slug: string): { cost_budget_usd: number | null; attention: string } {
+    return db.prepare(`SELECT cost_budget_usd, attention FROM sessions WHERE slug = ?`).get(slug) as {
+      cost_budget_usd: number | null;
+      attention: string;
+    };
+  }
+
+  before(async () => {
+    db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    for (const m of migrations) db.exec(m.sql);
+
+    kickCalls = [];
+    auditCalls = [];
+    busEvents = [];
+
+    const ctx = {
+      db,
+      sessions: {
+        get: (slug: string) => {
+          const row = db.prepare(`SELECT slug, attention, cost_budget_usd FROM sessions WHERE slug = ?`).get(slug) as
+            | { slug: string; attention: string; cost_budget_usd: number | null }
+            | undefined;
+          if (!row) return null;
+          return {
+            slug: row.slug,
+            attention: JSON.parse(row.attention) as AttentionFlag[],
+            costBudgetUsd: row.cost_budget_usd ?? undefined,
+          } as unknown as Session;
+        },
+        kickReplyQueue: async (slug: string) => {
+          kickCalls.push(slug);
+          return true;
+        },
+      },
+      bus: {
+        emit: (ev: { kind: string; session?: Session }) => {
+          busEvents.push(ev);
+        },
+      },
+      audit: {
+        record: (actor: string, action: string, target?: { kind: string; id: string }, detail?: Record<string, unknown>) => {
+          auditCalls.push({ actor, action, target, detail });
+        },
+      },
+    } as unknown as EngineContext;
+
+    app = Fastify({ logger: false });
+    app.setErrorHandler(async (err, _req, reply) => {
+      if (isEngineError(err)) {
+        await reply.status(err.status).send(err.toJSON());
+        return;
+      }
+      const e = err as Error;
+      await reply.status(500).send({ error: "internal", message: e.message });
+    });
+    registerCommandRoutes(app, ctx);
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Fastify did not return a network address");
+    }
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  after(async () => {
+    await app.close();
+    db.close();
+  });
+
+  beforeEach(() => {
+    db.prepare(`DELETE FROM sessions`).run();
+    kickCalls.length = 0;
+    auditCalls.length = 0;
+    busEvents.length = 0;
+  });
+
+  async function postCommand(body: unknown): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let parsed: unknown = text;
+    if (text.length > 0) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // keep raw text
+      }
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  it("clears budget_exceeded attention, updates the column, and re-kicks the queue", async () => {
+    const raisedAt = new Date().toISOString();
+    seedSession(
+      "abc",
+      [
+        { kind: "budget_exceeded", message: "Cost cap reached", raisedAt },
+        { kind: "needs_input", message: "needs input", raisedAt },
+      ],
+      2,
+    );
+
+    const res = await postCommand({
+      kind: "update-session-budget",
+      slug: "abc",
+      costBudgetUsd: 7.5,
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, { ok: true, data: { kicked: true } });
+
+    const row = getRow("abc");
+    assert.equal(row.cost_budget_usd, 7.5);
+    const remaining = JSON.parse(row.attention) as AttentionFlag[];
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0]!.kind, "needs_input");
+
+    assert.deepEqual(kickCalls, ["abc"]);
+    assert.equal(busEvents.some((e) => e.kind === "session_updated"), true);
+    assert.equal(auditCalls.length, 1);
+    assert.equal(auditCalls[0]!.action, "session.budget.updated");
+    assert.deepEqual(auditCalls[0]!.detail, { costBudgetUsd: 7.5 });
+  });
+
+  it("treats costBudgetUsd of 0 as clearing the cap", async () => {
+    seedSession("zero", [], 5);
+    const res = await postCommand({
+      kind: "update-session-budget",
+      slug: "zero",
+      costBudgetUsd: 0,
+    });
+    assert.equal(res.status, 200);
+    const row = getRow("zero");
+    assert.equal(row.cost_budget_usd, null);
+  });
+
+  it("returns 404 when session does not exist", async () => {
+    const res = await postCommand({
+      kind: "update-session-budget",
+      slug: "missing",
+      costBudgetUsd: 1,
+    });
+    assert.equal(res.status, 404);
+    assert.equal(kickCalls.length, 0);
+  });
+
+  it("rejects negative costBudgetUsd with 400", async () => {
+    seedSession("neg", []);
+    const res = await postCommand({
+      kind: "update-session-budget",
+      slug: "neg",
+      costBudgetUsd: -1,
+    });
+    assert.equal(res.status, 400);
+    assert.equal(kickCalls.length, 0);
+  });
+
+  it("rejects non-numeric costBudgetUsd with 400", async () => {
+    seedSession("nan", []);
+    const res = await postCommand({
+      kind: "update-session-budget",
+      slug: "nan",
+      costBudgetUsd: "lots",
+    });
     assert.equal(res.status, 400);
     assert.equal(kickCalls.length, 0);
   });

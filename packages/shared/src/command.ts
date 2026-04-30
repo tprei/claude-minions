@@ -110,6 +110,12 @@ export interface ResumeSessionCommand {
   sessionSlug: string;
 }
 
+export interface UpdateSessionBudgetCommand {
+  kind: "update-session-budget";
+  slug: string;
+  costBudgetUsd: number;
+}
+
 export type Command =
   | ReplyCommand
   | StopCommand
@@ -128,7 +134,8 @@ export type Command =
   | DoneCommand
   | DagCancelCommand
   | DagForceLandCommand
-  | ResumeSessionCommand;
+  | ResumeSessionCommand
+  | UpdateSessionBudgetCommand;
 
 export type CommandKind = Command["kind"];
 
