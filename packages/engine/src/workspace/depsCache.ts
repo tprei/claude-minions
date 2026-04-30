@@ -15,24 +15,151 @@ async function runCommand(cmd: string, args: string[], cwd: string): Promise<voi
   });
 }
 
-async function hardlinkDir(src: string, dst: string): Promise<void> {
+async function hardlinkTree(src: string, dst: string): Promise<void> {
   await ensureDir(dst);
   const entries = await fs.readdir(src, { withFileTypes: true });
   for (const entry of entries) {
     const srcPath = path.join(src, entry.name);
     const dstPath = path.join(dst, entry.name);
-    if (entry.isDirectory()) {
-      await hardlinkDir(srcPath, dstPath);
+    if (entry.isSymbolicLink()) {
+      if (await pathExists(dstPath)) continue;
+      const target = await fs.readlink(srcPath);
+      await fs.symlink(target, dstPath);
+    } else if (entry.isDirectory()) {
+      await hardlinkTree(srcPath, dstPath);
     } else if (entry.isFile()) {
-      if (!(await pathExists(dstPath))) {
-        try {
-          await fs.link(srcPath, dstPath);
-        } catch {
-          await fs.copyFile(srcPath, dstPath);
-        }
+      if (await pathExists(dstPath)) continue;
+      try {
+        await fs.link(srcPath, dstPath);
+      } catch {
+        await fs.copyFile(srcPath, dstPath);
       }
     }
   }
+}
+
+function parseWorkspacePackagesYaml(content: string): string[] {
+  const patterns: string[] = [];
+  const lines = content.split("\n");
+  let inPackages = false;
+  for (const raw of lines) {
+    const stripped = raw.replace(/#.*$/, "");
+    if (!stripped.trim()) continue;
+    const headerMatch = /^packages\s*:(.*)$/.exec(stripped);
+    if (headerMatch) {
+      const after = headerMatch[1]!.trim();
+      if (after.startsWith("[")) {
+        // Inline form: packages: ["a", "b/*"]
+        const inner = after.replace(/^\[|\]$/g, "");
+        for (const item of inner.split(",")) {
+          const v = item.trim().replace(/^['"]|['"]$/g, "");
+          if (v) patterns.push(v);
+        }
+        inPackages = false;
+      } else {
+        inPackages = true;
+      }
+      continue;
+    }
+    if (!inPackages) continue;
+    if (!/^\s/.test(raw)) {
+      inPackages = false;
+      continue;
+    }
+    const itemMatch = /^\s*-\s*['"]?([^'"#]+?)['"]?\s*$/.exec(stripped);
+    if (itemMatch) patterns.push(itemMatch[1]!);
+  }
+  return patterns;
+}
+
+async function expandPattern(root: string, pattern: string): Promise<string[]> {
+  const parts = pattern.replace(/\\/g, "/").split("/").filter((p) => p.length > 0);
+  let dirs: string[] = [root];
+  for (const part of parts) {
+    if (part === "**") {
+      // Not commonly used in pnpm-workspace.yaml; bail out to keep behavior predictable.
+      return [];
+    }
+    if (part.includes("*")) {
+      const re = new RegExp(
+        "^" + part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$",
+      );
+      const next: string[] = [];
+      for (const d of dirs) {
+        try {
+          const entries = await fs.readdir(d, { withFileTypes: true });
+          for (const e of entries) {
+            if (e.isDirectory() && re.test(e.name)) next.push(path.join(d, e.name));
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      dirs = next;
+    } else {
+      dirs = dirs.map((d) => path.join(d, part));
+    }
+  }
+  const out: string[] = [];
+  for (const d of dirs) {
+    if (await pathExists(d)) out.push(d);
+  }
+  return out;
+}
+
+async function copyIfPresent(src: string, dst: string): Promise<boolean> {
+  if (!(await pathExists(src))) return false;
+  await ensureDir(path.dirname(dst));
+  await fs.copyFile(src, dst);
+  return true;
+}
+
+/**
+ * Replicates the workspace shape (root manifest, pnpm-workspace.yaml, lockfile,
+ * .npmrc, and each workspace package's package.json) from `worktreePath` into
+ * `cacheDir`. Without these, pnpm can't resolve workspace deps inside the
+ * cache and either errors out or — worse — walks up and reuses an unrelated
+ * parent workspace, leaving `cacheDir/node_modules` empty.
+ *
+ * Returns the workspace package directories (relative to root) that were
+ * mirrored, so callers can hardlink each one's node_modules back.
+ */
+export async function mirrorWorkspace(
+  worktreePath: string,
+  cacheDir: string,
+): Promise<string[]> {
+  await ensureDir(cacheDir);
+  const rootPkg = path.join(worktreePath, "package.json");
+  if (!(await pathExists(rootPkg))) return [];
+
+  await fs.copyFile(rootPkg, path.join(cacheDir, "package.json"));
+  await copyIfPresent(path.join(worktreePath, "pnpm-lock.yaml"), path.join(cacheDir, "pnpm-lock.yaml"));
+  await copyIfPresent(path.join(worktreePath, ".npmrc"), path.join(cacheDir, ".npmrc"));
+
+  const wsYaml = path.join(worktreePath, "pnpm-workspace.yaml");
+  const hasWorkspace = await pathExists(wsYaml);
+  if (!hasWorkspace) return [];
+
+  const yamlText = await fs.readFile(wsYaml, "utf8");
+  await fs.writeFile(path.join(cacheDir, "pnpm-workspace.yaml"), yamlText);
+
+  const patterns = parseWorkspacePackagesYaml(yamlText);
+  const relPkgDirs: string[] = [];
+  for (const pattern of patterns) {
+    const matches = await expandPattern(worktreePath, pattern);
+    for (const abs of matches) {
+      const pkgJson = path.join(abs, "package.json");
+      if (!(await pathExists(pkgJson))) continue;
+      const rel = path.relative(worktreePath, abs);
+      relPkgDirs.push(rel);
+      const dstDir = path.join(cacheDir, rel);
+      await ensureDir(dstDir);
+      await fs.copyFile(pkgJson, path.join(dstDir, "package.json"));
+      // Also mirror per-package .npmrc when present.
+      await copyIfPresent(path.join(abs, ".npmrc"), path.join(dstDir, ".npmrc"));
+    }
+  }
+  return relPkgDirs;
 }
 
 export async function linkDeps(
@@ -50,19 +177,30 @@ export async function linkDeps(
   const cacheNodeModules = path.join(depsCache, "node_modules");
   const worktreeNodeModules = path.join(worktreePath, "node_modules");
 
+  let pkgDirs: string[] = [];
   if (!(await pathExists(cacheNodeModules))) {
     log.info("building deps cache", { repoId, depsCache });
-    await ensureDir(depsCache);
     try {
-      await fs.copyFile(pkgJson, path.join(depsCache, "package.json"));
-      const lockFile = path.join(worktreePath, "pnpm-lock.yaml");
-      if (await pathExists(lockFile)) {
-        await fs.copyFile(lockFile, path.join(depsCache, "pnpm-lock.yaml"));
-      }
+      pkgDirs = await mirrorWorkspace(worktreePath, depsCache);
       await runCommand("pnpm", ["install", "--frozen-lockfile"], depsCache);
     } catch (err) {
       log.warn("pnpm install failed for deps cache", { repoId, err: String(err) });
       return;
+    }
+  } else {
+    // Cache already populated from a prior session — re-derive package dirs so
+    // we know which per-package node_modules to hardlink.
+    const wsYaml = path.join(depsCache, "pnpm-workspace.yaml");
+    if (await pathExists(wsYaml)) {
+      const patterns = parseWorkspacePackagesYaml(await fs.readFile(wsYaml, "utf8"));
+      for (const pattern of patterns) {
+        const matches = await expandPattern(depsCache, pattern);
+        for (const abs of matches) {
+          if (await pathExists(path.join(abs, "package.json"))) {
+            pkgDirs.push(path.relative(depsCache, abs));
+          }
+        }
+      }
     }
   }
 
@@ -73,6 +211,14 @@ export async function linkDeps(
 
   if (!(await pathExists(worktreeNodeModules))) {
     log.info("hardlinking node_modules from cache", { repoId, worktreePath });
-    await hardlinkDir(cacheNodeModules, worktreeNodeModules);
+    await hardlinkTree(cacheNodeModules, worktreeNodeModules);
+  }
+
+  for (const rel of pkgDirs) {
+    const src = path.join(depsCache, rel, "node_modules");
+    const dst = path.join(worktreePath, rel, "node_modules");
+    if (!(await pathExists(src))) continue;
+    if (await pathExists(dst)) continue;
+    await hardlinkTree(src, dst);
   }
 }
