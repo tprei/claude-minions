@@ -288,6 +288,38 @@ describe("DagTerminalHandler", () => {
     assert.equal(landed?.failedReason ?? null, null);
   });
 
+  test("cancelled session maps node to cancelled with no failedReason", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode, patches } = makeMockRepo(dag);
+    const { ctx, landCalls } = makeMockCtx({ qualityReport: null });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(makeSession("sess-1", "cancelled"));
+
+    assert.equal(landCalls.length, 0, "openForReview must not be called for cancelled sessions");
+    const after = getNode("n1");
+    assert.equal(after?.status, "cancelled");
+    assert.equal(after?.failedReason ?? null, null);
+    const lastPatch = patches.at(-1);
+    assert.equal(lastPatch?.patch.status, "cancelled");
+    assert.equal(lastPatch?.patch.failedReason, null);
+    assert.ok(lastPatch?.patch.completedAt, "completedAt is recorded");
+  });
+
+  test("failed session (non-cancelled) still maps to failed with a reason", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode, patches } = makeMockRepo(dag);
+    const { ctx } = makeMockCtx({ qualityReport: null });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(makeSession("sess-1", "failed"));
+
+    assert.equal(getNode("n1")?.status, "failed");
+    assert.match(patches.at(-1)?.patch.failedReason ?? "", /session terminated with status: failed/);
+  });
+
   test("failed quality report blocks landing", async () => {
     const node = makeNode("n1", "running", "sess-1");
     const dag = makeDag("dag-1", [node], "root-1");
