@@ -1,6 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { rollupToChecks } from "./index.js";
+import type { AttentionFlag } from "@minions/shared";
+import { computeCiAttentionUpdate, rollupToChecks } from "./index.js";
 
 describe("rollupToChecks", () => {
   test("returns empty array for null/undefined rollup", () => {
@@ -163,5 +164,95 @@ describe("rollupToChecks", () => {
     assert.equal(checks[0]?.name, "build");
     assert.equal(checks[1]?.bucket, "fail");
     assert.equal(checks[1]?.name, "ci/legacy");
+  });
+});
+
+describe("computeCiAttentionUpdate", () => {
+  const RAISED = "2026-04-30T12:00:00.000Z";
+  const PRIOR = "2026-04-30T11:00:00.000Z";
+
+  function ciFailed(message: string, raisedAt = PRIOR): AttentionFlag {
+    return { kind: "ci_failed", message, raisedAt };
+  }
+
+  test("noop when no failures and no existing ci_failed", () => {
+    const result = computeCiAttentionUpdate([], [], RAISED);
+    assert.deepEqual(result, { kind: "noop" });
+  });
+
+  test("noop when no failures and only unrelated attention flags", () => {
+    const others: AttentionFlag[] = [
+      { kind: "needs_input", message: "n", raisedAt: PRIOR },
+    ];
+    const result = computeCiAttentionUpdate(others, [], RAISED);
+    assert.deepEqual(result, { kind: "noop" });
+  });
+
+  test("adds a ci_failed flag when a fresh failure appears", () => {
+    const result = computeCiAttentionUpdate([], ["test", "lint"], RAISED);
+    assert.equal(result.kind, "add");
+    if (result.kind !== "add") return;
+    assert.equal(result.attention.length, 1);
+    assert.equal(result.attention[0]?.kind, "ci_failed");
+    assert.equal(result.attention[0]?.message, "CI checks failed: test, lint");
+    assert.equal(result.attention[0]?.raisedAt, RAISED);
+  });
+
+  test("preserves unrelated attention when adding ci_failed", () => {
+    const others: AttentionFlag[] = [
+      { kind: "needs_input", message: "n", raisedAt: PRIOR },
+    ];
+    const result = computeCiAttentionUpdate(others, ["test"], RAISED);
+    assert.equal(result.kind, "add");
+    if (result.kind !== "add") return;
+    assert.equal(result.attention.length, 2);
+    assert.equal(result.attention[0]?.kind, "needs_input");
+    assert.equal(result.attention[1]?.kind, "ci_failed");
+  });
+
+  test("updates existing ci_failed in place rather than appending a duplicate", () => {
+    const current: AttentionFlag[] = [ciFailed("CI checks failed: old")];
+    const result = computeCiAttentionUpdate(current, ["test"], RAISED);
+    assert.equal(result.kind, "update");
+    if (result.kind !== "update") return;
+    assert.equal(result.attention.length, 1);
+    assert.equal(result.attention[0]?.kind, "ci_failed");
+    assert.equal(result.attention[0]?.message, "CI checks failed: test");
+    assert.equal(result.attention[0]?.raisedAt, RAISED);
+    assert.equal(result.previousMessage, "CI checks failed: old");
+  });
+
+  test("does not add a duplicate when the same failure is detected twice", () => {
+    const current: AttentionFlag[] = [ciFailed("CI checks failed: test")];
+    const result = computeCiAttentionUpdate(current, ["test"], RAISED);
+    assert.equal(result.kind, "update");
+    if (result.kind !== "update") return;
+    const ciFailedCount = result.attention.filter((a) => a.kind === "ci_failed").length;
+    assert.equal(ciFailedCount, 1);
+  });
+
+  test("clears stale ci_failed when checks come back all-passing", () => {
+    const current: AttentionFlag[] = [ciFailed("CI checks failed: test")];
+    const result = computeCiAttentionUpdate(current, [], RAISED);
+    assert.equal(result.kind, "clear");
+    if (result.kind !== "clear") return;
+    assert.equal(result.attention.length, 0);
+    assert.equal(result.previousMessage, "CI checks failed: test");
+  });
+
+  test("clear preserves unrelated attention flags", () => {
+    const current: AttentionFlag[] = [
+      { kind: "needs_input", message: "n", raisedAt: PRIOR },
+      ciFailed("CI checks failed: test"),
+      { kind: "rebase_conflict", message: "r", raisedAt: PRIOR },
+    ];
+    const result = computeCiAttentionUpdate(current, [], RAISED);
+    assert.equal(result.kind, "clear");
+    if (result.kind !== "clear") return;
+    assert.equal(result.attention.length, 2);
+    assert.deepEqual(
+      result.attention.map((a) => a.kind),
+      ["needs_input", "rebase_conflict"],
+    );
   });
 });
