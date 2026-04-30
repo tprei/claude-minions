@@ -39,6 +39,7 @@ export class DagTerminalHandler {
         completedAt: new Date().toISOString(),
       });
       this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
+      await this.scheduler.tick(dag.id);
       return;
     }
 
@@ -52,6 +53,7 @@ export class DagTerminalHandler {
         completedAt: new Date().toISOString(),
       });
       this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
+      await this.scheduler.tick(dag.id);
       return;
     }
 
@@ -85,6 +87,7 @@ export class DagTerminalHandler {
           err: message,
         });
       }
+      await this.scheduler.tick(dag.id);
     }
   }
 

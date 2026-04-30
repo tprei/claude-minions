@@ -322,6 +322,48 @@ describe("DagScheduler", () => {
     assert.equal(finalDag?.status, "completed", "all-landed DAG must aggregate to completed");
   });
 
+  test("recomputes DAG from failed back to completed when a previously-failed node later lands", async () => {
+    const nodeA = makeNode("A", "ci-failed");
+    const nodeB = makeNode("B", "landed");
+
+    const dag = makeDag("dag1", [nodeA, nodeB]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const ctx = makeMockCtx([]);
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+    await scheduler.tick("dag1");
+    assert.equal(repo.get("dag1")?.status, "failed", "initial aggregation flips to failed");
+
+    repo.updateNode("A", { status: "landed", failedReason: null });
+    await scheduler.tick("dag1");
+
+    assert.equal(
+      repo.get("dag1")?.status,
+      "completed",
+      "DAG must flip from failed back to completed once every node is success-terminal",
+    );
+  });
+
+  test("recomputes DAG from failed back to active when a failed node is retried to pending", async () => {
+    const nodeA = makeNode("A", "ci-failed");
+    const nodeB = makeNode("B", "landed");
+
+    const dag = makeDag("dag1", [nodeA, nodeB]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+
+    await scheduler.tick("dag1");
+    assert.equal(repo.get("dag1")?.status, "failed");
+
+    repo.updateNode("A", { status: "pending", failedReason: null });
+    await scheduler.tick("dag1");
+
+    assert.equal(repo.get("dag1")?.status, "active", "DAG returns to active when a node is retried");
+    assert.equal(spawnedSessions.length, 1, "tickDag spawns the now-pending node");
+  });
+
   test("checkCompletion marks DAG completed for a mix of landed and done success-terminal nodes", async () => {
     const nodeA = makeNode("A", "done");
     const nodeB = makeNode("B", "landed", ["A"]);

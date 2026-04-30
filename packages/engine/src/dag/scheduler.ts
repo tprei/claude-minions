@@ -48,12 +48,36 @@ export class DagScheduler {
   async tick(dagId?: string): Promise<void> {
     const dags = dagId
       ? [this.repo.get(dagId)].filter((d): d is NonNullable<typeof d> => d !== null)
-      : this.repo.list().filter((d) => d.status === "active");
+      : this.repo.list().filter((d) => d.status === "active" || d.status === "failed");
 
     for (const dag of dags) {
-      if (dag.status !== "active") continue;
+      this.recomputeDagStatus(dag.id);
+      const refreshed = this.repo.get(dag.id);
+      if (!refreshed || refreshed.status !== "active") continue;
       await this.tickDag(dag.id);
     }
+  }
+
+  recomputeDagStatus(dagId: string): void {
+    const dag = this.repo.get(dagId);
+    if (!dag) return;
+    if (dag.status === "cancelled") return;
+    if (dag.nodes.length === 0) return;
+
+    const allSuccess = dag.nodes.every((n) => SUCCESS_NODE_STATUSES.has(n.status));
+    if (allSuccess) {
+      if (dag.status !== "completed") this.repo.update(dagId, { status: "completed" });
+      return;
+    }
+
+    const allTerminal = dag.nodes.every((n) => TERMINAL_NODE_STATUSES.has(n.status));
+    const anyFailed = dag.nodes.some((n) => FAILED_NODE_STATUSES.has(n.status));
+    if (allTerminal && anyFailed) {
+      if (dag.status !== "failed") this.repo.update(dagId, { status: "failed" });
+      return;
+    }
+
+    if (dag.status !== "active") this.repo.update(dagId, { status: "active" });
   }
 
   private async tickDag(dagId: string): Promise<void> {
@@ -84,7 +108,7 @@ export class DagScheduler {
       spawned++;
     }
 
-    this.checkCompletion(dagId);
+    this.recomputeDagStatus(dagId);
   }
 
   private async spawnNodeSession(dagId: string, node: DAGNode): Promise<void> {
@@ -205,24 +229,6 @@ export class DagScheduler {
     return depSession.branch;
   }
 
-  private checkCompletion(dagId: string): void {
-    const dag = this.repo.get(dagId);
-    if (!dag) return;
-
-    const allTerminal = dag.nodes.every((n) => TERMINAL_NODE_STATUSES.has(n.status));
-    if (!allTerminal) return;
-
-    const anyFailed = dag.nodes.some((n) => FAILED_NODE_STATUSES.has(n.status));
-    const allSuccess = dag.nodes.every((n) => SUCCESS_NODE_STATUSES.has(n.status));
-    if (allSuccess) {
-      this.repo.update(dagId, { status: "completed" });
-      return;
-    }
-    if (anyFailed) {
-      this.repo.update(dagId, { status: "failed" });
-    }
-  }
-
   private resolveMaxConcurrent(): number {
     const overrides = this.ctx.runtime.values();
     const override = overrides["dagMaxConcurrent"];
@@ -234,6 +240,7 @@ export class DagScheduler {
   async watchdogTick(): Promise<void> {
     const dags = this.repo.list().filter((d) => d.status === "active");
     for (const dag of dags) {
+      let mutated = false;
       for (const node of dag.nodes) {
         if (node.status !== "running") continue;
         if (!node.sessionSlug) continue;
@@ -246,6 +253,7 @@ export class DagScheduler {
           failedReason: `watchdog: session ${node.sessionSlug} terminated as ${session.status}`,
           completedAt: new Date().toISOString(),
         });
+        mutated = true;
         this.ctx.audit.record(
           "system",
           "dag.watchdog",
@@ -259,6 +267,7 @@ export class DagScheduler {
           sessionStatus: session.status,
         });
       }
+      if (mutated) this.recomputeDagStatus(dag.id);
     }
   }
 }
