@@ -197,7 +197,7 @@ function findParentDagId(
   return null;
 }
 
-function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
+export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
   const { node, onRequestRetry } = data;
   const activeId = useConnectionStore((s) => s.activeId);
   const hasAttention = useSessionStore((s) => {
@@ -259,11 +259,13 @@ function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
         {node.sessionSlug && (
           <button
             type="button"
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               if (node.sessionSlug) goToSession(node.sessionSlug);
             }}
-            className="text-[10px] underline opacity-60 hover:opacity-100"
+            data-testid="dag-node-session-link"
+            className="nodrag nopan text-[10px] underline opacity-60 hover:opacity-100 cursor-pointer"
           >
             {node.sessionSlug}
           </button>
