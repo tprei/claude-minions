@@ -82,6 +82,7 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
     log: createLogger("error"),
     db: {} as EngineContext["db"],
     workspaceDir: "/tmp",
+    previousMarker: null,
     features: () => [],
     featuresPending: () => [],
     repos: () => [],

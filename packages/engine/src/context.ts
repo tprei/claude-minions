@@ -4,6 +4,7 @@ import type { Logger } from "./logger.js";
 import type { EngineEnv } from "./env.js";
 import type { EventBus } from "./bus/eventBus.js";
 import type { KeyedMutex } from "./util/mutex.js";
+import type { EngineMarker } from "./lifecycle/marker.js";
 
 export interface SubsystemBootHook {
   (): Promise<void> | void;
@@ -20,6 +21,7 @@ export interface EngineContext {
   bus: EventBus;
   mutex: KeyedMutex;
   workspaceDir: string;
+  previousMarker: EngineMarker | null;
 
   sessions: {
     create: (req: import("@minions/shared").CreateSessionRequest) => Promise<import("@minions/shared").Session>;

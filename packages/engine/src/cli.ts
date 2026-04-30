@@ -3,10 +3,14 @@ import { loadDotenvFiles } from "./dotenv.js";
 import { createLogger } from "./logger.js";
 import { createEngine } from "./index.js";
 import type { EngineContext } from "./context.js";
+import { clearMarker } from "./lifecycle/marker.js";
+
+let workspaceForFatal: string | null = null;
 
 async function main(): Promise<void> {
   loadDotenvFiles(process.cwd());
   const env = loadEnv(process.env);
+  workspaceForFatal = env.workspace;
   const log = createLogger(env.logLevel, { service: "engine" });
 
   log.info("starting engine", { port: env.port, workspace: env.workspace, provider: env.provider });
@@ -49,5 +53,12 @@ async function main(): Promise<void> {
 
 main().catch((err: unknown) => {
   process.stderr.write(`Fatal: ${(err as Error).message}\n`);
+  if (workspaceForFatal) {
+    try {
+      clearMarker(workspaceForFatal);
+    } catch {
+      /* ignore */
+    }
+  }
   process.exit(1);
 });
