@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import type { AuditEvent, PRSummary, RepoBinding, Session } from "@minions/shared";
+import type { AuditEvent, DAG, DAGNode, PRSummary, RepoBinding, Session } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { EventBus } from "../bus/eventBus.js";
 import type { DagRepo } from "../dag/model.js";
@@ -12,6 +12,7 @@ import {
   type SessionStateUpdater,
 } from "./index.js";
 import { RestackManager } from "./restack.js";
+import type { BranchExistsFn, RebaseOntoFn } from "./baseResolver.js";
 import { KeyedMutex } from "../util/mutex.js";
 import { createLogger } from "../logger.js";
 
@@ -151,7 +152,18 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
   return { ctx, audit, callOrder };
 }
 
-const noopDagRepo: DagRepo = { list: () => [] } as unknown as DagRepo;
+const noopDagRepo: DagRepo = {
+  list: () => [],
+  getNodeBySession: () => null,
+  byNodeSession: () => null,
+  getNode: () => null,
+  updateNode: () => {
+    throw new Error("noop dag repo: updateNode not implemented");
+  },
+} as unknown as DagRepo;
+
+const alwaysExistsBranch = async () => true;
+const noopRebase = async () => {};
 
 function makeManager(
   h: OrderHarness,
@@ -159,10 +171,15 @@ function makeManager(
   ensurePullRequest: EnsurePullRequestFn,
 ): LandingManager {
   const log = createLogger("error");
-  const restack = new RestackManager(h.ctx, noopDagRepo, log);
+  const restack = new RestackManager(h.ctx, noopDagRepo, log, {
+    branchExistsOnRemote: alwaysExistsBranch,
+    rebaseOnto: noopRebase,
+  });
   return new LandingManager(h.ctx, noopDagRepo, restack, log, {
     pushBranch,
     ensurePullRequest,
+    branchExistsOnRemote: alwaysExistsBranch,
+    rebaseOnto: noopRebase,
   });
 }
 
@@ -443,7 +460,15 @@ function makeUpstreamHarness(opts: {
   return { ctx, audit, events, retryCalls, baseEdits, prEdits, ghCalls, sessionMap, updater };
 }
 
-const noopDagRepoForUpstream: DagRepo = { list: () => [] } as unknown as DagRepo;
+const noopDagRepoForUpstream: DagRepo = {
+  list: () => [],
+  getNodeBySession: () => null,
+  byNodeSession: () => null,
+  getNode: () => null,
+  updateNode: () => {
+    throw new Error("noop dag repo: updateNode not implemented");
+  },
+} as unknown as DagRepo;
 
 describe("LandingManager.onUpstreamMerged", () => {
   test("updates child base, edits PR base on GitHub, and triggers restack", async () => {
@@ -473,8 +498,14 @@ describe("LandingManager.onUpstreamMerged", () => {
     };
 
     const log = createLogger("error");
-    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log);
+    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log, {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+      sessionRepo: h.updater,
+    });
     const manager = new LandingManager(h.ctx, noopDagRepoForUpstream, restack, log, {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
       editPullRequestBase,
       sessionRepo: h.updater,
     });
@@ -519,8 +550,14 @@ describe("LandingManager.onUpstreamMerged", () => {
     };
 
     const log = createLogger("error");
-    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log);
+    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log, {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+      sessionRepo: h.updater,
+    });
     const manager = new LandingManager(h.ctx, noopDagRepoForUpstream, restack, log, {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
       editPullRequestBase,
       sessionRepo: h.updater,
     });
@@ -546,8 +583,14 @@ describe("LandingManager.onUpstreamMerged", () => {
 
     const editPullRequestBase: EditPullRequestBaseFn = async () => {};
     const log = createLogger("error");
-    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log);
+    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log, {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+      sessionRepo: h.updater,
+    });
     const manager = new LandingManager(h.ctx, noopDagRepoForUpstream, restack, log, {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
       editPullRequestBase,
       sessionRepo: h.updater,
     });
@@ -556,5 +599,292 @@ describe("LandingManager.onUpstreamMerged", () => {
 
     assert.deepEqual(h.baseEdits, [], "non-stacked siblings untouched");
     assert.deepEqual(h.retryCalls, [], "no rebase for non-stacked siblings");
+  });
+});
+
+interface FakeDagRepoOpts {
+  dag: DAG;
+  nodes: DAGNode[];
+}
+
+function makeFakeDagRepo(opts: FakeDagRepoOpts): DagRepo {
+  const nodesById = new Map(opts.nodes.map((n) => [n.id, n] as const));
+  const nodesBySession = new Map<string, DAGNode>();
+  for (const node of opts.nodes) {
+    if (node.sessionSlug) nodesBySession.set(node.sessionSlug, node);
+  }
+  const repo = {
+    list: () => [opts.dag],
+    get: (id: string) => (id === opts.dag.id ? opts.dag : null),
+    listNodes: () => opts.nodes,
+    getNode: (id: string) => nodesById.get(id) ?? null,
+    getNodeBySession: (slug: string) => nodesBySession.get(slug) ?? null,
+    byNodeSession: (slug: string) => (nodesBySession.has(slug) ? opts.dag : null),
+    byRootSession: () => null,
+    updateNode: (id: string, patch: Partial<DAGNode>) => {
+      const cur = nodesById.get(id);
+      if (!cur) throw new Error(`fake repo: node not found ${id}`);
+      const updated: DAGNode = { ...cur, ...patch };
+      nodesById.set(id, updated);
+      if (cur.sessionSlug) nodesBySession.set(cur.sessionSlug, updated);
+      return updated;
+    },
+  };
+  return repo as unknown as DagRepo;
+}
+
+describe("LandingManager.openForReview live-base re-resolution", () => {
+  test("falls back to surviving ancestor when dep branch was deleted on origin", async () => {
+    const rootSession = buildSession("root", {
+      branch: "minions/root",
+      baseBranch: "main",
+    });
+    const midSession = buildSession("mid", {
+      branch: "minions/mid",
+      baseBranch: "minions/root",
+    });
+    const leafSession = buildSession("leaf", {
+      branch: "minions/leaf",
+      baseBranch: "minions/mid",
+      mode: "dag-task",
+    });
+
+    const rootNode: DAGNode = {
+      id: "node-root",
+      title: "root",
+      prompt: "",
+      status: "landed",
+      dependsOn: [],
+      sessionSlug: "root",
+      branch: "minions/root",
+      baseBranch: "main",
+      metadata: {},
+    };
+    const midNode: DAGNode = {
+      id: "node-mid",
+      title: "mid",
+      prompt: "",
+      status: "landed",
+      dependsOn: ["node-root"],
+      sessionSlug: "mid",
+      branch: "minions/mid",
+      baseBranch: "minions/root",
+      metadata: {},
+    };
+    const leafNode: DAGNode = {
+      id: "node-leaf",
+      title: "leaf",
+      prompt: "",
+      status: "running",
+      dependsOn: ["node-mid"],
+      sessionSlug: "leaf",
+      branch: "minions/leaf",
+      baseBranch: "minions/mid",
+      metadata: {},
+    };
+    const dag: DAG = {
+      id: "dag-1",
+      title: "stack",
+      goal: "ship",
+      baseBranch: "main",
+      status: "active",
+      nodes: [rootNode, midNode, leafNode],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: {},
+    };
+
+    const dagRepo = makeFakeDagRepo({ dag, nodes: [rootNode, midNode, leafNode] });
+
+    const h = makeUpstreamHarness({ sessions: [rootSession, midSession, leafSession] });
+
+    const existsCalls: string[] = [];
+    const branchExistsOnRemote: BranchExistsFn = async ({ branch }) => {
+      existsCalls.push(branch);
+      if (branch === "minions/mid") return false;
+      return true;
+    };
+
+    const rebaseCalls: { worktreePath: string; branch: string }[] = [];
+    const rebaseOnto: RebaseOntoFn = async (args) => {
+      rebaseCalls.push(args);
+    };
+
+    const pushed: string[] = [];
+    const pushBranch: PushBranchFn = async (_wt, branch) => {
+      pushed.push(branch);
+    };
+
+    let prCallBaseBranch: string | null = null;
+    const prSummary: PRSummary = {
+      number: 1,
+      url: "https://github.com/acme/repo/pull/1",
+      state: "open",
+      draft: false,
+      base: "minions/root",
+      head: "minions/leaf",
+      title: "leaf",
+    };
+    const ensurePullRequest: EnsurePullRequestFn = async ({ ctx, slug }) => {
+      const s = ctx.sessions.get(slug);
+      prCallBaseBranch = s?.baseBranch ?? null;
+      h.sessionMap.set(slug, { ...(s as Session), pr: prSummary });
+      return prSummary;
+    };
+
+    const log = createLogger("error");
+    const restack = new RestackManager(h.ctx, dagRepo, log, {
+      branchExistsOnRemote,
+      rebaseOnto,
+      sessionRepo: h.updater,
+    });
+    const manager = new LandingManager(h.ctx, dagRepo, restack, log, {
+      branchExistsOnRemote,
+      rebaseOnto,
+      pushBranch,
+      ensurePullRequest,
+      sessionRepo: h.updater,
+    });
+
+    const result = await manager.openForReview("leaf");
+
+    assert.equal(prCallBaseBranch, "minions/root", "PR ensured against re-resolved ancestor base");
+    assert.equal(
+      h.sessionMap.get("leaf")?.baseBranch,
+      "minions/root",
+      "session baseBranch persisted to surviving ancestor",
+    );
+    assert.deepEqual(
+      rebaseCalls,
+      [{ worktreePath: leafSession.worktreePath, branch: "minions/root" }],
+      "local branch rebased onto new base before pushing",
+    );
+    assert.deepEqual(pushed, ["minions/leaf"], "push proceeded after rebase");
+    assert.equal(result?.number, 1, "PR returned");
+
+    const resolveAudit = h.audit.find((e) => e.action === "landing.base.resolved");
+    assert.ok(resolveAudit, "landing.base.resolved audit emitted");
+    assert.deepEqual(resolveAudit?.detail, {
+      oldBase: "minions/mid",
+      newBase: "minions/root",
+      reason: "ancestor-fallback",
+    });
+
+    const updatedLeafNode = dagRepo.getNode("node-leaf");
+    assert.equal(updatedLeafNode?.baseBranch, "minions/root", "dag node baseBranch updated");
+
+    assert.ok(existsCalls.includes("minions/mid"), "checked deleted dep branch first");
+    assert.ok(existsCalls.includes("minions/root"), "walked up to surviving ancestor");
+  });
+
+  test("falls back to dag baseBranch when no ancestor branch survives", async () => {
+    const leafSession = buildSession("leaf", {
+      branch: "minions/leaf",
+      baseBranch: "minions/dead",
+      mode: "dag-task",
+    });
+    const deadNode: DAGNode = {
+      id: "node-dead",
+      title: "dead",
+      prompt: "",
+      status: "landed",
+      dependsOn: [],
+      sessionSlug: undefined,
+      branch: "minions/dead",
+      baseBranch: "main",
+      metadata: {},
+    };
+    const leafNode: DAGNode = {
+      id: "node-leaf",
+      title: "leaf",
+      prompt: "",
+      status: "running",
+      dependsOn: ["node-dead"],
+      sessionSlug: "leaf",
+      branch: "minions/leaf",
+      baseBranch: "minions/dead",
+      metadata: {},
+    };
+    const dag: DAG = {
+      id: "dag-2",
+      title: "stack",
+      goal: "ship",
+      baseBranch: "main",
+      status: "active",
+      nodes: [deadNode, leafNode],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: {},
+    };
+    const dagRepo = makeFakeDagRepo({ dag, nodes: [deadNode, leafNode] });
+    const h = makeUpstreamHarness({ sessions: [leafSession] });
+
+    const branchExistsOnRemote: BranchExistsFn = async ({ branch }) => branch === "main";
+    const rebaseCalls: { worktreePath: string; branch: string }[] = [];
+    const rebaseOnto: RebaseOntoFn = async (args) => {
+      rebaseCalls.push(args);
+    };
+
+    const pushBranch: PushBranchFn = async () => {};
+    const ensurePullRequest: EnsurePullRequestFn = async () => null;
+
+    const log = createLogger("error");
+    const restack = new RestackManager(h.ctx, dagRepo, log, {
+      branchExistsOnRemote,
+      rebaseOnto,
+      sessionRepo: h.updater,
+    });
+    const manager = new LandingManager(h.ctx, dagRepo, restack, log, {
+      branchExistsOnRemote,
+      rebaseOnto,
+      pushBranch,
+      ensurePullRequest,
+      sessionRepo: h.updater,
+    });
+
+    await manager.openForReview("leaf");
+
+    assert.equal(h.sessionMap.get("leaf")?.baseBranch, "main");
+    assert.deepEqual(rebaseCalls, [
+      { worktreePath: leafSession.worktreePath, branch: "main" },
+    ]);
+    const resolveAudit = h.audit.find((e) => e.action === "landing.base.resolved");
+    assert.equal(
+      (resolveAudit?.detail as { reason: string } | undefined)?.reason,
+      "dag-base-fallback",
+    );
+  });
+
+  test("does nothing when intended base still exists on origin", async () => {
+    const session = buildSession("solo", { branch: "minions/solo", baseBranch: "main" });
+    const h = makeUpstreamHarness({ sessions: [session] });
+
+    const branchExistsOnRemote: BranchExistsFn = async () => true;
+    const rebaseCalls: { worktreePath: string; branch: string }[] = [];
+    const rebaseOnto: RebaseOntoFn = async (args) => {
+      rebaseCalls.push(args);
+    };
+    const pushBranch: PushBranchFn = async () => {};
+    const ensurePullRequest: EnsurePullRequestFn = async () => null;
+
+    const log = createLogger("error");
+    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log, {
+      branchExistsOnRemote,
+      rebaseOnto,
+      sessionRepo: h.updater,
+    });
+    const manager = new LandingManager(h.ctx, noopDagRepoForUpstream, restack, log, {
+      branchExistsOnRemote,
+      rebaseOnto,
+      pushBranch,
+      ensurePullRequest,
+      sessionRepo: h.updater,
+    });
+
+    await manager.openForReview("solo");
+
+    assert.equal(rebaseCalls.length, 0, "no rebase when base survives");
+    const resolveAudit = h.audit.find((e) => e.action === "landing.base.resolved");
+    assert.equal(resolveAudit, undefined, "no resolution audit when base unchanged");
   });
 });

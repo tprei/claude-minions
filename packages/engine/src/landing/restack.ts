@@ -1,13 +1,47 @@
 import type { EngineContext } from "../context.js";
 import type { Logger } from "../logger.js";
 import type { DagRepo } from "../dag/model.js";
+import {
+  applyLiveBase,
+  defaultBranchExists,
+  defaultRebaseOnto,
+  type BranchExistsFn,
+  type RebaseOntoFn,
+} from "./baseResolver.js";
+import type { SessionStateUpdater } from "./sessionStateUpdater.js";
+
+export interface RestackManagerDeps {
+  branchExistsOnRemote?: BranchExistsFn;
+  rebaseOnto?: RebaseOntoFn;
+  sessionRepo?: SessionStateUpdater | null;
+}
 
 export class RestackManager {
+  private readonly branchExistsOnRemote: BranchExistsFn;
+  private readonly rebaseOnto: RebaseOntoFn;
+  private readonly sessionRepo: SessionStateUpdater | null;
+
   constructor(
     private readonly ctx: EngineContext,
     private readonly dagRepo: DagRepo,
     private readonly log: Logger,
-  ) {}
+    deps: RestackManagerDeps = {},
+  ) {
+    this.branchExistsOnRemote = deps.branchExistsOnRemote ?? defaultBranchExists;
+    this.rebaseOnto = deps.rebaseOnto ?? defaultRebaseOnto;
+    this.sessionRepo = deps.sessionRepo ?? null;
+  }
+
+  private async ensureBaseLive(slug: string): Promise<void> {
+    await applyLiveBase(slug, {
+      ctx: this.ctx,
+      dagRepo: this.dagRepo,
+      log: this.log,
+      sessionRepo: this.sessionRepo,
+      branchExists: this.branchExistsOnRemote,
+      rebaseOnto: this.rebaseOnto,
+    });
+  }
 
   async restackChild(slug: string, newBase: string): Promise<void> {
     await this.restackSession(slug, newBase);
@@ -59,9 +93,10 @@ export class RestackManager {
     this.log.info("restacking session", { slug, newBase });
 
     try {
-      await this.runUnderSlugMutex(slug, "restack:session", { newBase }, () =>
-        this.ctx.landing.retryRebase(slug),
-      );
+      await this.runUnderSlugMutex(slug, "restack:session", { newBase }, async () => {
+        await this.ensureBaseLive(slug);
+        await this.ctx.landing.retryRebase(slug);
+      });
     } catch (err) {
       const message = (err as Error).message;
       this.log.error("restack failed for session", { slug, err: message });
@@ -99,7 +134,10 @@ export class RestackManager {
         sessionSlug,
         "restack:dag-node",
         { dagId, nodeId, newBase },
-        () => this.ctx.landing.retryRebase(sessionSlug),
+        async () => {
+          await this.ensureBaseLive(sessionSlug);
+          await this.ctx.landing.retryRebase(sessionSlug);
+        },
       );
     } catch (err) {
       const message = (err as Error).message;
