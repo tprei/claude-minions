@@ -536,6 +536,7 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
         hint={isRunning ? "(injected mid-turn)" : undefined}
         running={isRunning}
         onStop={handleStop}
+        repoId={session.repoId}
       />
     </div>
   );
