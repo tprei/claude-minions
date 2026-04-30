@@ -7,6 +7,8 @@ import { Transcript } from "../transcript/Transcript.js";
 import { Diff } from "../components/Diff.js";
 import { type Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
+import { HelpModal } from "./HelpModal.js";
+import { CostModal } from "./CostModal.js";
 import { QuickActions } from "./quickActions.js";
 import { RecoveryFooter } from "./RecoveryFooter.js";
 import { PRPanel } from "./PRPanel.js";
@@ -44,11 +46,21 @@ export interface SlashUiHandlers {
   activeId: string | null;
   openConfig: () => void;
   openHelp: () => void;
+  openCost: () => void;
+  setActiveTab: (id: string) => void;
 }
 
 export function dispatchSlashUi(action: SlashUiResult["action"], h: SlashUiHandlers): void {
   if (action === "help") {
     h.openHelp();
+    return;
+  }
+  if (action === "cost") {
+    h.openCost();
+    return;
+  }
+  if (action === "diff") {
+    h.setActiveTab("diff");
     return;
   }
   if (action === "config") {
@@ -444,12 +456,13 @@ interface PanelProps {
   onTabChange: (id: string) => void;
   onClose: () => void;
   onOpenConfig?: () => void;
-  onOpenHelp?: () => void;
+  onOpenHelp: () => void;
+  onOpenCost: () => void;
 }
 
 const NOOP = (): void => {};
 
-function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, onOpenHelp }: PanelProps) {
+function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, onOpenHelp, onOpenCost }: PanelProps) {
   const events = useSessionTranscript(session);
   const conn = useRootStore((s) => s.getActiveConnection());
 
@@ -466,11 +479,13 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
         dispatchSlashUi(result.action, {
           activeId: useConnectionStore.getState().activeId,
           openConfig: onOpenConfig ?? NOOP,
-          openHelp: onOpenHelp ?? NOOP,
+          openHelp: onOpenHelp,
+          openCost: onOpenCost,
+          setActiveTab: onTabChange,
         });
       }
     },
-    [session, conn, onOpenConfig, onOpenHelp],
+    [session, conn, onOpenConfig, onOpenHelp, onOpenCost, onTabChange],
   );
 
   const handleSubmit = useCallback(
@@ -545,15 +560,16 @@ interface Props {
   sessionSlug?: string | null;
   primary?: boolean;
   onOpenConfig?: () => void;
-  onOpenHelp?: () => void;
 }
 
-export function ChatSurface({ sessionSlug, primary = false, onOpenConfig, onOpenHelp }: Props) {
+export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Props) {
   const [open, setOpen] = useState<boolean>(() => {
     const stored = getLayout(CHAT_PANEL);
     return stored ? !stored.collapsed : true;
   });
   const [activeTab, setActiveTab] = useState("transcript");
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [costOpen, setCostOpen] = useState(false);
   const [width, setWidth] = useState<number>(() => {
     const stored = getLayout(CHAT_PANEL);
     return stored ? clampWidth(stored.size) : DEFAULT_WIDTH;
@@ -594,6 +610,13 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig, onOpen
 
   if (!session) return null;
 
+  const modals = (
+    <>
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {costOpen && <CostModal session={session} onClose={() => setCostOpen(false)} />}
+    </>
+  );
+
   if (primary) {
     const closeToList = () => {
       const activeIdNow = useConnectionStore.getState().activeId;
@@ -602,16 +625,20 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig, onOpen
       setUrlState({ connectionId: activeIdNow, view, sessionSlug: null, query });
     };
     return (
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-bg-soft">
-        <SurfacePanel
-          session={session}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          onClose={closeToList}
-          onOpenConfig={onOpenConfig}
-          onOpenHelp={onOpenHelp}
-        />
-      </div>
+      <>
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-bg-soft">
+          <SurfacePanel
+            session={session}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            onClose={closeToList}
+            onOpenConfig={onOpenConfig}
+            onOpenHelp={() => setHelpOpen(true)}
+            onOpenCost={() => setCostOpen(true)}
+          />
+        </div>
+        {modals}
+      </>
     );
   }
 
@@ -631,37 +658,45 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig, onOpen
 
   if (isMobile) {
     return (
-      <Sheet open={open} onClose={() => setOpen(false)} title={session.title}>
-        <div className="h-[80vh] flex flex-col">
+      <>
+        <Sheet open={open} onClose={() => setOpen(false)} title={session.title}>
+          <div className="h-[80vh] flex flex-col">
+            <SurfacePanel
+              session={session}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              onClose={() => setOpen(false)}
+              onOpenConfig={onOpenConfig}
+              onOpenHelp={() => setHelpOpen(true)}
+              onOpenCost={() => setCostOpen(true)}
+            />
+          </div>
+        </Sheet>
+        {modals}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div
+        className="flex flex-shrink-0 border-l border-border bg-bg-soft min-h-0 max-w-[60vw]"
+        style={{ width }}
+      >
+        <ResizeHandle onDrag={handleDrag} />
+        <div className="flex-1 min-w-0 flex flex-col">
           <SurfacePanel
             session={session}
             activeTab={activeTab}
             onTabChange={setActiveTab}
             onClose={() => setOpen(false)}
             onOpenConfig={onOpenConfig}
-            onOpenHelp={onOpenHelp}
+            onOpenHelp={() => setHelpOpen(true)}
+            onOpenCost={() => setCostOpen(true)}
           />
         </div>
-      </Sheet>
-    );
-  }
-
-  return (
-    <div
-      className="flex flex-shrink-0 border-l border-border bg-bg-soft min-h-0 max-w-[60vw]"
-      style={{ width }}
-    >
-      <ResizeHandle onDrag={handleDrag} />
-      <div className="flex-1 min-w-0 flex flex-col">
-        <SurfacePanel
-          session={session}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          onClose={() => setOpen(false)}
-          onOpenConfig={onOpenConfig}
-          onOpenHelp={onOpenHelp}
-        />
       </div>
-    </div>
+      {modals}
+    </>
   );
 }
