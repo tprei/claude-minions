@@ -338,6 +338,14 @@ export class SessionRegistry {
       mode === "ship" ? "think" : null;
     const permissionTier = derivePermissionTier(mode, initialShipStage);
 
+    let costBudgetUsd: number | undefined = req.costBudgetUsd;
+    if (costBudgetUsd === undefined) {
+      const def = ctx.runtime.effective()["defaultSessionBudgetUsd"];
+      if (typeof def === "number" && def > 0) {
+        costBudgetUsd = def;
+      }
+    }
+
     this.insertSession.run(
       slug, title, req.prompt, mode, "pending",
       null, req.repoId ?? null, null, req.baseBranch ?? null,
@@ -351,7 +359,7 @@ export class SessionRegistry {
       JSON.stringify(req.metadata ?? {}),
       permissionTier,
       bucket,
-      req.costBudgetUsd ?? null,
+      costBudgetUsd ?? null,
     );
 
     if (mode === "ship") {
