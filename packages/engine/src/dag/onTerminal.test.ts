@@ -266,6 +266,28 @@ describe("DagTerminalHandler", () => {
     );
   });
 
+  test("dag-task with no commits ahead transitions to landed via openForReview returning null", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode } = makeMockRepo(dag);
+    const { ctx, landCalls } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(makeSession("sess-1"));
+
+    assert.equal(landCalls.length, 1, "openForReview called once");
+    const landed = getNode("n1");
+    assert.equal(landed?.status, "landed", "node lands when openForReview returns null");
+    assert.equal(landed?.failedReason ?? null, null);
+  });
+
   test("failed quality report blocks landing", async () => {
     const node = makeNode("n1", "running", "sess-1");
     const dag = makeDag("dag-1", [node], "root-1");
