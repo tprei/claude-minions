@@ -30,3 +30,30 @@ test.describe("dag canvas width", () => {
     expect(box.width).toBeGreaterThan(800);
   });
 });
+
+const MOBILE_VIEWPORT = { width: 412, height: 915 };
+
+test.describe("dag canvas mobile layout", () => {
+  test.use({ viewport: MOBILE_VIEWPORT });
+
+  test("DAG canvas renders inline at full available size on mobile", async ({ page }) => {
+    await seedConnection(page, API_BASE, API_TOKEN);
+
+    const session = await createSessionViaApi(API_BASE, API_TOKEN, {
+      prompt: "dag canvas mobile e2e",
+      mode: "task",
+    });
+
+    await page.goto(`/c/${E2E_CONN_ID}/dag/${session.slug}`);
+
+    const canvas = page.locator('[data-testid="panel-dag-canvas-body"]').first();
+    await expect(canvas).toBeVisible({ timeout: 15_000 });
+
+    const canvasBox = await canvas.boundingBox();
+    if (!canvasBox) throw new Error("canvas body has no bounding box");
+    expect(canvasBox.width).toBeGreaterThanOrEqual(400);
+    expect(canvasBox.height).toBeGreaterThanOrEqual(850);
+
+    await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+  });
+});
