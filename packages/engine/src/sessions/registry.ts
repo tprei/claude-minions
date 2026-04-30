@@ -28,6 +28,7 @@ import type { ProviderHandle } from "../providers/provider.js";
 import { READ_ONLY_STAGES } from "../ship/stages.js";
 import { TranscriptCollector } from "./transcriptCollector.js";
 import { ReplyQueue } from "./replyQueue.js";
+import { KeyedMutex } from "../util/mutex.js";
 import {
   sanitizeAttachmentName,
   assertAllowedMime,
@@ -137,6 +138,8 @@ export class SessionRegistry {
   private readonly checkpointStore: Checkpoints;
   private readonly paths: ReturnType<typeof workspacePaths>;
   private readonly repo: SessionRepo;
+
+  private readonly slugMutex = new KeyedMutex();
 
   private readonly insertSession: Database.Statement;
   private readonly updateSession: Database.Statement;
@@ -366,14 +369,11 @@ export class SessionRegistry {
   }
 
   async create(req: CreateSessionRequest): Promise<Session> {
-    const { db, bus, log, ctx, workspaceDir } = this.deps;
+    const { ctx } = this.deps;
 
     const slug = newSlug();
-    const now = nowIso();
-    const mode: SessionMode = req.mode ?? "task";
-    const bucket = req.bucket ?? inferBucket({ prompt: req.prompt, mode, metadata: req.metadata });
 
-    const cls = classifyMode(mode);
+    const cls = classifyMode(req.mode ?? "task");
     const runningByClass = this.countRunningByClass();
     const decision = checkAdmission(cls, runningByClass, ctx.runtime.effective());
     if (!decision.admit) {
@@ -388,6 +388,19 @@ export class SessionRegistry {
         runningByClass,
       });
     }
+
+    return this.slugMutex.run(slug, () => this.createLocked(slug, req));
+  }
+
+  private async createLocked(
+    slug: string,
+    req: CreateSessionRequest,
+  ): Promise<Session> {
+    const { db, bus, log, ctx } = this.deps;
+
+    const now = nowIso();
+    const mode: SessionMode = req.mode ?? "task";
+    const bucket = req.bucket ?? inferBucket({ prompt: req.prompt, mode, metadata: req.metadata });
     const providerName = ctx.env.provider;
     const title = req.title ?? req.prompt.slice(0, 80);
     const initialShipStage: import("@minions/shared").ShipStage | null =
@@ -453,7 +466,7 @@ export class SessionRegistry {
     ctx.audit.record("operator", "session.create", { kind: "session", id: slug });
 
     try {
-      await this.setupAndSpawn(slug, req, session, providerName);
+      await this.setupAndSpawn(slug, req, providerName);
     } catch (err) {
       log.error("session setup failed", { slug, err: String(err) });
       this.failSessionWithAttention(slug, `Spawn failed: ${String(err)}`);
@@ -510,7 +523,6 @@ export class SessionRegistry {
   private async setupAndSpawn(
     slug: string,
     req: CreateSessionRequest,
-    _session: Session,
     providerName: string,
   ): Promise<void> {
     const { log, ctx, workspaceDir } = this.deps;
@@ -1099,29 +1111,31 @@ export class SessionRegistry {
   }
 
   async delete(slug: string): Promise<void> {
-    const { db, bus } = this.deps;
-    const row = this.getSessionRow(slug);
-    if (!row) {
-      throw new EngineError("not_found", `Session ${slug} not found`);
-    }
+    return this.slugMutex.run(slug, async () => {
+      const { db, bus } = this.deps;
+      const row = this.getSessionRow(slug);
+      if (!row) {
+        throw new EngineError("not_found", `Session ${slug} not found`);
+      }
 
-    const handle = this.handles.get(slug);
-    if (handle) {
-      handle.kill("SIGKILL");
-      this.handles.delete(slug);
-    }
+      const handle = this.handles.get(slug);
+      if (handle) {
+        handle.kill("SIGKILL");
+        this.handles.delete(slug);
+      }
 
-    const tx = db.transaction((s: string) => {
-      db.prepare(`DELETE FROM transcript_events WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM reply_queue WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM screenshots WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM checkpoints WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM provider_state WHERE session_slug = ?`).run(s);
-      db.prepare(`DELETE FROM sessions WHERE slug = ?`).run(s);
+      const tx = db.transaction((s: string) => {
+        db.prepare(`DELETE FROM transcript_events WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM reply_queue WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM screenshots WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM checkpoints WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM provider_state WHERE session_slug = ?`).run(s);
+        db.prepare(`DELETE FROM sessions WHERE slug = ?`).run(s);
+      });
+      tx(slug);
+
+      bus.emit({ kind: "session_deleted", slug });
     });
-    tx(slug);
-
-    bus.emit({ kind: "session_deleted", slug });
   }
 
   async diff(slug: string): Promise<WorkspaceDiff> {
