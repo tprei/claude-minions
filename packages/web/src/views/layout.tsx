@@ -1,4 +1,4 @@
-import { useState, useCallback, type ReactElement, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import { cx } from "../util/classnames.js";
 import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
@@ -11,11 +11,7 @@ const CHAT_RAIL_PANEL = "chat-rail";
 const RAIL_STORAGE_KEY = `panelLayout:${CHAT_RAIL_PANEL}`;
 const RAIL_DEFAULT_WIDTH = 240;
 const RAIL_MIN_WIDTH = 60;
-const RAIL_MAX_WIDTH = 720;
-
-function clampRail(width: number): number {
-  return Math.max(RAIL_MIN_WIDTH, Math.min(RAIL_MAX_WIDTH, width));
-}
+const CHAT_MIN_WIDTH = 160;
 
 function loadRailWidth(): number {
   if (typeof window === "undefined") return RAIL_DEFAULT_WIDTH;
@@ -23,7 +19,7 @@ function loadRailWidth(): number {
   if (!raw) return RAIL_DEFAULT_WIDTH;
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n)) return RAIL_DEFAULT_WIDTH;
-  return clampRail(n);
+  return Math.max(RAIL_MIN_WIDTH, n);
 }
 
 function saveRailWidth(width: number): void {
@@ -54,6 +50,25 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
     return !window.matchMedia(MOBILE_QUERY).matches;
   });
   const [railWidth, setRailWidth] = useState<number>(() => loadRailWidth());
+  const mainRef = useRef<HTMLElement | null>(null);
+  const [mainWidth, setMainWidth] = useState<number>(0);
+
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setMainWidth(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const railMax =
+    mainWidth > 0
+      ? Math.max(RAIL_MIN_WIDTH, mainWidth - CHAT_MIN_WIDTH)
+      : Number.POSITIVE_INFINITY;
+  const displayedRailWidth = Math.max(RAIL_MIN_WIDTH, Math.min(railMax, railWidth));
 
   const closeMobile = (): void => {
     if (isMobile) setSidebarOpen(false);
@@ -61,11 +76,11 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
 
   const handleRailDrag = useCallback((delta: number) => {
     setRailWidth((w) => {
-      const next = clampRail(w + delta);
+      const next = Math.max(RAIL_MIN_WIDTH, Math.min(railMax, w + delta));
       saveRailWidth(next);
       return next;
     });
-  }, []);
+  }, [railMax]);
 
   const sidebarNode = sidebar({ closeMobile });
   const view = parseUrl().view;
@@ -99,7 +114,7 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
           </aside>
         )}
 
-        <main className="flex-1 min-w-0 overflow-hidden flex flex-row">
+        <main ref={mainRef} className="flex-1 min-w-0 overflow-hidden flex flex-row">
           {chatPrimary ? (
             isMobile ? (
               <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -110,7 +125,7 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
                 <div
                   data-testid="chat-rail"
                   className="flex-shrink-0 overflow-y-auto bg-bg"
-                  style={{ width: railWidth }}
+                  style={{ width: displayedRailWidth }}
                 >
                   {main}
                 </div>
