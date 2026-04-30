@@ -14,6 +14,25 @@ export async function buildHttpServer(ctx: EngineContext): Promise<ReturnType<ty
     bodyLimit: 25 * 1024 * 1024,
   });
 
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (_req, body, done) => {
+      const raw = typeof body === "string" ? body : "";
+      if (raw.length === 0) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(raw));
+      } catch (err) {
+        (err as Error & { statusCode?: number }).statusCode = 400;
+        done(err as Error, undefined);
+      }
+    },
+  );
+
   await app.register(cors, {
     origin: ctx.env.corsOrigins,
     credentials: true,

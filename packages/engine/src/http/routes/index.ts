@@ -9,7 +9,7 @@ import { registerMessageRoutes } from "./messages.js";
 import { registerEntrypointRoutes } from "./entrypoints.js";
 import { registerRepoRoutes } from "./repos.js";
 import { registerSessionsRoutes } from "../../sessions/routes.js";
-import { registerDagRoutes } from "./dags.js";
+import { registerDagRoutes } from "../../dag/routes.js";
 import { registerMemoryRoutes } from "./memories.js";
 import { registerMcpRoute } from "../../memory/mcpRoute.js";
 import { registerAuditRoutes } from "./audit.js";
