@@ -108,6 +108,32 @@ const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
   "cancelled",
 ]);
 
+const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
+const STUCK_PENDING_GRACE_MS = 60_000;
+const STUCK_PENDING_SWEEP_INTERVAL_MS = 30_000;
+
+let spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS;
+
+export function __setSpawnTimeoutMsForTests(ms: number | null): void {
+  spawnTimeoutMs = ms ?? DEFAULT_SPAWN_TIMEOUT_MS;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  onTimeout: () => Error,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(onTimeout()), ms);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 const TRANSPARENT_PNG_1X1: Buffer = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64",
@@ -135,12 +161,14 @@ export class SessionRegistry {
   private readonly listChildren: Database.Statement;
   private readonly listActiveSession: Database.Statement;
   private readonly listAdmittedSession: Database.Statement;
+  private readonly listStuckPending: Database.Statement;
   private readonly getProviderState: Database.Statement;
   private readonly upsertProviderState: Database.Statement;
   private readonly listTranscript: Database.Statement;
   private readonly listTranscriptSince: Database.Statement;
   private readonly updateSessionStatus: Database.Statement;
   private readonly getRepo: Database.Statement;
+  private stuckPendingSweepHandle: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: RegistryDeps) {
     const { db, bus, log, workspaceDir } = deps;
@@ -196,7 +224,12 @@ export class SessionRegistry {
       `SELECT * FROM sessions WHERE status IN ('running', 'waiting_input')`,
     );
     this.listAdmittedSession = db.prepare(
-      `SELECT mode FROM sessions WHERE status IN ('pending', 'running', 'waiting_input')`,
+      `SELECT mode FROM sessions
+       WHERE status IN ('running', 'waiting_input')
+          OR (status = 'pending' AND created_at >= ?)`,
+    );
+    this.listStuckPending = db.prepare(
+      `SELECT slug FROM sessions WHERE status = 'pending' AND created_at < ?`,
     );
     this.getProviderState = db.prepare(`SELECT * FROM provider_state WHERE session_slug = ?`);
     this.upsertProviderState = db.prepare(`
@@ -215,6 +248,79 @@ export class SessionRegistry {
     this.getRepo = db.prepare(`SELECT * FROM repos WHERE id = ?`);
 
     bus.on("session_updated", (ev) => this.onSessionUpdated(ev.session));
+
+    this.startStuckPendingSweep();
+  }
+
+  private startStuckPendingSweep(): void {
+    if (this.stuckPendingSweepHandle !== null) return;
+    this.stuckPendingSweepHandle = setInterval(() => {
+      try {
+        this.sweepStuckPending();
+      } catch (err) {
+        this.deps.log.error("stuck-pending sweep failed", { err: String(err) });
+      }
+    }, STUCK_PENDING_SWEEP_INTERVAL_MS);
+    if (typeof this.stuckPendingSweepHandle.unref === "function") {
+      this.stuckPendingSweepHandle.unref();
+    }
+  }
+
+  stopStuckPendingSweep(): void {
+    if (this.stuckPendingSweepHandle !== null) {
+      clearInterval(this.stuckPendingSweepHandle);
+      this.stuckPendingSweepHandle = null;
+    }
+  }
+
+  sweepStuckPending(): number {
+    const cutoffIso = new Date(Date.now() - STUCK_PENDING_GRACE_MS).toISOString();
+    const rows = this.listStuckPending.all(cutoffIso) as Array<{ slug: string }>;
+    let swept = 0;
+    for (const row of rows) {
+      const slug = row.slug;
+      this.deps.log.warn("sweeping stuck pending session", {
+        slug,
+        graceMs: STUCK_PENDING_GRACE_MS,
+      });
+      try {
+        this.failSessionWithAttention(
+          slug,
+          `spawn timeout — session stuck in pending for >${Math.round(STUCK_PENDING_GRACE_MS / 1000)}s`,
+        );
+        this.deps.ctx.audit.record(
+          "system",
+          "session.spawn.timeout",
+          { kind: "session", id: slug },
+          { graceMs: STUCK_PENDING_GRACE_MS },
+        );
+        swept += 1;
+      } catch (err) {
+        this.deps.log.error("failed to sweep stuck pending session", {
+          slug,
+          err: String(err),
+        });
+      }
+    }
+    return swept;
+  }
+
+  private failSessionWithAttention(slug: string, message: string): void {
+    const row = this.getSessionRow(slug);
+    if (!row) return;
+
+    const now = nowIso();
+    this.updateSessionStatus.run("failed", now, now, slug);
+
+    const session = this.buildSession(this.getSessionRow(slug)!);
+    const next: AttentionFlag[] = [
+      ...session.attention,
+      { kind: "manual_intervention", message, raisedAt: now },
+    ];
+    this.repo.setAttention(slug, next);
+
+    const updatedRow = this.getSessionRow(slug)!;
+    this.emitUpdated(this.buildSession(updatedRow));
   }
 
   private onSessionUpdated(session: Session): void {
@@ -301,7 +407,8 @@ export class SessionRegistry {
 
   private countRunningByClass(): RunningByClass {
     const counts = emptyRunningByClass();
-    const rows = this.listAdmittedSession.all() as Array<{ mode: string }>;
+    const cutoffIso = new Date(Date.now() - STUCK_PENDING_GRACE_MS).toISOString();
+    const rows = this.listAdmittedSession.all(cutoffIso) as Array<{ mode: string }>;
     for (const row of rows) {
       const cls = classifyMode(row.mode as SessionMode);
       counts[cls] += 1;
@@ -400,9 +507,7 @@ export class SessionRegistry {
       await this.setupAndSpawn(slug, req, session, providerName);
     } catch (err) {
       log.error("session setup failed", { slug, err: String(err) });
-      this.updateSessionStatus.run("failed", nowIso(), nowIso(), slug);
-      const updatedRow = this.getSessionRow(slug)!;
-      this.emitUpdated(this.buildSession(updatedRow));
+      this.failSessionWithAttention(slug, `Spawn failed: ${String(err)}`);
       throw err;
     }
 
@@ -450,6 +555,8 @@ export class SessionRegistry {
     const { log, ctx, workspaceDir } = this.deps;
     const paths = this.paths;
 
+    log.info("setupAndSpawn:start", { slug, provider: providerName });
+
     let worktreePath: string;
     let branch: string | undefined;
 
@@ -461,6 +568,7 @@ export class SessionRegistry {
 
       if (repoRow.remote) {
         await ensureBareClone(req.repoId, repoRow.remote, paths.repos, log);
+        log.info("setupAndSpawn:ensureBareClone done", { slug });
       }
 
       const result = await addWorktree(
@@ -473,11 +581,14 @@ export class SessionRegistry {
       );
       worktreePath = result.worktreePath;
       branch = result.branch;
+      log.info("setupAndSpawn:addWorktree done", { slug, worktreePath, branch });
 
       await linkDeps(req.repoId, worktreePath, paths.depsCache(req.repoId), log);
+      log.info("setupAndSpawn:linkDeps done", { slug });
     } else {
       worktreePath = paths.worktree(slug);
       await initScratchRepo(worktreePath, slug, log);
+      log.info("setupAndSpawn:initScratchRepo done", { slug, worktreePath });
     }
 
     await ensureDir(path.join(worktreePath, ".minions"));
@@ -485,6 +596,7 @@ export class SessionRegistry {
     await ensureDir(paths.uploads(slug));
 
     await injectAssets(worktreePath);
+    log.info("setupAndSpawn:injectAssets done", { slug });
 
     if (req.attachments && req.attachments.length > 0) {
       const sessionUploads = paths.uploads(slug);
@@ -532,6 +644,7 @@ export class SessionRegistry {
     }
 
     const mcpConfigPath = await this.writeMcpConfig(slug, worktreePath);
+    log.info("setupAndSpawn:writeMcpConfig done", { slug });
 
     const mode: SessionMode = req.mode ?? "task";
     const initialShipStage: import("@minions/shared").ShipStage = "think";
@@ -540,15 +653,35 @@ export class SessionRegistry {
       mode === "ship" ? initialShipStage : null,
     );
 
-    const handle = await provider.spawn({
-      sessionSlug: slug,
-      worktree: worktreePath,
-      prompt: req.prompt,
-      modelHint: req.modelHint,
-      env,
-      preamble,
-      mcpConfigPath,
-      permissionTier,
+    log.info("setupAndSpawn:provider.spawn invoking", { slug, provider: providerName });
+    let handle: ProviderHandle;
+    try {
+      handle = await withTimeout(
+        provider.spawn({
+          sessionSlug: slug,
+          worktree: worktreePath,
+          prompt: req.prompt,
+          modelHint: req.modelHint,
+          env,
+          preamble,
+          mcpConfigPath,
+          permissionTier,
+        }),
+        spawnTimeoutMs,
+        () =>
+          new EngineError(
+            "upstream",
+            `provider.spawn timed out after ${spawnTimeoutMs}ms`,
+            { provider: providerName, sessionSlug: slug, op: "spawn" },
+          ),
+      );
+    } catch (err) {
+      log.error("setupAndSpawn:provider.spawn failed", { slug, err: String(err) });
+      throw err;
+    }
+    log.info("setupAndSpawn:provider.spawn returned", {
+      slug,
+      externalId: handle.externalId ?? null,
     });
 
     this.handles.set(slug, handle);

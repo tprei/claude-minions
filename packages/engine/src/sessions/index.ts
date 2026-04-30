@@ -45,6 +45,7 @@ export function createSessionsSubsystem(deps: SubsystemDeps): SubsystemResult<En
   };
 
   const onShutdown = async (): Promise<void> => {
+    registry.stopStuckPendingSweep();
   };
 
   return { api, registerRoutes, onShutdown };

@@ -326,15 +326,35 @@ function wrapOperatorMessage(text: string): string {
   return `${OPERATOR_MESSAGE_PREAMBLE}\n\n<operator_message>\n${text}\n</operator_message>`;
 }
 
+const FIND_CLAUDE_BINARY_TIMEOUT_MS = 5_000;
+
 async function defaultFindClaudeBinary(): Promise<string | null> {
   const { exec } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execAsync = promisify(exec);
+
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new EngineError(
+            "upstream",
+            `\`which claude\` timed out after ${FIND_CLAUDE_BINARY_TIMEOUT_MS}ms; PATH lookup is hanging — check shell init scripts`,
+          ),
+        ),
+      FIND_CLAUDE_BINARY_TIMEOUT_MS,
+    );
+  });
+
   try {
-    const { stdout } = await execAsync("which claude");
-    return stdout.trim() || null;
-  } catch {
+    const result = await Promise.race([execAsync("which claude"), timeoutPromise]);
+    return result.stdout.trim() || null;
+  } catch (err) {
+    if (err instanceof EngineError) throw err;
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
