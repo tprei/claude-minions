@@ -633,11 +633,13 @@ export class SessionRegistry {
 
     const homeDir = paths.home(providerName);
     await ensureDir(homeDir);
-    await writeSessionSettings(homeDir, worktreePath);
+    const policyHooksEnabled = ctx.runtime.effective()["policyHooksEnabled"] !== false;
+    await writeSessionSettings(homeDir, worktreePath, { slug, policyHooksEnabled });
 
     const env: Record<string, string> = {
       HOME: homeDir,
       MINIONS_SESSION_SLUG: slug,
+      MINIONS_SLUG: slug,
       MINIONS_WORKTREE: worktreePath,
       MINIONS_UPLOADS_DIR: paths.uploads(slug),
       MINIONS_CLAUDE_HOME: homeDir,
@@ -848,6 +850,7 @@ export class SessionRegistry {
     const env: Record<string, string> = {
       HOME: homeDir,
       MINIONS_SESSION_SLUG: slug,
+      MINIONS_SLUG: slug,
       MINIONS_WORKTREE: row.worktree_path,
       MINIONS_UPLOADS_DIR: this.paths.uploads(slug),
       MINIONS_CLAUDE_HOME: homeDir,
@@ -938,6 +941,7 @@ export class SessionRegistry {
         const env: Record<string, string> = {
           HOME: homeDir,
           MINIONS_SESSION_SLUG: slug,
+          MINIONS_SLUG: slug,
           MINIONS_WORKTREE: worktreePath,
           MINIONS_UPLOADS_DIR: this.paths.uploads(slug),
           MINIONS_CLAUDE_HOME: homeDir,
