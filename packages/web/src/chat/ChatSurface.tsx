@@ -41,7 +41,7 @@ const CANCELLABLE_STATUSES: ReadonlySet<SessionStatus> = new Set([
   "waiting_input",
 ]);
 
-const MIN_WIDTH = 200;
+const MIN_WIDTH = 80;
 const MAX_WIDTH = 720;
 const DEFAULT_WIDTH = 380;
 const CHAT_PANEL = "chat";
