@@ -79,6 +79,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
       reply: async () => {},
       setDagId: () => {},
       markWaitingInput: () => {},
+      appendAttention: () => {},
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({
@@ -384,6 +385,7 @@ function makeUpstreamHarness(opts: {
       reply: async () => {},
       setDagId: () => {},
       markWaitingInput: () => {},
+      appendAttention: () => {},
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({

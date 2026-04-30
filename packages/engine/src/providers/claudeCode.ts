@@ -9,6 +9,7 @@ import type {
   ProviderSpawnOpts,
   ProviderResumeOpts,
   ProviderEvent,
+  ProviderTurnCompletedEvent,
   ParseStreamState,
 } from "./provider.js";
 import { EngineError } from "../errors.js";
@@ -135,13 +136,37 @@ function ndjsonToEvents(obj: NdjsonLine, state: ParseStreamState): { events: Pro
     case "result": {
       const subtype = obj["subtype"] as string | undefined;
       const stopReason = obj["stop_reason"] as string | undefined;
-      if (subtype === "success") {
-        events.push({ kind: "turn_completed", outcome: "success", stopReason });
-      } else if (subtype === "error_max_turns") {
-        events.push({ kind: "turn_completed", outcome: "errored", stopReason: "max_turns" });
-      } else {
-        events.push({ kind: "turn_completed", outcome: "errored", stopReason: subtype });
+
+      const rawCost = obj["total_cost_usd"];
+      const costUsd = typeof rawCost === "number" ? rawCost : undefined;
+
+      const rawUsage = obj["usage"] as Record<string, unknown> | undefined;
+      let usage: NonNullable<ProviderTurnCompletedEvent["usage"]> | undefined;
+      if (rawUsage) {
+        const inputTokens = typeof rawUsage["input_tokens"] === "number" ? (rawUsage["input_tokens"] as number) : undefined;
+        const outputTokens = typeof rawUsage["output_tokens"] === "number" ? (rawUsage["output_tokens"] as number) : undefined;
+        const cacheReadTokens = typeof rawUsage["cache_read_input_tokens"] === "number" ? (rawUsage["cache_read_input_tokens"] as number) : undefined;
+        const cacheCreationTokens = typeof rawUsage["cache_creation_input_tokens"] === "number" ? (rawUsage["cache_creation_input_tokens"] as number) : undefined;
+        if (
+          inputTokens !== undefined ||
+          outputTokens !== undefined ||
+          cacheReadTokens !== undefined ||
+          cacheCreationTokens !== undefined
+        ) {
+          usage = { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
+        }
       }
+
+      const outcome: "success" | "errored" =
+        subtype === "success" ? "success" : "errored";
+      const finalStopReason: string | undefined =
+        outcome === "errored" && subtype === "error_max_turns"
+          ? "max_turns"
+          : outcome === "errored"
+            ? subtype
+            : stopReason;
+
+      events.push({ kind: "turn_completed", outcome, stopReason: finalStopReason, usage, costUsd });
       state["turnInProgress"] = false;
       break;
     }

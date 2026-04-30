@@ -14,6 +14,7 @@ import type {
   Screenshot,
   WorkspaceDiff,
   PermissionTier,
+  AttentionFlag,
 } from "@minions/shared";
 import type { EventBus } from "../bus/eventBus.js";
 import type { Logger } from "../logger.js";
@@ -147,7 +148,7 @@ export class SessionRegistry {
     this.paths = workspacePaths(workspaceDir);
 
     this.repo = new SessionRepo(db);
-    this.collector = new TranscriptCollector({ db, bus, log });
+    this.collector = new TranscriptCollector({ db, bus, log, ctx: deps.ctx });
     this.replyQueue = new ReplyQueue(db);
     this.screenshots = new Screenshots({
       db,
@@ -642,14 +643,34 @@ export class SessionRegistry {
     this.emitUpdated(this.buildSession(updatedRow));
   }
 
+  appendAttention(slug: string, flag: AttentionFlag): void {
+    const session = this.get(slug);
+    if (!session) {
+      throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+    const next = [...session.attention, flag];
+    this.repo.setAttention(slug, next);
+    const updatedRow = this.getSessionRow(slug)!;
+    this.emitUpdated(this.buildSession(updatedRow));
+  }
+
+  private hasBudgetExceeded(slug: string): boolean {
+    const session = this.get(slug);
+    if (!session) return false;
+    return session.attention.some((a) => a.kind === "budget_exceeded");
+  }
+
   async kickReplyQueue(slug: string): Promise<boolean> {
     if (this.handles.has(slug)) return false;
     const row = this.getSessionRow(slug);
     if (!row) return false;
+    if (this.hasBudgetExceeded(slug)) return false;
     return this.continueWithQueuedReplies(slug, row.provider);
   }
 
   private async continueWithQueuedReplies(slug: string, providerName: string): Promise<boolean> {
+    if (this.hasBudgetExceeded(slug)) return false;
+
     const claim = this.replyQueue.claim(slug);
     if (!claim) return false;
 

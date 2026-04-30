@@ -161,6 +161,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
       reply: async () => {},
       setDagId: () => {},
       markWaitingInput: () => {},
+      appendAttention: () => {},
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
       diff: async (slug) => ({ sessionSlug: slug, patch: "", stats: [], truncated: false, byteSize: 0, generatedAt: new Date().toISOString() }),
