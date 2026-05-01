@@ -250,7 +250,7 @@ describe("DagTerminalHandler", () => {
 
     assert.equal(landCalls.length, 1, "openForReview called exactly once");
     assert.equal(landCalls[0]?.slug, "sess-1");
-    assert.equal(getNode("n1")?.status, "landed");
+    assert.equal(getNode("n1")?.status, "pr-open");
   });
 
   test("no configured quality gate (empty configs → passed) lands successfully", async () => {
@@ -270,10 +270,10 @@ describe("DagTerminalHandler", () => {
     await handler.handle(makeSession("sess-1"));
 
     assert.equal(landCalls.length, 1, "openForReview called when no quality gate is configured");
-    assert.equal(getNode("n1")?.status, "landed");
+    assert.equal(getNode("n1")?.status, "pr-open");
   });
 
-  test("transitioning a node to landed clears stale failedReason from a prior attempt", async () => {
+  test("transitioning a node to pr-open clears stale failedReason from a prior attempt", async () => {
     const node = makeNode("n1", "running", "sess-1");
     node.failedReason = "previous attempt: quality gate failed";
     const dag = makeDag("dag-1", [node], "root-1");
@@ -290,22 +290,22 @@ describe("DagTerminalHandler", () => {
     const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
     await handler.handle(makeSession("sess-1"));
 
-    assert.equal(getNode("n1")?.status, "landed");
+    assert.equal(getNode("n1")?.status, "pr-open");
     assert.equal(
       getNode("n1")?.failedReason ?? null,
       null,
-      "failedReason must be cleared when node lands successfully",
+      "failedReason must be cleared when node transitions to pr-open successfully",
     );
-    const landedPatch = patches.find((p) => p.patch.status === "landed");
-    assert.ok(landedPatch, "expected a patch transitioning the node to landed");
+    const landedPatch = patches.find((p) => p.patch.status === "pr-open");
+    assert.ok(landedPatch, "expected a patch transitioning the node to pr-open");
     assert.equal(
       landedPatch.patch.failedReason,
       null,
-      "the landed patch must explicitly set failedReason to null",
+      "the pr-open patch must explicitly set failedReason to null",
     );
   });
 
-  test("dag-task with no commits ahead transitions to landed via openForReview returning null", async () => {
+  test("dag-task with no commits ahead transitions to pr-open via openForReview returning null", async () => {
     const node = makeNode("n1", "running", "sess-1");
     const dag = makeDag("dag-1", [node], "root-1");
     const { repo, getNode } = makeMockRepo(dag);
@@ -323,7 +323,7 @@ describe("DagTerminalHandler", () => {
 
     assert.equal(landCalls.length, 1, "openForReview called once");
     const landed = getNode("n1");
-    assert.equal(landed?.status, "landed", "node lands when openForReview returns null");
+    assert.equal(landed?.status, "pr-open", "node enters pr-open when openForReview returns null");
     assert.equal(landed?.failedReason ?? null, null);
   });
 
@@ -458,7 +458,7 @@ describe("DagTerminalHandler", () => {
     const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
     await handler.handle(taskSession);
 
-    assert.equal(getNode("n1")?.status, "landed", "node lands when CI already concluded success");
+    assert.equal(getNode("n1")?.status, "pr-open", "node enters pr-open when CI already concluded success");
     assert.equal(metadataPatches.length, 0, "no self-heal metadata wiring on success re-entry");
     assert.equal(appendedAttention.length, 0, "no ci_pending attention on success re-entry");
     assert.equal(waitingInputCalls.length, 0, "no waiting_input transition on success re-entry");
@@ -532,7 +532,7 @@ describe("DagTerminalHandler", () => {
     const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
     await handler.handle(taskSession);
 
-    assert.equal(getNode("n1")?.status, "landed", "node lands when self-heal disabled");
+    assert.equal(getNode("n1")?.status, "pr-open", "node enters pr-open when self-heal disabled");
     assert.equal(metadataPatches.length, 0, "no self-heal metadata when maxAttempts=0");
     assert.equal(appendedAttention.length, 0, "no ci_pending attention when maxAttempts=0");
     assert.equal(waitingInputCalls.length, 0, "no waiting_input transition when maxAttempts=0");

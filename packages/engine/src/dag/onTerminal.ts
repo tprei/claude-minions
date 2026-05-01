@@ -85,11 +85,11 @@ export class DagTerminalHandler {
 
       if (!pr || concluded === "success" || maxAttempts === 0) {
         this.repo.updateNode(node.id, {
-          status: "landed",
+          status: "pr-open",
           completedAt: new Date().toISOString(),
           failedReason: null,
         });
-        this.log.info("dag node landed", { dagId: dag.id, nodeId: node.id, sessionSlug: session.slug });
+        this.log.info("dag node pr-open", { dagId: dag.id, nodeId: node.id, sessionSlug: session.slug });
         await this.scheduler.tick(dag.id);
         await this.maybeReleaseShipParent(dag.id);
         return;

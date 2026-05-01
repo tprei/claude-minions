@@ -16,6 +16,8 @@ const TERMINAL_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionSta
 
 export const SUCCESS_NODE_STATUSES: ReadonlySet<DAGNode["status"]> = new Set<DAGNode["status"]>([
   "done",
+  "pr-open",
+  "merged",
   "landed",
   "skipped",
 ]);

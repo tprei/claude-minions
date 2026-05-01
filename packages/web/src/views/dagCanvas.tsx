@@ -53,6 +53,8 @@ const STATUS_COLOR: Record<DAGNodeStatus, string> = {
   "ci-pending": "border-amber-500 bg-amber-950 text-amber-300",
   "ci-failed": "border-orange-500 bg-orange-950 text-orange-300",
   landed: "border-purple-600 bg-purple-950 text-purple-300",
+  "pr-open": "border-indigo-500 bg-indigo-950 text-indigo-300",
+  merged: "border-purple-700 bg-purple-950 text-purple-200",
   rebasing: "border-yellow-500 bg-yellow-950 text-yellow-300",
   "rebase-conflict": "border-red-700 bg-red-950 text-red-400",
   cancelled: "border-zinc-600 bg-zinc-900 text-zinc-400",

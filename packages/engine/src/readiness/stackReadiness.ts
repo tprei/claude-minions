@@ -20,8 +20,16 @@ interface NodeAssessment {
 }
 
 function assessNode(node: DAGNode, deps: StackReadinessDeps): NodeAssessment {
+  if (node.status === "merged" || node.status === "landed") {
+    return { node, ok: true, detail: "merged" };
+  }
+
+  if (node.status === "pr-open") {
+    return { node, ok: false, detail: "PR open but not merged" };
+  }
+
   if (!node.sessionSlug) {
-    return { node, ok: false, detail: "no child session for node" };
+    return { node, ok: false, detail: `node is ${node.status}` };
   }
 
   const child = deps.getSession(node.sessionSlug);
@@ -31,9 +39,6 @@ function assessNode(node: DAGNode, deps: StackReadinessDeps): NodeAssessment {
 
   if (!child.pr) {
     return { node, ok: false, detail: "child has no PR" };
-  }
-  if (child.pr.state !== "open") {
-    return { node, ok: false, detail: `PR is ${child.pr.state}` };
   }
 
   const attentionKinds = new Set(child.attention.map((a) => a.kind));
@@ -46,16 +51,13 @@ function assessNode(node: DAGNode, deps: StackReadinessDeps): NodeAssessment {
   if (attentionKinds.has("ci_pending")) {
     return { node, ok: false, detail: "CI pending on child" };
   }
-  if (!attentionKinds.has("ci_passed")) {
-    return { node, ok: false, detail: "no CI signal on child" };
-  }
 
   const quality = deps.getQualityReport(child.slug);
   if (quality && quality.status !== "passed") {
     return { node, ok: false, detail: `quality ${quality.status}` };
   }
 
-  return { node, ok: true, detail: "ready" };
+  return { node, ok: false, detail: `node is ${node.status} (waiting for merge)` };
 }
 
 export function computeStackReadiness(slug: string, deps: StackReadinessDeps): MergeReadiness {

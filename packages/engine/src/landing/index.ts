@@ -220,6 +220,15 @@ export class LandingManager {
     this.db_setPrMerged(slug);
     this.log.info("session landed", { slug, strategy, baseBranch, headBranch });
 
+    try {
+      await this.ctx.dags.onSessionPrMerged(slug);
+    } catch (err) {
+      this.log.warn("dag onSessionPrMerged failed", {
+        slug,
+        err: (err as Error).message,
+      });
+    }
+
     await this.restack.restackChildren(slug);
   }
 
