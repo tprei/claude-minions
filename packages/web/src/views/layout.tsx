@@ -45,9 +45,10 @@ interface LayoutProps {
   main: ReactNode;
   chatSurface?: ReactNode;
   isSessionOpen?: boolean;
+  banner?: ReactNode;
 }
 
-export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = false }: LayoutProps): ReactElement {
+export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = false, banner }: LayoutProps): ReactElement {
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -73,6 +74,7 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
 
   return (
     <div className="h-full flex flex-col bg-bg overflow-hidden">
+      {banner && <div className="flex-shrink-0">{banner}</div>}
       <div className="flex-shrink-0 h-12 border-b border-border flex items-center relative z-50 bg-bg">
         <button
           onClick={() => setSidebarOpen(v => !v)}

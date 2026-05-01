@@ -17,7 +17,7 @@ export function AdmissionUnlimitedBanner({ onOpenRuntime }: Props): ReactElement
     <div
       role="alert"
       data-testid="admission-unlimited-banner"
-      className="fixed top-0 inset-x-0 z-[60] flex items-center justify-center gap-3 px-4 py-1.5 bg-red-900/90 text-red-100 text-xs backdrop-blur border-b border-red-700"
+      className="w-full flex items-center justify-center gap-3 px-4 py-1.5 bg-red-900/90 text-red-100 text-xs backdrop-blur border-b border-red-700"
     >
       <span aria-hidden="true">⚠</span>
       <span>
