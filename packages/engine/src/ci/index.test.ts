@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import type { AttentionFlag } from "@minions/shared";
 import {
+  applyCiPassedAttention,
   computeCiAttentionUpdate,
   rollupToChecks,
   summarizeChecks,
@@ -302,6 +303,49 @@ describe("computeCiAttentionUpdate", () => {
       result.attention.map((a) => a.kind),
       ["needs_input", "rebase_conflict"],
     );
+  });
+});
+
+describe("applyCiPassedAttention", () => {
+  const RAISED = "2026-04-30T12:00:00.000Z";
+  const PRIOR = "2026-04-30T11:00:00.000Z";
+
+  test("terminal SUCCESS adds ci_passed and clears ci_pending and ci_failed", () => {
+    const current: AttentionFlag[] = [
+      { kind: "ci_pending", message: "running", raisedAt: PRIOR },
+      { kind: "ci_failed", message: "stale", raisedAt: PRIOR },
+      { kind: "needs_input", message: "n", raisedAt: PRIOR },
+    ];
+    const next = applyCiPassedAttention(current, RAISED);
+    assert.ok(next, "expected an updated attention array");
+    assert.equal(next.length, 2);
+    assert.deepEqual(
+      next.map((a) => a.kind),
+      ["needs_input", "ci_passed"],
+    );
+    const passed = next.find((a) => a.kind === "ci_passed");
+    assert.equal(passed?.message, "All checks passed");
+    assert.equal(passed?.raisedAt, RAISED);
+  });
+
+  test("idempotent when ci_passed is already present and no stale flags exist", () => {
+    const current: AttentionFlag[] = [
+      { kind: "ci_passed", message: "All checks passed", raisedAt: PRIOR },
+      { kind: "needs_input", message: "n", raisedAt: PRIOR },
+    ];
+    assert.equal(applyCiPassedAttention(current, RAISED), null);
+  });
+
+  test("strips stale ci_pending/ci_failed even when ci_passed is already present", () => {
+    const current: AttentionFlag[] = [
+      { kind: "ci_pending", message: "p", raisedAt: PRIOR },
+      { kind: "ci_passed", message: "All checks passed", raisedAt: PRIOR },
+    ];
+    const next = applyCiPassedAttention(current, RAISED);
+    assert.ok(next);
+    assert.equal(next.length, 1);
+    assert.equal(next[0]?.kind, "ci_passed");
+    assert.equal(next[0]?.raisedAt, PRIOR, "preserves the original raisedAt when ci_passed already exists");
   });
 });
 
