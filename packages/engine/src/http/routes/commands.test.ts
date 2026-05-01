@@ -100,6 +100,81 @@ describe("POST /api/commands resume-session", () => {
   });
 });
 
+describe("POST /api/commands open-for-review", () => {
+  let app: FastifyInstance;
+  let baseUrl: string;
+  let openForReviewCalls: string[];
+
+  before(async () => {
+    openForReviewCalls = [];
+    const ctx = {
+      landing: {
+        openForReview: async (slug: string) => {
+          openForReviewCalls.push(slug);
+          return null;
+        },
+      },
+    } as unknown as EngineContext;
+
+    app = Fastify({ logger: false });
+    app.setErrorHandler(async (err, _req, reply) => {
+      if (isEngineError(err)) {
+        await reply.status(err.status).send(err.toJSON());
+        return;
+      }
+      const e = err as Error;
+      await reply.status(500).send({ error: "internal", message: e.message });
+    });
+    registerCommandRoutes(app, ctx);
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Fastify did not return a network address");
+    }
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  after(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    openForReviewCalls.length = 0;
+  });
+
+  async function postCommand(body: unknown): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let parsed: unknown = text;
+    if (text.length > 0) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // keep raw text
+      }
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  it("forwards a valid open-for-review to ctx.landing.openForReview", async () => {
+    const res = await postCommand({ kind: "open-for-review", sessionSlug: "stuck-session" });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, { ok: true });
+    assert.deepEqual(openForReviewCalls, ["stuck-session"]);
+  });
+
+  it("rejects open-for-review without sessionSlug with 400", async () => {
+    const res = await postCommand({ kind: "open-for-review" });
+    assert.equal(res.status, 400);
+    assert.deepEqual((res.body as { error?: string }).error, "bad_request");
+    assert.equal(openForReviewCalls.length, 0);
+  });
+});
+
 describe("POST /api/commands update-session-budget", () => {
   let app: FastifyInstance;
   let baseUrl: string;
