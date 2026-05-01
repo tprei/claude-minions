@@ -166,7 +166,7 @@ export function Sidebar({
           >
             <span>{f.label}</span>
             {f.value === "attention" && attentionCount > 0 && (
-              <span className="pill text-[10px] bg-amber-900/40 text-amber-300">{attentionCount}</span>
+              <span className="pill text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{attentionCount}</span>
             )}
           </button>
         ))}
@@ -222,7 +222,7 @@ export function Sidebar({
             <span className="flex-1 text-left">Memory</span>
             {pendingCount > 0 && (
               <span
-                className="pill bg-yellow-900/40 text-yellow-300 text-[10px]"
+                className="pill bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 text-[10px]"
                 title={`${pendingCount} pending memory ${pendingCount === 1 ? "review" : "reviews"}`}
               >
                 {pendingCount}
@@ -236,7 +236,7 @@ export function Sidebar({
             <span className="flex-1 text-left">Runtime</span>
             {admissionUnlimited && (
               <span
-                className="pill bg-red-900/60 text-red-200 text-[10px] border border-red-700/60"
+                className="pill bg-red-100 text-red-800 border border-red-300 dark:bg-red-900/60 dark:text-red-200 text-[10px] dark:border-red-700/60"
                 title="Admission caps disabled — engine accepts unlimited concurrent sessions"
                 data-testid="admission-unlimited-pill"
               >
