@@ -4,9 +4,9 @@ import { MarkdownView } from "../../markdown/MarkdownView.js";
 import { cx } from "../../util/classnames.js";
 
 const LEVEL_STYLES = {
-  info: "bg-blue-950 border-blue-700 text-blue-200",
-  warn: "bg-amber-950 border-amber-700 text-amber-200",
-  error: "bg-red-950 border-red-700 text-red-200",
+  info: "bg-tone-info-bg border-tone-info-border text-tone-info-fg",
+  warn: "bg-tone-warn-bg border-tone-warn-border text-tone-warn-fg",
+  error: "bg-tone-err-bg border-tone-err-border text-tone-err-fg",
 };
 
 const LEVEL_ICONS = {
