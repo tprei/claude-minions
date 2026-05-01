@@ -122,6 +122,17 @@ export function __setSpawnTimeoutMsForTests(ms: number | null): void {
   spawnTimeoutMs = ms ?? DEFAULT_SPAWN_TIMEOUT_MS;
 }
 
+async function tryGetGithubToken(ctx: EngineContext): Promise<string | null> {
+  if (!ctx.github || typeof ctx.github.enabled !== "function" || !ctx.github.enabled()) {
+    return null;
+  }
+  try {
+    return await ctx.github.getToken();
+  } catch {
+    return null;
+  }
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
@@ -778,6 +789,11 @@ export class SessionRegistry {
     if (process.env["ANTHROPIC_API_KEY"]) {
       env["ANTHROPIC_API_KEY"] = process.env["ANTHROPIC_API_KEY"];
     }
+    const ghToken = await tryGetGithubToken(this.deps.ctx);
+    if (ghToken) {
+      env["GH_TOKEN"] = ghToken;
+      env["GITHUB_TOKEN"] = ghToken;
+    }
 
     const mcpConfigPath = await this.writeMcpConfig(slug, worktreePath);
     log.info("setupAndSpawn:writeMcpConfig done", { slug });
@@ -1116,6 +1132,11 @@ export class SessionRegistry {
         };
         if (process.env["ANTHROPIC_API_KEY"]) {
           env["ANTHROPIC_API_KEY"] = process.env["ANTHROPIC_API_KEY"];
+        }
+        const ghToken = await tryGetGithubToken(this.deps.ctx);
+        if (ghToken) {
+          env["GH_TOKEN"] = ghToken;
+          env["GITHUB_TOKEN"] = ghToken;
         }
 
         const mcpConfigPath = worktreePath
