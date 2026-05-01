@@ -238,8 +238,15 @@ export class ShipCoordinator {
       const landed = dag.nodes.filter(
         (n) => n.status === "landed" || n.status === "pr-open" || n.status === "merged",
       );
+      const failed = dag.nodes.filter(
+        (n) =>
+          n.status === "failed" ||
+          n.status === "ci-failed" ||
+          n.status === "rebase-conflict" ||
+          n.status === "cancelled",
+      );
       const lines: string[] = [
-        `Verify summary for DAG "${dag.title}" (${landed.length}/${dag.nodes.length} nodes landed):`,
+        `Verify summary for DAG "${dag.title}" (${landed.length}/${dag.nodes.length} nodes landed${failed.length > 0 ? `, ${failed.length} failed/cancelled` : ""}):`,
       ];
       if (landed.length === 0) {
         lines.push("- no landed nodes yet");
@@ -266,6 +273,17 @@ export class ShipCoordinator {
         }
         data["prs"] = prs;
         data["readiness"] = readinessRows;
+      }
+      if (failed.length > 0) {
+        lines.push("");
+        lines.push("Failed/cancelled nodes:");
+        const failures: { node: string; status: string; reason: string | null }[] = [];
+        for (const node of failed) {
+          const reason = node.failedReason ?? "(no reason recorded)";
+          lines.push(`- ${node.title} [${node.status}]: ${reason}`);
+          failures.push({ node: node.id, status: node.status, reason: node.failedReason ?? null });
+        }
+        data["failures"] = failures;
       }
       text = lines.join("\n");
     }
@@ -380,8 +398,21 @@ export class ShipCoordinator {
     const dag = this.ctx.dags.list().find((d) => d.rootSessionSlug === slug);
     if (!dag) return false;
     if (dag.nodes.length === 0) return false;
+    // A node is "done with" when it has either landed (success path) or
+    // hit a permanent failure. Failed nodes cascade-cancel their downstream
+    // pending dependents via DagScheduler.cascadeUpstreamFailures, so a DAG
+    // with a real failure converges to allTerminal+anyFailed within one tick.
+    // Letting the ship advance lets the verify stage surface "what landed
+    // vs what didn't" instead of the ship sitting in stage=dag forever.
     return dag.nodes.every(
-      (n) => n.status === "landed" || n.status === "pr-open" || n.status === "merged",
+      (n) =>
+        n.status === "landed" ||
+        n.status === "pr-open" ||
+        n.status === "merged" ||
+        n.status === "failed" ||
+        n.status === "ci-failed" ||
+        n.status === "rebase-conflict" ||
+        n.status === "cancelled",
     );
   }
 
