@@ -389,6 +389,26 @@ CREATE INDEX automation_jobs_lease ON automation_jobs(lease_expires_at) WHERE le
 `,
 };
 
+const m009_sidecar_rule_state: Migration = {
+  name: "009_sidecar_rule_state",
+  sql: `
+CREATE TABLE sidecar_rule_state (
+  rule_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  last_action TEXT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  cooldown_expires_at TEXT NULL,
+  last_input_hash TEXT NULL,
+  last_observed_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (rule_id, target_kind, target_id)
+);
+
+CREATE INDEX sidecar_rule_state_cooldown ON sidecar_rule_state(cooldown_expires_at) WHERE cooldown_expires_at IS NOT NULL;
+`,
+};
+
 export const migrations: Migration[] = [
   m001_initial,
   m002_reply_queue_state,
@@ -398,4 +418,5 @@ export const migrations: Migration[] = [
   m006_dag_nodes_ci_summary,
   m007_engine_lifecycle_events,
   m008_automation_jobs,
+  m009_sidecar_rule_state,
 ];
