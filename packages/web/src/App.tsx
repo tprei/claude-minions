@@ -133,6 +133,7 @@ export function App(): ReactElement {
   return (
     <>
       <AppLayout
+        banner={<AdmissionUnlimitedBanner onOpenRuntime={() => setRuntimeOpen(true)} />}
         header={<Header api={api} installPrompt={<InstallButton />} resourceIndicator={activeConn ? <ResourceIndicator connId={activeConn.id} /> : undefined} />}
         sidebar={({ closeMobile }) => (
           <Sidebar
@@ -219,8 +220,6 @@ export function App(): ReactElement {
         onClose={() => setPaletteOpen(false)}
         actions={paletteActions}
       />
-
-      <AdmissionUnlimitedBanner onOpenRuntime={() => setRuntimeOpen(true)} />
 
       <OfflineBanner />
 
