@@ -240,7 +240,10 @@ export function RecoveryFooter({ session, onAction }: Props) {
             label="Retry"
             primary
             title="Send a continuation prompt to retry the last action"
-            onClick={() => onAction({ kind: "reply", sessionSlug: session.slug, text: "Please retry the last action." })}
+            onClick={async () => {
+              await onAction({ kind: "reply", sessionSlug: session.slug, text: "Please retry the last action." });
+              await onAction({ kind: "resume-session", sessionSlug: session.slug });
+            }}
           />
         )}
         {canResume && (

@@ -322,14 +322,16 @@ async function dispatchCommand(cmd: Command, ctx: EngineContext): Promise<Comman
       ctx.audit.record("operator", `force:${cmd.action}`, { kind: "session", id: cmd.sessionSlug });
       return { ok: true };
 
-    case "retry":
+    case "retry": {
       await ctx.sessions.reply(
         cmd.sessionSlug,
         cmd.fromTurn !== undefined
           ? `Please retry from turn ${cmd.fromTurn}.`
           : "Please retry."
       );
-      return { ok: true };
+      const kicked = await ctx.sessions.kickReplyQueue(cmd.sessionSlug);
+      return { ok: true, data: { kicked } };
+    }
 
     case "judge":
       await ctx.variants.judge(cmd.variantParentSlug, cmd.rubric);

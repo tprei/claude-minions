@@ -112,6 +112,32 @@ describe("RecoveryFooter budget_exceeded action", () => {
     expect(findButtonByText("Resume with new cap")).toBeNull();
   });
 
+  it("Retry on a failed session dispatches both reply and resume-session so the queue is kicked", async () => {
+    const session = makeSession({ status: "failed" });
+    const calls: Command[] = [];
+    const onAction = vi.fn(async (cmd: Command) => {
+      calls.push(cmd);
+    });
+
+    act(() => {
+      root.render(createElement(RecoveryFooter, { session, onAction }));
+    });
+    await flush();
+
+    const retry = findButtonByText("Retry");
+    expect(retry).not.toBeNull();
+    act(() => {
+      retry!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    await flush();
+
+    expect(calls).toEqual([
+      { kind: "reply", sessionSlug: "sess-1", text: "Please retry the last action." },
+      { kind: "resume-session", sessionSlug: "sess-1" },
+    ]);
+  });
+
   it("confirming InputDialog posts update-session-budget command", async () => {
     const session = makeSession({
       status: "running",

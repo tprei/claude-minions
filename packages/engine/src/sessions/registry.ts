@@ -985,10 +985,10 @@ export class SessionRegistry {
       row.ship_stage as import("@minions/shared").ShipStage | null,
     );
 
+    const mcpConfigPath = await this.writeMcpConfig(slug, row.worktree_path);
+
     let handle: ProviderHandle;
     try {
-      const mcpConfigPath = await this.writeMcpConfig(slug, row.worktree_path);
-
       handle = await provider.resume({
         sessionSlug: slug,
         worktree: row.worktree_path,
@@ -999,8 +999,55 @@ export class SessionRegistry {
         permissionTier,
       });
     } catch (err) {
-      this.replyQueue.release(claim.claimToken);
-      throw err;
+      const errString = String(err);
+      const isStaleMarker = /No deferred tool marker found/i.test(errString);
+      // Mid-deploy stale-marker recovery: the Claude deferred-tool runtime
+      // can't find its marker file (rotated by the engine restart), but the
+      // upstream conversation still exists. Spawn a fresh process with
+      // `--resume <externalId>` so Claude rehydrates context but bypasses
+      // the marker check, and ride the queued reply in via additionalPrompt.
+      if (isStaleMarker && providerState?.external_id) {
+        this.deps.log.warn(
+          "resume hit stale deferred-tool marker; falling back to spawn --resume",
+          { slug, err: errString },
+        );
+        try {
+          const preamble = this.deps.ctx.memory.renderPreamble(row.repo_id ?? undefined);
+          handle = await provider.spawn({
+            sessionSlug: slug,
+            worktree: row.worktree_path,
+            prompt: row.prompt,
+            modelHint: row.model_hint ?? undefined,
+            env,
+            preamble,
+            mcpConfigPath,
+            additionalPrompt,
+            permissionTier,
+            externalId: providerState.external_id,
+          });
+        } catch (spawnErr) {
+          this.replyQueue.release(claim.claimToken);
+          throw spawnErr;
+        }
+        this.deps.ctx.audit.record(
+          "system",
+          "session.retry.spawn-fallback",
+          { kind: "session", id: slug },
+          { provider: providerName, externalId: providerState.external_id },
+        );
+        // Clear the stale-marker attention flag so the recovery footer
+        // reflects the new run rather than the prior failure.
+        const session = this.buildSession(row);
+        const remaining = session.attention.filter(
+          (a) => !(a.kind === "manual_intervention" && /stale marker/i.test(a.message)),
+        );
+        if (remaining.length !== session.attention.length) {
+          this.repo.setAttention(slug, remaining);
+        }
+      } else {
+        this.replyQueue.release(claim.claimToken);
+        throw err;
+      }
     }
 
     this.replyQueue.confirm(claim.claimToken);

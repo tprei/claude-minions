@@ -378,6 +378,10 @@ export function buildSpawnArgs(opts: ProviderSpawnOpts): string[] {
     args.push("--mcp-config", opts.mcpConfigPath);
   }
 
+  if (opts.externalId) {
+    args.push("--resume", opts.externalId);
+  }
+
   let fullPrompt = opts.prompt;
   if (opts.preamble) {
     fullPrompt = `${opts.preamble}\n\n---\n\n${opts.prompt}`;
