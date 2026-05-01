@@ -1372,7 +1372,7 @@ export class SessionRegistry {
     // while a concurrent spawn is mid-flight and about to insert FK-bearing
     // child rows (provider_state, transcript_events).
     return this.slugMutex.run(slug, async () => {
-      const { db, bus } = this.deps;
+      const { db, bus, log, workspaceDir } = this.deps;
       const row = this.getSessionRow(slug);
       if (!row) {
         throw new EngineError("not_found", `Session ${slug} not found`);
@@ -1393,6 +1393,37 @@ export class SessionRegistry {
         db.prepare(`DELETE FROM sessions WHERE slug = ?`).run(s);
       });
       tx(slug);
+
+      if (row.repo_id && row.worktree_path) {
+        try {
+          await removeWorktree(this.paths.repos, workspaceDir, row.repo_id, slug, log);
+        } catch (err) {
+          log.warn("delete: removeWorktree failed", { slug, err: String(err) });
+        }
+      }
+
+      const sideTargets = [
+        path.join(workspaceDir, "uploads", slug),
+        path.join(workspaceDir, "reply-queue", `${slug}.jsonl`),
+        path.join(workspaceDir, "mcp-configs", `${slug}.json`),
+      ];
+      for (const target of sideTargets) {
+        try {
+          await fs.rm(target, { recursive: true, force: true });
+        } catch (err) {
+          const e = err as NodeJS.ErrnoException;
+          if (e.code !== "ENOENT") {
+            log.warn("delete: side-effect rm failed", { slug, target, err: String(err) });
+          }
+        }
+      }
+
+      this.deps.ctx.audit.record(
+        "operator",
+        "session.delete",
+        { kind: "session", id: slug },
+        {},
+      );
 
       bus.emit({ kind: "session_deleted", slug });
     });
