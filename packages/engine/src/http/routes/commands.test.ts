@@ -372,3 +372,78 @@ describe("POST /api/commands update-session-budget", () => {
     assert.equal(kickCalls.length, 0);
   });
 });
+
+describe("POST /api/commands retry", () => {
+  let app: FastifyInstance;
+  let baseUrl: string;
+  let replyCalls: Array<{ slug: string; text: string }>;
+  let kickCalls: string[];
+
+  before(async () => {
+    replyCalls = [];
+    kickCalls = [];
+    const ctx = {
+      sessions: {
+        reply: async (slug: string, text: string) => {
+          replyCalls.push({ slug, text });
+        },
+        kickReplyQueue: async (slug: string) => {
+          kickCalls.push(slug);
+          return true;
+        },
+      },
+    } as unknown as EngineContext;
+
+    app = Fastify({ logger: false });
+    app.setErrorHandler(async (err, _req, reply) => {
+      if (isEngineError(err)) {
+        await reply.status(err.status).send(err.toJSON());
+        return;
+      }
+      const e = err as Error;
+      await reply.status(500).send({ error: "internal", message: e.message });
+    });
+    registerCommandRoutes(app, ctx);
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Fastify did not return a network address");
+    }
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  after(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    replyCalls.length = 0;
+    kickCalls.length = 0;
+  });
+
+  async function postCommand(body: unknown): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let parsed: unknown = text;
+    if (text.length > 0) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // keep raw text
+      }
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  it("retry queues a reply AND kicks the reply queue so the session actually wakes", async () => {
+    const res = await postCommand({ kind: "retry", sessionSlug: "sess-r" });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, { ok: true, data: { kicked: true } });
+    assert.deepEqual(replyCalls, [{ slug: "sess-r", text: "Please retry." }]);
+    assert.deepEqual(kickCalls, ["sess-r"]);
+  });
+});

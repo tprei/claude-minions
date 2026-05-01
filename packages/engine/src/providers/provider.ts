@@ -13,6 +13,10 @@ export interface ProviderSpawnOpts {
   permissionTier?: PermissionTier;
   worktreeGitDir?: string;
   worktreeGitCommonDir?: string;
+  // When set, the spawn rehydrates an existing Claude conversation by
+  // appending --resume <externalId>. Used by the retry fallback path when
+  // the deferred-tool marker is gone after an engine restart.
+  externalId?: string;
 }
 
 export interface ProviderResumeOpts {
