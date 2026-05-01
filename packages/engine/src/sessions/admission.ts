@@ -1,4 +1,8 @@
-import type { RuntimeOverrides, SessionMode } from "@minions/shared";
+import type {
+  ResourceSnapshot,
+  RuntimeOverrides,
+  SessionMode,
+} from "@minions/shared";
 
 export type SessionClass =
   | "interactive"
@@ -23,6 +27,13 @@ export interface AdmissionLimits {
   backgroundCap: number;
 }
 
+export interface ResourceFloors {
+  diskFloorBytes: number;
+  memoryFloorBytes: number;
+  eventLoopLagCeilingMs: number;
+  maxClaudeProcesses: number;
+}
+
 export type AdmissionDecision =
   | { admit: true }
   | { admit: false; reason: string };
@@ -33,6 +44,13 @@ const DEFAULTS: AdmissionLimits = {
   loopCap: 4,
   dagCap: 4,
   backgroundCap: 2,
+};
+
+const RESOURCE_FLOOR_DEFAULTS: ResourceFloors = {
+  diskFloorBytes: 5_000_000_000,
+  memoryFloorBytes: 1_000_000_000,
+  eventLoopLagCeilingMs: 250,
+  maxClaudeProcesses: 12,
 };
 
 export function classifyMode(mode: SessionMode): SessionClass {
@@ -78,11 +96,79 @@ export function isAdmissionUnlimited(runtime: RuntimeOverrides): boolean {
   return runtime["admissionUnlimited"] === true;
 }
 
+export function resolveResourceFloors(runtime: RuntimeOverrides): ResourceFloors {
+  return {
+    diskFloorBytes: readNumber(
+      runtime,
+      "admissionDiskFloorBytes",
+      RESOURCE_FLOOR_DEFAULTS.diskFloorBytes,
+    ),
+    memoryFloorBytes: readNumber(
+      runtime,
+      "admissionMemoryFloorBytes",
+      RESOURCE_FLOOR_DEFAULTS.memoryFloorBytes,
+    ),
+    eventLoopLagCeilingMs: readNumber(
+      runtime,
+      "admissionEventLoopLagCeilingMs",
+      RESOURCE_FLOOR_DEFAULTS.eventLoopLagCeilingMs,
+    ),
+    maxClaudeProcesses: readNumber(
+      runtime,
+      "admissionMaxClaudeProcesses",
+      RESOURCE_FLOOR_DEFAULTS.maxClaudeProcesses,
+    ),
+  };
+}
+
+export function checkResourceFloor(
+  runtime: RuntimeOverrides,
+  sample: ResourceSnapshot | null,
+): AdmissionDecision {
+  if (!sample) return { admit: true };
+  const floors = resolveResourceFloors(runtime);
+
+  const freeDisk = Math.max(0, sample.disk.totalBytes - sample.disk.usedBytes);
+  if (sample.disk.totalBytes > 0 && freeDisk < floors.diskFloorBytes) {
+    return {
+      admit: false,
+      reason: `resource:disk free ${freeDisk} below floor ${floors.diskFloorBytes}`,
+    };
+  }
+
+  const freeMemory = Math.max(0, sample.memory.limitBytes - sample.memory.usedBytes);
+  if (sample.memory.limitBytes > 0 && freeMemory < floors.memoryFloorBytes) {
+    return {
+      admit: false,
+      reason: `resource:memory free ${freeMemory} below floor ${floors.memoryFloorBytes}`,
+    };
+  }
+
+  if (sample.eventLoop.lagMs > floors.eventLoopLagCeilingMs) {
+    return {
+      admit: false,
+      reason: `resource:lag ${sample.eventLoop.lagMs.toFixed(1)}ms above ceiling ${floors.eventLoopLagCeilingMs}ms`,
+    };
+  }
+
+  if (sample.sessions.running > floors.maxClaudeProcesses) {
+    return {
+      admit: false,
+      reason: `resource:processes running ${sample.sessions.running} above max ${floors.maxClaudeProcesses}`,
+    };
+  }
+
+  return { admit: true };
+}
+
 export function checkAdmission(
   cls: SessionClass,
   runningByClass: RunningByClass,
   runtime: RuntimeOverrides,
+  sample: ResourceSnapshot | null = null,
 ): AdmissionDecision {
+  const resourceDecision = checkResourceFloor(runtime, sample);
+  if (!resourceDecision.admit) return resourceDecision;
   if (isAdmissionUnlimited(runtime)) {
     return { admit: true };
   }

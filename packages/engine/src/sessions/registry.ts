@@ -377,7 +377,12 @@ export class SessionRegistry {
 
     const cls = classifyMode(mode);
     const runningByClass = this.countRunningByClass();
-    const decision = checkAdmission(cls, runningByClass, ctx.runtime.effective());
+    const decision = checkAdmission(
+      cls,
+      runningByClass,
+      ctx.runtime.effective(),
+      ctx.resource.latest(),
+    );
     if (!decision.admit) {
       ctx.audit.record(
         "system",
