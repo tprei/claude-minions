@@ -11,6 +11,9 @@ import type { Session } from "@minions/shared";
 import type { Connection } from "../connections/store.js";
 import { cx } from "../util/classnames.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
+import { Sheet } from "../components/Sheet.js";
+import { useMediaQuery } from "../hooks/useMediaQuery.js";
+import { hapticTap } from "../pwa/haptics.js";
 import { deleteSession, postCommand } from "../transport/rest.js";
 import { CancelSessionDialog } from "./cancelSession.js";
 
@@ -45,11 +48,12 @@ export function SessionActionsMenu({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const menuId = useId();
+  const isMobile = useMediaQuery("(max-width: 767px)");
 
   const close = useCallback(() => setOpen(false), []);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || isMobile) return;
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -69,7 +73,7 @@ export function SessionActionsMenu({
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onMouseDown);
     };
-  }, [open, close]);
+  }, [open, close, isMobile]);
 
   const canCancel = CANCELLABLE_STATUSES.has(session.status);
   const canClose = TERMINAL_STATUSES.has(session.status) && Boolean(session.worktreePath);
@@ -103,13 +107,17 @@ export function SessionActionsMenu({
         aria-controls={open ? menuId : undefined}
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((v) => !v);
+          setOpen((v) => {
+            const next = !v;
+            if (next) hapticTap();
+            return next;
+          });
         }}
         className="pill bg-bg-elev text-fg-muted hover:text-fg cursor-pointer text-xs px-2 py-0.5 leading-none"
       >
         ⋯
       </button>
-      {open && (
+      {open && !isMobile && (
         <div
           ref={popoverRef}
           id={menuId}
@@ -127,6 +135,26 @@ export function SessionActionsMenu({
             Delete…
           </MenuItem>
         </div>
+      )}
+      {isMobile && open && (
+        <Sheet open={open} onClose={close} title={session.title}>
+          <div
+            id={menuId}
+            role="menu"
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col gap-2"
+          >
+            {canCancel && (
+              <MenuItem mobile onClick={() => onAction("cancel")}>Cancel</MenuItem>
+            )}
+            {canClose && (
+              <MenuItem mobile onClick={() => onAction("close")}>Close</MenuItem>
+            )}
+            <MenuItem mobile onClick={() => onAction("delete")} variant="danger">
+              Delete…
+            </MenuItem>
+          </div>
+        </Sheet>
       )}
 
       {canCancel && (
@@ -174,10 +202,12 @@ function MenuItem({
   onClick,
   children,
   variant = "default",
+  mobile = false,
 }: {
   onClick: () => void;
   children: ReactNode;
   variant?: "default" | "danger";
+  mobile?: boolean;
 }): ReactElement {
   return (
     <button
@@ -185,7 +215,8 @@ function MenuItem({
       role="menuitem"
       onClick={onClick}
       className={cx(
-        "block w-full text-left px-2 py-1 rounded text-xs hover:bg-bg-soft transition-colors",
+        "block w-full text-left rounded hover:bg-bg-soft transition-colors",
+        mobile ? "min-h-11 px-3 py-2 text-sm" : "px-2 py-1 text-xs",
         variant === "danger" ? "text-red-400 hover:text-red-300" : "text-fg-muted hover:text-fg",
       )}
     >

@@ -20,6 +20,10 @@ export function vibrate(pattern: number | number[]): void {
   navigator.vibrate(pattern);
 }
 
+export function hapticTap(): void {
+  vibrate(10);
+}
+
 export function setHapticsEnabled(enabled: boolean): void {
   try {
     if (enabled) {
