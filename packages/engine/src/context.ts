@@ -100,6 +100,7 @@ export interface EngineContext {
 
   readiness: {
     compute: (slug: string) => Promise<import("@minions/shared").MergeReadiness>;
+    computeStack: (slug: string) => Promise<import("@minions/shared").MergeReadiness>;
     summary: () => import("@minions/shared").ReadinessSummary;
   };
 

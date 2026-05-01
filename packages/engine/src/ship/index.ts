@@ -100,7 +100,12 @@ export function createShipSubsystem(deps: SubsystemDeps): SubsystemResult<Engine
     void reconcileVerifySummariesOnBoot(db, coordinator, log.child({ subsystem: "ship-coordinator" }));
   });
 
-  return { api };
+  return {
+    api,
+    onShutdown() {
+      coordinator.shutdown();
+    },
+  };
 }
 
 interface VerifyStageRow {

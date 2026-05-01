@@ -56,11 +56,21 @@ interface ShipStateRow {
   updated_at: string;
 }
 
+interface VerifyPollState {
+  attempts: number;
+  lastAttemptAt: number;
+}
+
+const VERIFY_POLL_THROTTLE_MS = 30_000;
+const VERIFY_POLL_MAX_ATTEMPTS = 20;
+
 export class ShipCoordinator {
   private readonly stmtGetState: Database.Statement;
   private readonly stmtUpsertState: Database.Statement;
   private readonly stmtCountTranscript: Database.Statement;
   private readonly stmtMaxSeq: Database.Statement;
+  private readonly verifyPollers = new Map<string, VerifyPollState>();
+  private readonly busUnsubscribe: () => void;
 
   constructor(
     private readonly db: Database.Database,
@@ -79,6 +89,20 @@ export class ShipCoordinator {
     this.stmtMaxSeq = db.prepare(
       `SELECT COALESCE(MAX(seq), -1) as max_seq FROM transcript_events WHERE session_slug = ?`,
     );
+
+    this.busUnsubscribe = ctx.bus.on("session_updated", (evt) => {
+      void this.onSessionUpdatedForVerify(evt.session.slug).catch((err: unknown) => {
+        this.log.error("verify poll handler failed", {
+          slug: evt.session.slug,
+          err: (err as Error).message,
+        });
+      });
+    });
+  }
+
+  shutdown(): void {
+    this.busUnsubscribe();
+    this.verifyPollers.clear();
   }
 
   getStage(slug: string): ShipStage | null {
@@ -165,6 +189,18 @@ export class ShipCoordinator {
           message: (e as Error).message,
         });
       }
+
+      const ready = await this.readinessReady(slug);
+      if (ready) {
+        this.verifyPollers.delete(slug);
+        await this.advanceLocked(slug, "done");
+      } else {
+        this.verifyPollers.set(slug, { attempts: 0, lastAttemptAt: 0 });
+      }
+    }
+
+    if (target === "done") {
+      this.verifyPollers.delete(slug);
     }
   }
 
@@ -326,9 +362,9 @@ export class ShipCoordinator {
   private async readinessReady(slug: string): Promise<boolean> {
     let readiness: import("@minions/shared").MergeReadiness | null;
     try {
-      readiness = await this.ctx.readiness.compute(slug);
+      readiness = await this.ctx.readiness.computeStack(slug);
     } catch (err) {
-      this.log.debug("readiness compute failed during ship advance", {
+      this.log.debug("stack readiness compute failed during ship advance", {
         slug,
         err: (err as Error).message,
       });
@@ -336,6 +372,41 @@ export class ShipCoordinator {
     }
     if (!readiness) return false;
     return readiness.status === "ready";
+  }
+
+  private async onSessionUpdatedForVerify(updatedSlug: string): Promise<void> {
+    const watchedSlugs = Array.from(this.verifyPollers.keys());
+    for (const parentSlug of watchedSlugs) {
+      const dag = this.ctx.dags.list().find((d) => d.rootSessionSlug === parentSlug);
+      if (!dag) continue;
+      const isParent = parentSlug === updatedSlug;
+      const isChild = dag.nodes.some((n) => n.sessionSlug === updatedSlug);
+      if (!isParent && !isChild) continue;
+
+      const state = this.verifyPollers.get(parentSlug);
+      if (!state) continue;
+
+      const now = Date.now();
+      if (now - state.lastAttemptAt < VERIFY_POLL_THROTTLE_MS) continue;
+      if (state.attempts >= VERIFY_POLL_MAX_ATTEMPTS) {
+        this.verifyPollers.delete(parentSlug);
+        this.log.warn("verify poll attempts exhausted", {
+          slug: parentSlug,
+          attempts: state.attempts,
+        });
+        continue;
+      }
+
+      state.attempts += 1;
+      state.lastAttemptAt = now;
+      this.verifyPollers.set(parentSlug, state);
+
+      await this.onTurnCompleted(parentSlug);
+
+      if (this.getStage(parentSlug) === "done") {
+        this.verifyPollers.delete(parentSlug);
+      }
+    }
   }
 
   private emitStatusEvent(slug: string, toStage: ShipStage, fromStage: ShipStage): void {

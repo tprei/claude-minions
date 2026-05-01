@@ -9,10 +9,12 @@ import {
   computeConflictCheck,
   computeOverallStatus,
 } from "./compute.js";
+import { computeStackReadiness } from "./stackReadiness.js";
 import { registerReadinessRoutes } from "./routes.js";
 
 export interface ReadinessSubsystem {
   compute: (slug: string) => Promise<MergeReadiness>;
+  computeStack: (slug: string) => Promise<MergeReadiness>;
   summary: () => ReadinessSummary;
 }
 
@@ -67,6 +69,15 @@ export function createReadinessSubsystem(deps: SubsystemDeps): SubsystemResult<R
     return readiness;
   }
 
+  async function computeStack(slug: string): Promise<MergeReadiness> {
+    return computeStackReadiness(slug, {
+      getSession: (s) => ctx.sessions.get(s),
+      findDagByRootSession: (s) =>
+        ctx.dags.list().find((d) => d.rootSessionSlug === s) ?? null,
+      getQualityReport: (s) => ctx.quality.getReport(s),
+    });
+  }
+
   function summary(): ReadinessSummary {
     const sessions = ctx.sessions.list().filter(
       (s) => s.status !== "cancelled" && s.status !== "failed",
@@ -99,7 +110,7 @@ export function createReadinessSubsystem(deps: SubsystemDeps): SubsystemResult<R
   }
 
   return {
-    api: { compute, summary },
+    api: { compute, computeStack, summary },
     registerRoutes(app) {
       registerReadinessRoutes(app, ctx);
     },
