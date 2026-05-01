@@ -106,6 +106,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
       openForReview: async () => null,
       retryRebase: async () => {},
       onUpstreamMerged: async () => {},
+      editPRBase: async () => {},
     },
     bus: {
       emit: () => {},
@@ -475,6 +476,7 @@ function makeUpstreamHarness(opts: {
         retryCalls.push(slug);
       },
       onUpstreamMerged: async () => {},
+      editPRBase: async () => {},
     },
     bus: {
       emit: (ev: { kind: string; [k: string]: unknown }) => {
@@ -1044,6 +1046,7 @@ function makeLandHarness(opts: { session: Session }): LandHarness {
       openForReview: async () => null,
       retryRebase: async () => {},
       onUpstreamMerged: async () => {},
+      editPRBase: async () => {},
     },
     bus: {
       emit: () => {},

@@ -25,6 +25,8 @@ import {
 import { EngineError } from "../errors.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
 import type { SessionStateUpdater } from "./sessionStateUpdater.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
+import { enqueueRestackDescendants } from "../automation/handlers/restackDescendants.js";
 
 export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
 export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
@@ -43,6 +45,7 @@ export interface LandingManagerDeps {
   commitsAhead?: CommitsAheadFn;
   sessionRepo?: SessionStateUpdater | null;
   runGh?: RunGhInWorktreeFn;
+  automationRepo?: AutomationJobRepo | null;
 }
 
 function isOnlineRemote(remote: string): boolean {
@@ -78,6 +81,7 @@ export class LandingManager {
   private readonly commitsAhead: CommitsAheadFn;
   private readonly sessionRepo: SessionStateUpdater | null;
   private readonly runGh: RunGhInWorktreeFn;
+  private readonly automationRepo: AutomationJobRepo | null;
 
   constructor(
     private readonly ctx: EngineContext,
@@ -94,6 +98,7 @@ export class LandingManager {
     this.commitsAhead = deps.commitsAhead ?? defaultCommitsAhead;
     this.sessionRepo = deps.sessionRepo ?? null;
     this.runGh = deps.runGh ?? defaultRunGhInWorktree;
+    this.automationRepo = deps.automationRepo ?? null;
   }
 
   async land(slug: string, strategy: "merge" | "squash" | "rebase" = "squash", force = false): Promise<void> {
@@ -510,6 +515,35 @@ export class LandingManager {
     this.log.info("rebase succeeded for session", { slug, baseBranch });
   }
 
+  async editPRBase(slug: string, newBase: string): Promise<void> {
+    const session = this.ctx.sessions.get(slug);
+    if (!session) throw new EngineError("not_found", `session not found: ${slug}`);
+    if (!session.pr) {
+      throw new EngineError("bad_request", `session ${slug} has no PR`);
+    }
+    if (!session.worktreePath) {
+      throw new EngineError("bad_request", `session ${slug} has no worktree`);
+    }
+
+    const repo = session.repoId ? this.ctx.repos().find((r) => r.id === session.repoId) : undefined;
+    if (!repo?.remote) {
+      throw new EngineError("bad_request", `session ${slug} has no remote`);
+    }
+
+    await this.editPullRequestBase({
+      cwd: session.worktreePath,
+      prNumber: session.pr.number,
+      newBase,
+      remote: repo.remote,
+      log: this.log,
+    });
+
+    if (this.sessionRepo) {
+      this.sessionRepo.update(slug, { baseBranch: newBase });
+      this.sessionRepo.setPr(slug, { ...session.pr, base: newBase });
+    }
+  }
+
   private async inspectPrBeforeMerge(
     prNumber: number,
     cwd: string,
@@ -574,6 +608,16 @@ export class LandingManager {
       kind: "session_updated",
       session: { ...session, pr: merged },
     });
+    if (this.automationRepo) {
+      try {
+        enqueueRestackDescendants(this.automationRepo, slug);
+      } catch (err) {
+        this.log.warn("failed to enqueue restack-descendants", {
+          slug,
+          err: (err as Error).message,
+        });
+      }
+    }
   }
 
   private async postPRComment(repoId: string, prNumber: number, body: string): Promise<void> {
@@ -585,9 +629,9 @@ export class LandingManager {
 }
 
 export function createLandingSubsystem(
-  deps: SubsystemDeps & { dagRepo: DagRepo },
+  deps: SubsystemDeps & { dagRepo: DagRepo; automationRepo?: AutomationJobRepo | null },
 ): SubsystemResult<EngineContext["landing"]> {
-  const { ctx, log, dagRepo, db } = deps;
+  const { ctx, log, dagRepo, db, automationRepo } = deps;
 
   const sessionRepo = new SessionRepo(db);
   const restack = new RestackManager(ctx, dagRepo, log.child({ subsystem: "restack" }), {
@@ -598,7 +642,7 @@ export function createLandingSubsystem(
     dagRepo,
     restack,
     log.child({ subsystem: "landing" }),
-    { sessionRepo },
+    { sessionRepo, automationRepo: automationRepo ?? null },
   );
 
   const api: EngineContext["landing"] = {
@@ -616,6 +660,10 @@ export function createLandingSubsystem(
 
     async onUpstreamMerged(slug: string): Promise<void> {
       await manager.onUpstreamMerged(slug);
+    },
+
+    async editPRBase(slug: string, newBase: string): Promise<void> {
+      await manager.editPRBase(slug, newBase);
     },
   };
 
