@@ -78,7 +78,13 @@ export function createRuntimeSubsystem(deps: SubsystemDeps): SubsystemResult<Run
 
   function effective(): RuntimeOverrides {
     const overrides = repo.read();
-    return { ...defaults, ...overrides };
+    const merged: RuntimeOverrides = { ...defaults, ...overrides };
+    if (merged.overnightProfile === true) {
+      merged.admissionTotalSlots = merged.overnightAdmissionTotalSlots;
+      merged.cleanupOlderThanDays = merged.overnightCleanupRetentionDays;
+      merged.ciSelfHealMaxAttempts = merged.overnightCiSelfHealMaxAttempts;
+    }
+    return merged;
   }
 
   async function update(patch: RuntimeOverrides): Promise<void> {
