@@ -18,18 +18,20 @@ const WRITE_TOOLS_ALLOW = [
   "TodoWrite(*)",
 ];
 
-// WebFetch and WebSearch are billed per call and routinely cost 5–20× a
-// `gh api` round-trip for the same data. The runtime image ships `gh` + git
-// + curl + a pre-authenticated GH_TOKEN env, so the agent always has a
-// cheaper path to GitHub. Block both tools across all permission tiers.
-const TOOLS_DENY = ["WebFetch", "WebSearch"];
+// WebFetch + WebSearch are billed per call and dwarf the cost of a `gh api`
+// round-trip for the same data. Code-modifying tiers (worktree, full) ship
+// with `gh` + git + curl + a pre-authenticated GH_TOKEN, so they have a
+// cheaper path to GitHub and don't need either tool. The `read` tier exists
+// for research (think mode, ship think/plan stages) where browsing is the
+// whole point — keep both tools available there.
+const WRITE_TIER_DENY = ["WebFetch", "WebSearch"];
 
 export function permissionsAllowFor(tier: PermissionTier): string[] {
   return tier === "read" ? READ_TOOLS_ALLOW : WRITE_TOOLS_ALLOW;
 }
 
-export function permissionsDenyFor(_tier: PermissionTier): string[] {
-  return TOOLS_DENY;
+export function permissionsDenyFor(tier: PermissionTier): string[] {
+  return tier === "read" ? [] : WRITE_TIER_DENY;
 }
 
 async function symlinkOperatorAuth(claudeDir: string): Promise<void> {
