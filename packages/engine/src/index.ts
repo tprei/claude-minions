@@ -42,11 +42,14 @@ import { AutomationJobRepo } from "./store/repos/automationJobRepo.js";
 import { createAutomationRunner } from "./automation/runner.js";
 import type { JobHandler } from "./automation/types.js";
 import { createCiPollHandler, enqueueCiPoll } from "./automation/handlers/ciPoll.js";
+import { installAskpass } from "./ci/askpass.js";
 import { createCiFetchLogsHandler } from "./automation/handlers/ciFetchLogs.js";
 import { createStackLandHandler } from "./automation/handlers/stackLand.js";
 import { createRestackDescendantsHandler } from "./automation/handlers/restackDescendants.js";
 import { createSessionSpawnRetryHandler } from "./automation/handlers/sessionSpawnRetry.js";
 import { createDagTickHandler } from "./automation/handlers/dagTick.js";
+import { createLandReadyHandler } from "./automation/handlers/landReadyTrigger.js";
+import { createCiFailureFixHandler } from "./automation/handlers/ciFailureFix.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -137,6 +140,15 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   const unsubscribeCompletion = wireCompletionHandlers(ctx, engineLog);
   shutdownHooks.push(unsubscribeCompletion);
 
+  await installAskpass(env.workspace);
+  const askpassTimer = setInterval(() => {
+    installAskpass(env.workspace).catch((e) =>
+      engineLog.warn("askpass refresh failed", { err: (e as Error).message }),
+    );
+  }, 50 * 60 * 1000);
+  if (askpassTimer.unref) askpassTimer.unref();
+  shutdownHooks.push(() => clearInterval(askpassTimer));
+
   const automationHandlers = new Map<string, JobHandler>();
   automationHandlers.set("ci-poll", createCiPollHandler({ repo: automationRepo }));
   automationHandlers.set(
@@ -162,6 +174,8 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
     createSessionSpawnRetryHandler({ repo: automationRepo }),
   );
   automationHandlers.set("dag-tick", createDagTickHandler());
+  automationHandlers.set("land-ready", createLandReadyHandler({ automationRepo }));
+  automationHandlers.set("ci-failure-fix", createCiFailureFixHandler({ automationRepo }));
   const automationRunner = createAutomationRunner({
     repo: automationRepo,
     ctx,

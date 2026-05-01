@@ -9,6 +9,7 @@ import { openStore } from "../../store/sqlite.js";
 import { createLogger } from "../../logger.js";
 import { AutomationJobRepo } from "../../store/repos/automationJobRepo.js";
 import type { EngineContext } from "../../context.js";
+import type { GithubSubsystem } from "../../github/index.js";
 import { createCiFetchLogsHandler, enqueueCiFetchLogs } from "./ciFetchLogs.js";
 
 interface MakeSessionInput {
@@ -85,9 +86,13 @@ interface CtxOpts {
   metadataPatches: Record<string, unknown>[];
   replies: { slug: string; text: string }[];
   kicks: string[];
+  fetchFailedLogsMock?: (repoId: string, runId: string) => Promise<{ logsByJob: Record<string, string> }>;
 }
 
 function makeCtx(opts: CtxOpts): EngineContext {
+  const github: Partial<GithubSubsystem> = {
+    fetchFailedLogs: opts.fetchFailedLogsMock ?? (async () => ({ logsByJob: {} })),
+  };
   return {
     sessions: {
       get: (slug: string) =>
@@ -107,6 +112,7 @@ function makeCtx(opts: CtxOpts): EngineContext {
       },
     },
     repos: () => opts.repos ?? [makeRepo()],
+    github: github as GithubSubsystem,
   } as unknown as EngineContext;
 }
 
@@ -118,16 +124,25 @@ describe("ciFetchLogs handler", () => {
       const replies: { slug: string; text: string }[] = [];
       const kicks: string[] = [];
       const metadataPatches: Record<string, unknown>[] = [];
-      const ctx = makeCtx({ session, metadataPatches, replies, kicks });
 
-      const ghCalls: string[][] = [];
-      const handler = createCiFetchLogsHandler({
-        workspaceDir: env.workspaceDir,
-        runGh: async (args) => {
-          ghCalls.push(args);
-          return "TypeError: cannot read x of undefined\n  at fn\n  at runner\n";
+      const fetchCalls: Array<{ repoId: string; runId: string }> = [];
+      const ctx = makeCtx({
+        session,
+        metadataPatches,
+        replies,
+        kicks,
+        fetchFailedLogsMock: async (repoId, runId) => {
+          fetchCalls.push({ repoId, runId });
+          return {
+            logsByJob: {
+              build: "TypeError: cannot read x of undefined\n  at fn\n  at runner\n",
+              lint: "TypeError: cannot read x of undefined\n  at fn\n  at runner\n",
+            },
+          };
         },
       });
+
+      const handler = createCiFetchLogsHandler({ workspaceDir: env.workspaceDir });
 
       const job = enqueueCiFetchLogs(env.repo, {
         sessionSlug: "s1",
@@ -137,12 +152,8 @@ describe("ciFetchLogs handler", () => {
 
       await handler(env.repo.get(job.id)!, ctx);
 
-      assert.equal(ghCalls.length, 2, "should call gh once per failed job");
-      for (const args of ghCalls) {
-        assert.ok(args.includes("--log-failed"));
-        assert.ok(args.includes("--repo"));
-        assert.ok(args.includes("acme/widgets"));
-      }
+      assert.equal(fetchCalls.length, 1, "fetchFailedLogs called once");
+      assert.equal(fetchCalls[0]!.runId, "12345");
 
       const expectedPath = path.join(
         env.workspaceDir,
@@ -182,10 +193,7 @@ describe("ciFetchLogs handler", () => {
         replies: [],
         kicks: [],
       });
-      const handler = createCiFetchLogsHandler({
-        workspaceDir: env.workspaceDir,
-        runGh: async () => "",
-      });
+      const handler = createCiFetchLogsHandler({ workspaceDir: env.workspaceDir });
 
       const badSlugs = ["../etc", "evil/slug", "evil..slug", "Mixed-Case"];
       for (const bad of badSlugs) {
@@ -223,12 +231,17 @@ describe("ciFetchLogs handler", () => {
       const replies: { slug: string; text: string }[] = [];
       const kicks: string[] = [];
       const metadataPatches: Record<string, unknown>[] = [];
-      const ctx = makeCtx({ session, metadataPatches, replies, kicks });
-
-      const handler = createCiFetchLogsHandler({
-        workspaceDir: env.workspaceDir,
-        runGh: async () => "boom: something failed\n",
+      const ctx = makeCtx({
+        session,
+        metadataPatches,
+        replies,
+        kicks,
+        fetchFailedLogsMock: async () => ({
+          logsByJob: { build: "boom: something failed\n" },
+        }),
       });
+
+      const handler = createCiFetchLogsHandler({ workspaceDir: env.workspaceDir });
 
       const job = enqueueCiFetchLogs(env.repo, {
         sessionSlug: "s2",

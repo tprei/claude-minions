@@ -10,7 +10,6 @@ import {
   type EditPullRequestBaseFn,
   type EnsurePullRequestFn,
   type PushBranchFn,
-  type RunGhInWorktreeFn,
   type SessionStateUpdater,
 } from "./index.js";
 import { RestackManager } from "./restack.js";
@@ -399,7 +398,7 @@ interface UpstreamHarness {
   retryCalls: string[];
   baseEdits: Array<{ slug: string; baseBranch: string }>;
   prEdits: Array<{ slug: string; pr: PRSummary | null }>;
-  ghCalls: Array<{ prNumber: number; newBase: string; cwd: string }>;
+  ghCalls: Array<{ prNumber: number; newBase: string; repoId: string }>;
   sessionMap: Map<string, Session>;
   updater: SessionStateUpdater;
 }
@@ -413,7 +412,7 @@ function makeUpstreamHarness(opts: {
   const retryCalls: string[] = [];
   const baseEdits: Array<{ slug: string; baseBranch: string }> = [];
   const prEdits: Array<{ slug: string; pr: PRSummary | null }> = [];
-  const ghCalls: Array<{ prNumber: number; newBase: string; cwd: string }> = [];
+  const ghCalls: Array<{ prNumber: number; newBase: string; repoId: string }> = [];
   const sessionMap = new Map(opts.sessions.map((s) => [s.slug, s]));
   const repoBinding =
     opts.repo ?? ({ id: "repo-1", label: "repo-1", remote: "https://github.com/acme/repo.git" } as RepoBinding);
@@ -573,7 +572,7 @@ describe("LandingManager.onUpstreamMerged", () => {
     const h = makeUpstreamHarness({ sessions: [parent, child] });
 
     const editPullRequestBase: EditPullRequestBaseFn = async (args) => {
-      h.ghCalls.push({ prNumber: args.prNumber, newBase: args.newBase, cwd: args.cwd });
+      h.ghCalls.push({ prNumber: args.prNumber, newBase: args.newBase, repoId: args.repoId });
     };
 
     const log = createLogger("error");
@@ -600,7 +599,7 @@ describe("LandingManager.onUpstreamMerged", () => {
     assert.deepEqual(h.ghCalls[0], {
       prNumber: 99,
       newBase: "main",
-      cwd: child.worktreePath,
+      repoId: "repo-1",
     });
     assert.equal(h.prEdits.length, 1, "child PR record updated locally");
     assert.equal(h.prEdits[0]?.pr?.base, "main", "stored PR base reflects new base");
@@ -625,7 +624,7 @@ describe("LandingManager.onUpstreamMerged", () => {
     const h = makeUpstreamHarness({ sessions: [parent, child] });
 
     const editPullRequestBase: EditPullRequestBaseFn = async (args) => {
-      h.ghCalls.push({ prNumber: args.prNumber, newBase: args.newBase, cwd: args.cwd });
+      h.ghCalls.push({ prNumber: args.prNumber, newBase: args.newBase, repoId: args.repoId });
     };
 
     const log = createLogger("error");
@@ -980,7 +979,11 @@ interface LandHarness {
   updater: SessionStateUpdater;
 }
 
-function makeLandHarness(opts: { session: Session }): LandHarness {
+function makeLandHarness(opts: {
+  session: Session;
+  fetchPRMock?: (repoId: string, prNumber: number) => Promise<import("@minions/shared").PullRequestPreview>;
+  mergePRMock?: (repoId: string, prNumber: number, opts2: { strategy: "merge" | "squash" | "rebase" }) => Promise<{ sha: string; merged: boolean }>;
+}): LandHarness {
   const audit: AuditEvent[] = [];
   const attentionCalls: Array<{ slug: string; flag: import("@minions/shared").AttentionFlag }> = [];
   const prEdits: Array<{ slug: string; pr: PRSummary | null }> = [];
@@ -1092,9 +1095,18 @@ function makeLandHarness(opts: { session: Session }): LandHarness {
     push: {} as EngineContext["push"],
     digest: {} as EngineContext["digest"],
     github: {
-      enabled: () => false,
-      fetchPR: async () => { throw new Error("not implemented"); },
-    },
+      enabled: () => true,
+      fetchPR: opts.fetchPRMock ?? (async () => { throw new Error("fetchPR: not implemented"); }),
+      postPRComment: async () => {},
+      getToken: async () => "test-token",
+      findPRByHead: async () => null,
+      createPR: async () => ({ number: 0, url: "" }),
+      editPRBase: async () => {},
+      mergePR: opts.mergePRMock ?? (async () => { throw new Error("mergePR: not implemented"); }),
+      getCheckRollup: async () => { throw new Error("not implemented"); },
+      fetchFailedLogs: async () => ({ logsByJob: {} }),
+      fetchActionsRunIdForBranch: async () => null,
+    } as import("../github/index.js").GithubSubsystem,
     stats: {} as EngineContext["stats"],
     cleanup: {} as EngineContext["cleanup"],
     env: {} as EngineContext["env"],
@@ -1124,16 +1136,33 @@ describe("LandingManager.land safe merge", () => {
       title: "done",
     };
     const session = buildSession("done", { branch: "minions/done", pr: summary, worktreePath: "/tmp" });
-    const h = makeLandHarness({ session });
 
-    const ghCalls: string[][] = [];
-    const runGh: RunGhInWorktreeFn = async (args) => {
-      ghCalls.push(args);
-      if (args[0] === "pr" && args[1] === "view") {
-        return JSON.stringify({ state: "MERGED", mergeable: "MERGEABLE" });
-      }
-      throw new Error(`unexpected gh call: ${args.join(" ")}`);
-    };
+    const mergePRCalls: Array<{ prNumber: number; strategy: string }> = [];
+    const h = makeLandHarness({
+      session,
+      fetchPRMock: async (_repoId, prNumber) => ({
+        number: prNumber,
+        url: `https://github.com/acme/repo/pull/${prNumber}`,
+        title: "done",
+        body: "",
+        state: "merged" as const,
+        draft: false,
+        base: "main",
+        head: "minions/done",
+        mergeable: undefined,
+        mergeableState: "merged",
+        reviewDecision: null,
+        checks: [],
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
+        updatedAt: new Date().toISOString(),
+      }),
+      mergePRMock: async (_repoId, prNumber, opts2) => {
+        mergePRCalls.push({ prNumber, strategy: opts2.strategy });
+        return { sha: "abc", merged: true };
+      },
+    });
 
     const log = createLogger("error");
     const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log, {
@@ -1145,16 +1174,12 @@ describe("LandingManager.land safe merge", () => {
       branchExistsOnRemote: alwaysExistsBranch,
       rebaseOnto: noopRebase,
       commitsAhead: oneCommitAhead,
-      runGh,
       sessionRepo: h.updater,
     });
 
     await manager.land("done", "squash", true);
 
-    assert.ok(
-      !ghCalls.some((c) => c[0] === "pr" && c[1] === "merge"),
-      "must not invoke gh pr merge when PR is already merged",
-    );
+    assert.equal(mergePRCalls.length, 0, "must not invoke mergePR when PR is already merged");
     const skipped = h.audit.find((e) => e.action === "landing.merge.skipped");
     assert.ok(skipped, "landing.merge.skipped audited");
     assert.equal(
@@ -1164,7 +1189,7 @@ describe("LandingManager.land safe merge", () => {
     assert.equal(h.attentionCalls.length, 0, "no attention raised on merged PR");
   });
 
-  test("raises rebase_conflict attention without merging when mergeable is CONFLICTING", async () => {
+  test("raises rebase_conflict attention without merging when mergeable_state is dirty", async () => {
     const summary: PRSummary = {
       number: 91,
       url: "https://github.com/acme/repo/pull/91",
@@ -1175,16 +1200,33 @@ describe("LandingManager.land safe merge", () => {
       title: "conflict",
     };
     const session = buildSession("conflict", { branch: "minions/conflict", pr: summary, worktreePath: "/tmp" });
-    const h = makeLandHarness({ session });
 
-    const ghCalls: string[][] = [];
-    const runGh: RunGhInWorktreeFn = async (args) => {
-      ghCalls.push(args);
-      if (args[0] === "pr" && args[1] === "view") {
-        return JSON.stringify({ state: "OPEN", mergeable: "CONFLICTING" });
-      }
-      throw new Error(`unexpected gh call: ${args.join(" ")}`);
-    };
+    const mergePRCalls: Array<{ prNumber: number }> = [];
+    const h = makeLandHarness({
+      session,
+      fetchPRMock: async (_repoId, prNumber) => ({
+        number: prNumber,
+        url: `https://github.com/acme/repo/pull/${prNumber}`,
+        title: "conflict",
+        body: "",
+        state: "open" as const,
+        draft: false,
+        base: "main",
+        head: "minions/conflict",
+        mergeable: false,
+        mergeableState: "dirty",
+        reviewDecision: null,
+        checks: [],
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
+        updatedAt: new Date().toISOString(),
+      }),
+      mergePRMock: async (_repoId, prNumber) => {
+        mergePRCalls.push({ prNumber });
+        return { sha: "abc", merged: true };
+      },
+    });
 
     const log = createLogger("error");
     const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log, {
@@ -1196,16 +1238,12 @@ describe("LandingManager.land safe merge", () => {
       branchExistsOnRemote: alwaysExistsBranch,
       rebaseOnto: noopRebase,
       commitsAhead: oneCommitAhead,
-      runGh,
       sessionRepo: h.updater,
     });
 
     await manager.land("conflict", "squash", true);
 
-    assert.ok(
-      !ghCalls.some((c) => c[0] === "pr" && c[1] === "merge"),
-      "must not invoke gh pr merge when mergeable is CONFLICTING",
-    );
+    assert.equal(mergePRCalls.length, 0, "must not invoke mergePR when mergeable_state is dirty");
     assert.equal(h.attentionCalls.length, 1, "rebase_conflict attention raised once");
     assert.equal(h.attentionCalls[0]?.flag.kind, "rebase_conflict");
     const blocked = h.audit.find((e) => e.action === "landing.merge.blocked");
