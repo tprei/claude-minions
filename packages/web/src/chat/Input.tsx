@@ -241,7 +241,7 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
     >
       <AttachmentBar attachments={attachments} onChange={setAttachments} />
       {uploadError && (
-        <div className="px-3 pt-1 text-xs text-red-400">Upload failed: {uploadError}</div>
+        <div className="px-3 pt-1 text-xs text-red-700 dark:text-red-400">Upload failed: {uploadError}</div>
       )}
       {showAutocomplete && (
         <div className="absolute bottom-full left-0 right-0 px-3 pb-1 z-50">
@@ -308,7 +308,7 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
           <button
             type="button"
             onClick={() => void onStop()}
-            className="shrink-0 text-xs px-2 py-1 rounded-lg bg-red-900/40 text-red-300 hover:bg-red-900/60 border border-red-700/40"
+            className="shrink-0 text-xs px-2 py-1 rounded-lg bg-red-100 text-red-800 border border-red-300 hover:bg-red-900/60 dark:bg-red-900/40 dark:text-red-300 dark:border-red-700/40"
             title="Stop the agent (sends stop command)"
           >
             ■ Stop

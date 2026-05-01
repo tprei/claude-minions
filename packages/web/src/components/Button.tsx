@@ -13,7 +13,7 @@ const variantClass: Record<ButtonVariant, string> = {
   default: "btn",
   primary: "btn-primary",
   ghost: "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors",
-  danger: "btn border-red-700 bg-bg-soft text-red-400 hover:bg-red-900/40",
+  danger: "btn border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/40",
 };
 
 export function Button({ variant = "default", size, className, children, ...rest }: ButtonProps): ReactElement {
