@@ -1,6 +1,17 @@
-import { marked } from "marked";
+import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import { cx } from "../util/classnames.js";
+import { highlight } from "../markdown/highlight.js";
+import "../markdown/highlight.css";
+
+const marked = new Marked({
+  renderer: {
+    code({ text, lang }) {
+      const language = lang || "plaintext";
+      return `<pre><code class="hljs language-${language}">${highlight(text, lang)}</code></pre>`;
+    },
+  },
+});
 
 interface Props {
   text: string;
@@ -13,6 +24,7 @@ export function Markdown({ text, className }: Props) {
   return (
     <div
       className={cx(
+        "markdown-view",
         "prose prose-sm prose-invert max-w-none leading-snug",
         "prose-p:my-1.5 prose-headings:my-2 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1",
         "prose-pre:my-2 prose-pre:p-2 prose-pre:rounded prose-pre:bg-bg-soft prose-pre:text-fg prose-pre:overflow-x-auto",

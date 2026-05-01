@@ -86,3 +86,10 @@
   background: transparent;
   padding: 0;
 }
+
+.diff-line .hljs.diff-line-code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+}

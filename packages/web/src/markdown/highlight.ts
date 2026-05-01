@@ -10,6 +10,8 @@ import yaml from "highlight.js/lib/languages/yaml";
 import markdown from "highlight.js/lib/languages/markdown";
 import xml from "highlight.js/lib/languages/xml";
 import css from "highlight.js/lib/languages/css";
+import go from "highlight.js/lib/languages/go";
+import rust from "highlight.js/lib/languages/rust";
 
 hljs.registerLanguage("typescript", typescript);
 hljs.registerLanguage("javascript", javascript);
@@ -22,20 +24,40 @@ hljs.registerLanguage("yaml", yaml);
 hljs.registerLanguage("markdown", markdown);
 hljs.registerLanguage("xml", xml);
 hljs.registerLanguage("css", css);
+hljs.registerLanguage("go", go);
+hljs.registerLanguage("rust", rust);
 
 const ALIASES: Record<string, string> = {
   ts: "typescript",
   tsx: "typescript",
   js: "javascript",
   jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
   sh: "bash",
   zsh: "bash",
   yml: "yaml",
   md: "markdown",
   html: "xml",
+  htm: "xml",
   svg: "xml",
   py: "python",
+  rs: "rust",
 };
+
+export function languageForExtension(ext: string): string | undefined {
+  const lower = ext.toLowerCase();
+  if (ALIASES[lower]) return ALIASES[lower];
+  if (hljs.getLanguage(lower)) return lower;
+  return undefined;
+}
+
+export function languageForFilename(filename: string | undefined): string | undefined {
+  if (!filename) return undefined;
+  const m = filename.match(/\.([a-z0-9]+)$/i);
+  if (!m) return undefined;
+  return languageForExtension(m[1]!);
+}
 
 function escapeHtml(s: string): string {
   return s
