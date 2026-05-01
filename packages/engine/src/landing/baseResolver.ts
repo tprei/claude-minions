@@ -174,17 +174,12 @@ export async function applyLiveBase(
   try {
     await rebaseOnto({ worktreePath, branch: result.newBase });
   } catch (err) {
-    const current = ctx.sessions.get(slug);
-    if (current) {
-      const flags = [
-        ...current.attention,
-        {
-          kind: "rebase_conflict" as const,
-          message: `Re-base after live-base re-resolution failed: ${(err as Error).message}`,
-          raisedAt: new Date().toISOString(),
-        },
-      ];
-      ctx.bus.emit({ kind: "session_updated", session: { ...current, attention: flags } });
+    if (ctx.sessions.get(slug)) {
+      ctx.sessions.appendAttention(slug, {
+        kind: "rebase_conflict",
+        message: `Re-base after live-base re-resolution failed: ${(err as Error).message}`,
+        raisedAt: new Date().toISOString(),
+      });
     }
     throw err;
   }

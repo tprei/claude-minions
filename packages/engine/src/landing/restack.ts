@@ -101,18 +101,13 @@ export class RestackManager {
       const message = (err as Error).message;
       this.log.error("restack failed for session", { slug, err: message });
 
-      const current = this.ctx.sessions.get(slug);
-      if (!current) return;
+      if (!this.ctx.sessions.get(slug)) return;
 
-      const flags = [
-        ...current.attention,
-        {
-          kind: "rebase_conflict" as const,
-          message: `Restack conflict after landing ${newBase}: ${message}`,
-          raisedAt: new Date().toISOString(),
-        },
-      ];
-      this.ctx.bus.emit({ kind: "session_updated", session: { ...current, attention: flags } });
+      this.ctx.sessions.appendAttention(slug, {
+        kind: "rebase_conflict",
+        message: `Restack conflict after landing ${newBase}: ${message}`,
+        raisedAt: new Date().toISOString(),
+      });
 
       await this.spawnRebaseResolverForSession(slug, message);
     }
@@ -148,18 +143,13 @@ export class RestackManager {
         failedReason: message,
       });
 
-      const current = this.ctx.sessions.get(sessionSlug);
-      if (!current) return;
+      if (!this.ctx.sessions.get(sessionSlug)) return;
 
-      const flags = [
-        ...current.attention,
-        {
-          kind: "rebase_conflict" as const,
-          message: `Restack conflict: ${message}`,
-          raisedAt: new Date().toISOString(),
-        },
-      ];
-      this.ctx.bus.emit({ kind: "session_updated", session: { ...current, attention: flags } });
+      this.ctx.sessions.appendAttention(sessionSlug, {
+        kind: "rebase_conflict",
+        message: `Restack conflict: ${message}`,
+        raisedAt: new Date().toISOString(),
+      });
 
       await this.spawnRebaseResolverForDagNode(dagId, nodeId, sessionSlug, message);
     }

@@ -1,5 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import Database from "better-sqlite3";
 import type {
   AttentionFlag,
   DAG,
@@ -15,6 +16,8 @@ import { DagTerminalHandler } from "./onTerminal.js";
 import type { DagRepo } from "./model.js";
 import type { DagScheduler } from "./scheduler.js";
 import { createLogger } from "../logger.js";
+import { migrations } from "../store/migrations.js";
+import { SessionRepo } from "../store/repos/sessionRepo.js";
 
 function makeNode(id: string, status: DAGNode["status"], sessionSlug?: string): DAGNode {
   return {
@@ -216,7 +219,7 @@ describe("DagTerminalHandler", () => {
     const dag = makeDag("dag-1", [node], "root-1");
     const { repo, patches, getNode } = makeMockRepo(dag);
     const parent = makeSession("root-1");
-    const { ctx, landCalls, emitted } = makeMockCtx({
+    const { ctx, landCalls, appendedAttention } = makeMockCtx({
       qualityReport: null,
       parentSession: parent,
     });
@@ -229,7 +232,10 @@ describe("DagTerminalHandler", () => {
     const lastPatch = patches.at(-1);
     assert.equal(lastPatch?.patch.status, "ci-failed");
     assert.match(lastPatch?.patch.failedReason ?? "", /quality report missing/);
-    assert.ok(emitted.some((e) => e.kind === "session_updated"), "should raise ci_failed flag on parent");
+    assert.ok(
+      appendedAttention.some((a) => a.slug === "root-1" && a.flag.kind === "ci_failed"),
+      "should raise ci_failed flag on parent",
+    );
   });
 
   test("dag-task with passed quality lands without invoking PR readiness", async () => {
@@ -480,7 +486,7 @@ describe("DagTerminalHandler", () => {
       head: "minions/sess-1",
       title: "PR for sess-1",
     };
-    const { ctx, emitted } = makeMockCtx({
+    const { ctx, appendedAttention } = makeMockCtx({
       qualityReport: {
         sessionSlug: "sess-1",
         status: "passed",
@@ -498,7 +504,7 @@ describe("DagTerminalHandler", () => {
     assert.equal(getNode("n1")?.status, "ci-failed");
     assert.match(patches.at(-1)?.patch.failedReason ?? "", /self-heal exhausted/);
     assert.ok(
-      emitted.some((e) => e.kind === "session_updated"),
+      appendedAttention.some((a) => a.slug === "root-1" && a.flag.kind === "ci_failed"),
       "ci_failed flag raised on parent",
     );
   });
@@ -536,5 +542,76 @@ describe("DagTerminalHandler", () => {
     assert.equal(metadataPatches.length, 0, "no self-heal metadata when maxAttempts=0");
     assert.equal(appendedAttention.length, 0, "no ci_pending attention when maxAttempts=0");
     assert.equal(waitingInputCalls.length, 0, "no waiting_input transition when maxAttempts=0");
+  });
+});
+
+function makeTestDb(): Database.Database {
+  const db = new Database(":memory:");
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  for (const m of migrations) db.exec(m.sql);
+  return db;
+}
+
+function insertTestSession(db: Database.Database, slug: string): void {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO sessions(
+      slug, title, prompt, mode, status, attention, quick_actions,
+      stats_turns, stats_input_tokens, stats_output_tokens,
+      stats_cache_read_tokens, stats_cache_creation_tokens,
+      stats_cost_usd, stats_duration_ms, stats_tool_calls,
+      provider, created_at, updated_at, pr_draft, metadata
+    ) VALUES (?, ?, ?, 'task', 'running', '[]', '[]', 0, 0, 0, 0, 0, 0, 0, 0, 'mock', ?, ?, 0, '{}')
+  `).run(slug, "test title", "test prompt", now, now);
+}
+
+describe("ci_failed attention persists across restart", () => {
+  test("raiseCiFailed writes ci_failed flag to SQLite and survives a new SessionRepo", async () => {
+    const db = makeTestDb();
+    const parentSlug = "root-ci-persist";
+    const taskSlug = "task-ci-persist";
+    const nodeId = "node-persist-1";
+
+    insertTestSession(db, parentSlug);
+    insertTestSession(db, taskSlug);
+
+    const sessionRepo = new SessionRepo(db);
+    let parentSession = sessionRepo.get(parentSlug)!;
+    const taskSession = makeSession(taskSlug);
+
+    const node = makeNode(nodeId, "running", taskSlug);
+    const dag = makeDag("dag-persist", [node], parentSlug);
+    const { repo } = makeMockRepo(dag);
+
+    const { ctx } = makeMockCtx({
+      qualityReport: null,
+      parentSession,
+    });
+
+    (ctx.sessions as unknown as { appendAttention: (slug: string, flag: AttentionFlag) => void }).appendAttention = (slug, flag) => {
+      const current = sessionRepo.get(slug);
+      if (!current) return;
+      sessionRepo.setAttention(slug, [...current.attention, flag]);
+      if (slug === parentSlug) parentSession = sessionRepo.get(slug)!;
+    };
+
+    (ctx.sessions as unknown as { get: (slug: string) => Session | null }).get = (slug) => {
+      if (slug === parentSlug) return parentSession;
+      if (slug === taskSlug) return taskSession;
+      return null;
+    };
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(taskSession);
+
+    const freshRepo = new SessionRepo(db);
+    const persisted = freshRepo.get(parentSlug);
+    assert.ok(persisted, "parent session must exist after restart");
+    const flag = persisted!.attention.find((a) => a.kind === "ci_failed");
+    assert.ok(flag, "ci_failed attention flag must be persisted in SQLite");
+    assert.match(flag!.message, new RegExp(nodeId));
+
+    db.close();
   });
 });

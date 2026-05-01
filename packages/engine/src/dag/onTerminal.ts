@@ -182,19 +182,11 @@ export class DagTerminalHandler {
   }
 
   private raiseCiFailed(parentSlug: string, nodeId: string): void {
-    const parent = this.ctx.sessions.get(parentSlug);
-    if (!parent) return;
-    const flags = [
-      ...parent.attention,
-      {
-        kind: "ci_failed" as const,
-        message: `DAG node ${nodeId} failed quality checks`,
-        raisedAt: new Date().toISOString(),
-      },
-    ];
-    this.ctx.bus.emit({
-      kind: "session_updated",
-      session: { ...parent, attention: flags },
+    if (!this.ctx.sessions.get(parentSlug)) return;
+    this.ctx.sessions.appendAttention(parentSlug, {
+      kind: "ci_failed",
+      message: `DAG node ${nodeId} failed quality checks`,
+      raisedAt: new Date().toISOString(),
     });
   }
 
