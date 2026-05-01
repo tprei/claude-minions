@@ -82,6 +82,8 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ord
       setDagId: () => {},
       setMetadata: () => {},
       markCompleted: () => {},
+      markFailed: () => {},
+      spawnPending: async () => ({ spawned: false }),
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },
@@ -450,6 +452,8 @@ function makeUpstreamHarness(opts: {
       setDagId: () => {},
       setMetadata: () => {},
       markCompleted: () => {},
+      markFailed: () => {},
+      spawnPending: async () => ({ spawned: false }),
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },
@@ -1018,6 +1022,8 @@ function makeLandHarness(opts: { session: Session }): LandHarness {
       setDagId: () => {},
       setMetadata: () => {},
       markCompleted: () => {},
+      markFailed: () => {},
+      spawnPending: async () => ({ spawned: false }),
       markWaitingInput: () => {},
       appendAttention: (slug, flag) => {
         attentionCalls.push({ slug, flag });

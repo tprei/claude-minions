@@ -40,6 +40,7 @@ import { computeDiff } from "./diff.js";
 import { rowToSession, rowToTranscriptEvent, type SessionRow, type TranscriptRow } from "./mapper.js";
 import { inferBucket } from "./inferBucket.js";
 import { SessionRepo, type ListSessionsOptions, type ListSessionsResult } from "../store/repos/sessionRepo.js";
+import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { workspacePaths } from "../workspace/paths.js";
 import { ensureBareClone } from "../workspace/cloner.js";
 import { addWorktree, removeWorktree, initScratchRepo } from "../workspace/worktree.js";
@@ -52,6 +53,7 @@ import {
   emptyRunningByClass,
   type RunningByClass,
 } from "./admission.js";
+import { enqueueSessionSpawnRetry } from "../automation/handlers/sessionSpawnRetry.js";
 
 interface RepoRow {
   id: string;
@@ -102,6 +104,12 @@ export interface RegistryDeps {
   log: Logger;
   workspaceDir: string;
   ctx: EngineContext;
+  automationRepo?: AutomationJobRepo;
+}
+
+export interface SpawnPendingResult {
+  spawned: boolean;
+  reason?: string;
 }
 
 const DEFAULT_SPAWN_TIMEOUT_MS = 120_000;
@@ -383,7 +391,16 @@ export class SessionRegistry {
       ctx.runtime.effective(),
       ctx.resource.latest(),
     );
-    if (!decision.admit) {
+    const isAutonomousClass =
+      cls === "autonomous_loop" || cls === "dag_task" || cls === "background";
+    const isResourceDenial =
+      !decision.admit && decision.reason.startsWith("resource:");
+    const shouldQueueOnPressure =
+      !decision.admit &&
+      isResourceDenial &&
+      isAutonomousClass &&
+      this.deps.automationRepo !== undefined;
+    if (!decision.admit && !shouldQueueOnPressure) {
       ctx.audit.record(
         "system",
         "session.create.denied",
@@ -475,6 +492,17 @@ export class SessionRegistry {
 
       ctx.audit.record("operator", "session.create", { kind: "session", id: slug });
 
+      if (shouldQueueOnPressure) {
+        ctx.audit.record(
+          "system",
+          "session.create.deferred",
+          { kind: "session", id: slug },
+          { class: cls, reason: decision.admit ? null : decision.reason, runningByClass },
+        );
+        enqueueSessionSpawnRetry(this.deps.automationRepo!, slug, 0);
+        return this.buildSession(this.getSessionRow(slug)!);
+      }
+
       try {
         await withTimeout(
           this.setupAndSpawn(slug, req, session, providerName),
@@ -505,6 +533,63 @@ export class SessionRegistry {
       }
 
       return this.buildSession(this.getSessionRow(slug)!);
+    });
+  }
+
+  async spawnPending(slug: string): Promise<SpawnPendingResult> {
+    return this.slugMutex.run(slug, async () => {
+      const row = this.getSessionRow(slug);
+      if (!row) return { spawned: false, reason: "not_found" };
+      const status = row.status as SessionStatus;
+      if (status !== "pending") return { spawned: false, reason: `status:${status}` };
+
+      const mode = row.mode as SessionMode;
+      const cls = classifyMode(mode);
+      const decision = checkAdmission(
+        cls,
+        this.countRunningByClass(),
+        this.deps.ctx.runtime.effective(),
+        this.deps.ctx.resource.latest(),
+      );
+      if (!decision.admit) {
+        return { spawned: false, reason: decision.reason };
+      }
+
+      const metadata = JSON.parse(row.metadata) as Record<string, unknown>;
+      const reconstructedReq: CreateSessionRequest = {
+        prompt: row.prompt,
+        mode,
+        title: row.title,
+        slug: row.slug,
+        repoId: row.repo_id ?? undefined,
+        baseBranch: row.base_branch ?? undefined,
+        parentSlug: row.parent_slug ?? undefined,
+        modelHint: row.model_hint ?? undefined,
+        metadata,
+        bucket: (row.bucket ?? undefined) as import("@minions/shared").SessionBucket | undefined,
+        costBudgetUsd: row.cost_budget_usd ?? undefined,
+      };
+      const session = this.buildSession(row);
+      const providerName = row.provider;
+
+      try {
+        await withTimeout(
+          this.setupAndSpawn(slug, reconstructedReq, session, providerName),
+          spawnTimeoutMs,
+          () =>
+            new EngineError(
+              "upstream",
+              `setupAndSpawn timed out after ${spawnTimeoutMs}ms`,
+              { provider: providerName, sessionSlug: slug, op: "setup" },
+            ),
+        );
+      } catch (err) {
+        this.deps.log.error("spawnPending: setup failed", { slug, err: String(err) });
+        this.failSessionWithAttention(slug, `Spawn failed: ${String(err)}`);
+        throw err;
+      }
+
+      return { spawned: true };
     });
   }
 
@@ -1125,6 +1210,17 @@ export class SessionRegistry {
     }
     const now = nowIso();
     this.updateSessionStatus.run("completed", now, now, slug);
+    const updatedRow = this.getSessionRow(slug)!;
+    this.emitUpdated(this.buildSession(updatedRow));
+  }
+
+  markFailed(slug: string): void {
+    const row = this.getSessionRow(slug);
+    if (!row) {
+      throw new EngineError("not_found", `Session ${slug} not found`);
+    }
+    const now = nowIso();
+    this.updateSessionStatus.run("failed", now, now, slug);
     const updatedRow = this.getSessionRow(slug)!;
     this.emitUpdated(this.buildSession(updatedRow));
   }

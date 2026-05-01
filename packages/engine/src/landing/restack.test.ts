@@ -72,6 +72,8 @@ function makeHarness(sessions: Session[]): RestackHarness {
       setDagId: () => {},
       setMetadata: () => {},
       markCompleted: () => {},
+      markFailed: () => {},
+      spawnPending: async () => ({ spawned: false }),
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },
