@@ -177,6 +177,43 @@ describe("runtime subsystem audit emission", () => {
     assert.equal(disabled.detail?.["previous"], true);
   });
 
+  test("overnightProfile=true overrides admission/cleanup/ci-self-heal in effective()", async () => {
+    const before = api.effective();
+    assert.equal(before["admissionTotalSlots"], 8);
+    assert.equal(before["cleanupOlderThanDays"], 7);
+    assert.equal(before["ciSelfHealMaxAttempts"], 3);
+
+    await api.update({
+      overnightProfile: true,
+      overnightAdmissionTotalSlots: 2,
+      overnightCleanupRetentionDays: 1,
+      overnightCiSelfHealMaxAttempts: 5,
+    });
+
+    const after = api.effective();
+    assert.equal(after["overnightProfile"], true);
+    assert.equal(after["admissionTotalSlots"], 2);
+    assert.equal(after["cleanupOlderThanDays"], 1);
+    assert.equal(after["ciSelfHealMaxAttempts"], 5);
+  });
+
+  test("overnightProfile=false leaves base admission/cleanup/ci-self-heal untouched", async () => {
+    await api.update({
+      admissionTotalSlots: 12,
+      cleanupOlderThanDays: 10,
+      ciSelfHealMaxAttempts: 7,
+      overnightAdmissionTotalSlots: 2,
+      overnightCleanupRetentionDays: 1,
+      overnightCiSelfHealMaxAttempts: 1,
+    });
+
+    const eff = api.effective();
+    assert.equal(eff["overnightProfile"], false);
+    assert.equal(eff["admissionTotalSlots"], 12);
+    assert.equal(eff["cleanupOlderThanDays"], 10);
+    assert.equal(eff["ciSelfHealMaxAttempts"], 7);
+  });
+
   test("secret-tagged fields are redacted in audit body", async () => {
     const secretFieldKey = "__test_secret_field";
     runtimeConfigSchema.fields.push({
