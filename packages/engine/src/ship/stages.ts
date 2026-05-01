@@ -8,6 +8,18 @@ export const PLAN_DIRECTIVE = `You are entering the PLAN stage. Based on your an
 
 export const DAG_DIRECTIVE = `You are entering the DAG stage. The plan has been parsed into a DAG of tasks. Sub-agents are now executing each node in dependency order. Your role is to monitor overall progress, answer any questions from sub-agents, and handle escalations. Do not implement tasks yourself — coordinate and provide guidance only. Once all nodes are completed and landed, signal that verification can begin.`;
 
-export const VERIFY_DIRECTIVE = `You are entering the VERIFY stage. All planned tasks have been executed. Your goal is to verify the overall outcome meets the original requirements. Run the full test suite, review the integrated diff, check that all acceptance criteria are satisfied, and look for regressions or gaps. Report any issues clearly. If everything is in order, confirm completion and signal readiness for done.`;
+export const VERIFY_DIRECTIVE = `You are entering the VERIFY stage. All planned tasks have been executed by sub-agents in their own worktrees, each landing a separate PR.
+
+IMPORTANT: your own worktree is intentionally empty — \`git diff main...HEAD\` will show nothing. The work lives in the child PRs, not here. Per-child verifier sessions have already inspected each PR and queued any necessary fixes; this stage is a final cross-cutting check.
+
+The most recent \`verify_summary\` status event in this transcript lists each child PR with its number and URL. Inspect them with:
+
+  gh pr view <NUMBER>
+  gh pr diff <NUMBER>
+  gh pr checks <NUMBER>
+
+Look for cross-cutting concerns the per-child verifiers can't see: integration gaps between PRs, missing pieces of the original requirements, regressions, drift from the plan. Do NOT re-verify each PR's individual acceptance criteria — the per-child verifiers already did that.
+
+If the integrated outcome is sound, confirm completion and signal readiness for done. If you find cross-cutting gaps, report them clearly with specific PR numbers and follow-up actions.`;
 
 export const DONE_DIRECTIVE = `You are entering the DONE stage. The work is complete and verified. Provide a concise summary of what was accomplished, any deviations from the original plan, and any follow-up recommendations. The session will be closed after this final summary.`;

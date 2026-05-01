@@ -36,6 +36,7 @@ const MODE_COLOR: Record<SessionMode, string> = {
   ship: "bg-orange-900 text-orange-300",
   "rebase-resolver": "bg-red-900 text-red-300",
   loop: "bg-green-900 text-green-300",
+  "verify-child": "bg-cyan-900 text-cyan-300",
 };
 
 const PR_STATE_PILL: Record<"open" | "closed" | "merged", string> = {

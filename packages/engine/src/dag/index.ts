@@ -4,6 +4,7 @@ import type { EngineContext } from "../context.js";
 import type { Logger } from "../logger.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
+import { enqueueVerifyChild } from "../automation/handlers/verifyChild.js";
 import { DagRepo } from "./model.js";
 import { DagScheduler, SUCCESS_NODE_STATUSES } from "./scheduler.js";
 import { DagTerminalHandler } from "./onTerminal.js";
@@ -348,6 +349,14 @@ export function createDagSubsystem(
           { kind: "dag-node", id: node.id },
           { dagId: dag.id, sessionSlug },
         );
+        try {
+          enqueueVerifyChild(automationRepo, sessionSlug);
+        } catch (err) {
+          log.warn("enqueueVerifyChild failed after ci self-heal", {
+            sessionSlug,
+            err: (err as Error).message,
+          });
+        }
       } else if (concluded === "exhausted") {
         repo.updateNode(node.id, {
           status: "ci-failed",

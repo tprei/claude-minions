@@ -50,6 +50,7 @@ import { createSessionSpawnRetryHandler } from "./automation/handlers/sessionSpa
 import { createDagTickHandler } from "./automation/handlers/dagTick.js";
 import { createLandReadyHandler } from "./automation/handlers/landReadyTrigger.js";
 import { createCiFailureFixHandler } from "./automation/handlers/ciFailureFix.js";
+import { createVerifyChildSpawnHandler } from "./automation/handlers/verifyChild.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -176,6 +177,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   automationHandlers.set("dag-tick", createDagTickHandler());
   automationHandlers.set("land-ready", createLandReadyHandler({ automationRepo }));
   automationHandlers.set("ci-failure-fix", createCiFailureFixHandler({ automationRepo }));
+  automationHandlers.set("verify-child", createVerifyChildSpawnHandler());
   const automationRunner = createAutomationRunner({
     repo: automationRepo,
     ctx,

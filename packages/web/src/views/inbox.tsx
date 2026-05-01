@@ -42,6 +42,7 @@ const GROUP_LABEL: Record<AttentionFlag["kind"], string> = {
   quota_exhausted: "Quota exhausted",
   ci_pending: "CI pending",
   ci_passed: "CI passed",
+  verify_failed: "Verify failed",
 };
 
 function itemKey(item: AttentionInboxItem): string {

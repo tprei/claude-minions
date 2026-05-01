@@ -5,6 +5,11 @@ import type { Logger } from "../logger.js";
 import { newEventId } from "../util/ids.js";
 import { nowIso } from "../util/time.js";
 import { sleep } from "../util/time.js";
+import {
+  parseVerifierVerdict,
+  readVerifyChildAttempts,
+  VERIFY_CHILD_MAX_RETRIES,
+} from "../automation/handlers/verifyChild.js";
 
 type CompletionHandler = (session: Session) => Promise<void>;
 
@@ -185,6 +190,80 @@ export function buildCompletionHandlers(ctx: EngineContext, log: Logger): Comple
     );
   };
 
+  const verifyChildVerdict: CompletionHandler = async (session) => {
+    if (session.metadata["kind"] !== "verify-child") return;
+    if (session.status !== "completed") return;
+
+    const targetSlug =
+      typeof session.metadata["forSession"] === "string"
+        ? (session.metadata["forSession"] as string)
+        : null;
+    if (!targetSlug) return;
+
+    const target = ctx.sessions.get(targetSlug);
+    if (!target) return;
+
+    const transcript = ctx.sessions.transcript(session.slug);
+    const verdict = parseVerifierVerdict(transcript);
+
+    if (verdict.kind === "pass") {
+      ctx.sessions.setMetadata(targetSlug, { verifyChildPassed: true });
+      ctx.audit.record(
+        "system",
+        "verify-child.pass",
+        { kind: "session", id: targetSlug },
+        { verifierSlug: session.slug, prNumber: target.pr?.number ?? null },
+      );
+      return;
+    }
+
+    const feedback =
+      verdict.kind === "fail" && verdict.feedback && verdict.feedback.length > 0
+        ? verdict.feedback
+        : "Verifier could not produce a clear PASS/FAIL verdict; please re-read the original task and confirm the implementation matches every acceptance criterion.";
+
+    const attempts = readVerifyChildAttempts(target.metadata);
+    if (attempts >= VERIFY_CHILD_MAX_RETRIES) {
+      ctx.sessions.setMetadata(targetSlug, { verifyChildExhausted: true });
+      ctx.sessions.appendAttention(targetSlug, {
+        kind: "verify_failed",
+        message: `Verifier reported gaps after ${attempts} retry attempt(s); see verifier session ${session.slug}`,
+        raisedAt: nowIso(),
+      });
+      ctx.audit.record(
+        "system",
+        "verify-child.exhausted",
+        { kind: "session", id: targetSlug },
+        { verifierSlug: session.slug, attempts },
+      );
+      return;
+    }
+
+    ctx.sessions.setMetadata(targetSlug, {
+      verifyChildAttempts: attempts + 1,
+      verifyChildLastVerifier: session.slug,
+    });
+    try {
+      await ctx.sessions.reply(
+        targetSlug,
+        `A verifier reviewed your PR and reported gaps against the original task. Please address them and push a commit (do NOT open a new PR — keep using the same branch):\n\n${feedback}`,
+      );
+      await ctx.sessions.kickReplyQueue(targetSlug);
+      ctx.audit.record(
+        "system",
+        "verify-child.requested-rework",
+        { kind: "session", id: targetSlug },
+        { verifierSlug: session.slug, attempt: attempts + 1 },
+      );
+    } catch (err) {
+      log.warn("verifyChildVerdict: failed to queue rework reply", {
+        targetSlug,
+        verifierSlug: session.slug,
+        err: (err as Error).message,
+      });
+    }
+  };
+
   const pendingFeedback: CompletionHandler = async (_session) => {
   };
 
@@ -200,6 +279,7 @@ export function buildCompletionHandlers(ctx: EngineContext, log: Logger): Comple
     digest,
     restackResolver,
     ciBabysit,
+    verifyChildVerdict,
     parentNotify,
     pendingFeedback,
   ];
