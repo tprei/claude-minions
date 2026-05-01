@@ -36,6 +36,7 @@ import { createStatsSubsystem } from "./stats/index.js";
 import { makeCleanupSubsystem } from "./cleanup/index.js";
 import { workspacePaths } from "./workspace/paths.js";
 import { clearMarker, readMarker, writeMarker } from "./lifecycle/marker.js";
+import { runBootRecovery } from "./boot/recovery.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -207,6 +208,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.resource.start();
   await ctx.sessions.resumeAllActive();
   await ctx.ship.reconcileOnBoot();
+  await runBootRecovery(ctx, db, engineLog);
 
   return ctx;
 }
