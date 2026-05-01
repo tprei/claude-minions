@@ -40,7 +40,13 @@ export async function runBootRecovery(
     const stage = row.stage as ShipStage;
     try {
       if (stage === "dag") {
-        // dag stage handled by sibling task — placeholder branch.
+        const dag = ctx.dags.list().find((d) => d.rootSessionSlug === slug) ?? null;
+        ctx.audit.record(
+          "system",
+          "boot_recovery.session_recovered",
+          { kind: "session", id: slug },
+          { stage: "dag", outcome: "awaiting_watchdog", dagId: dag?.id ?? null },
+        );
         continue;
       }
 
