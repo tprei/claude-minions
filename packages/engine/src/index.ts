@@ -38,6 +38,9 @@ import { makeCleanupSubsystem } from "./cleanup/index.js";
 import { workspacePaths } from "./workspace/paths.js";
 import { clearMarker, readMarker, writeMarker } from "./lifecycle/marker.js";
 import { runBootRecovery } from "./boot/recovery.js";
+import { AutomationJobRepo } from "./store/repos/automationJobRepo.js";
+import { createAutomationRunner } from "./automation/runner.js";
+import type { JobHandler } from "./automation/types.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -126,6 +129,16 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   const unsubscribeCompletion = wireCompletionHandlers(ctx, engineLog);
   shutdownHooks.push(unsubscribeCompletion);
 
+  const automationRepo = new AutomationJobRepo(db);
+  const automationHandlers = new Map<string, JobHandler>();
+  const automationRunner = createAutomationRunner({
+    repo: automationRepo,
+    ctx,
+    log: engineLog.child({ component: "automation-runner" }),
+    handlers: automationHandlers,
+  });
+  shutdownHooks.push(() => automationRunner.stop());
+
   let featuresReady: import("@minions/shared").FeatureFlag[] = [];
   let featuresPending: { flag: import("@minions/shared").FeatureFlag; reason: string }[] = [];
   ctx.features = () => featuresReady.slice();
@@ -211,6 +224,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   await ctx.sessions.resumeAllActive();
   await ctx.ship.reconcileOnBoot();
   await runBootRecovery(ctx, db, engineLog);
+  automationRunner.start();
 
   return ctx;
 }
