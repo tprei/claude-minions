@@ -35,9 +35,11 @@ import { createCiSubsystem } from "./ci/index.js";
 import { createStatsSubsystem } from "./stats/index.js";
 import { makeCleanupSubsystem } from "./cleanup/index.js";
 import { workspacePaths } from "./workspace/paths.js";
+import { clearMarker, readMarker, writeMarker } from "./lifecycle/marker.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
+  const previousMarker = readMarker(env.workspace);
   const db = openStore({ path: path.join(env.workspace, "engine.db"), log: engineLog });
   const bus = new EventBus();
   const mutex = new KeyedMutex();
@@ -59,6 +61,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.bus = bus;
   ctx.mutex = mutex;
   ctx.workspaceDir = env.workspace;
+  ctx.previousMarker = previousMarker;
 
   const deps: SubsystemDeps = {
     ctx,
@@ -141,6 +144,12 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
     env.port = addr.port;
   }
 
+  writeMarker(env.workspace, {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    version: env.libraryVersion,
+  });
+
   ctx.shutdown = async () => {
     let listenerTimer: NodeJS.Timeout | undefined;
     try {
@@ -185,6 +194,12 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
       db.close();
     } catch (e) {
       engineLog.error("db close error", { message: (e as Error).message });
+    }
+
+    try {
+      clearMarker(env.workspace);
+    } catch (e) {
+      engineLog.warn("marker clear failed", { message: (e as Error).message });
     }
   };
   engineLog.info("engine listening", { port: env.port, host: env.host });
