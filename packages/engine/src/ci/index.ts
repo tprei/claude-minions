@@ -4,7 +4,6 @@ import type { AttentionFlag, DagNodeCiSummary, PRSummary } from "@minions/shared
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { parseGithubRemote } from "../github/parseRemote.js";
 import { onPrUpdated as handlePrUpdated } from "./prLifecycle.js";
-import { CiBabysitter } from "./babysitter.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
 import { DagRepo } from "../dag/model.js";
 
@@ -323,7 +322,6 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
   const { ctx, log, db, bus } = deps;
   const sessionRepo = new SessionRepo(db);
   const dagRepo = new DagRepo(db, bus);
-  const babysitter = new CiBabysitter(ctx, log);
 
   async function fetchPrAndChecks(
     owner: string,
@@ -662,12 +660,7 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     await handlePrUpdated(slug, ctx, log);
   }
 
-  babysitter.start();
-
   return {
     api: { poll, onPrUpdated },
-    onShutdown() {
-      babysitter.stop();
-    },
   };
 }
