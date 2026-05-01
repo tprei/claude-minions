@@ -236,6 +236,7 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
   return (
     <div
       className="relative border-t border-border bg-bg-soft"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       onDrop={(e) => { e.preventDefault(); onDrop(e); }}
       onDragOver={(e) => e.preventDefault()}
     >
