@@ -297,11 +297,21 @@ function OperationalHeader({
     setUrlState({ connectionId: activeId, view, sessionSlug: slug ?? null, query: nextQuery });
   }
 
+  const isShipStack =
+    session.mode === "ship" &&
+    !!session.shipStage &&
+    (session.shipStage === "dag" ||
+      session.shipStage === "verify" ||
+      session.shipStage === "done");
+
   const canLand =
     !!conn &&
+    !isShipStack &&
     session.status === "completed" &&
     !!session.branch &&
     !session.pr;
+
+  const canLandStack = !!conn && isShipStack;
 
   const canCancel = !!conn && CANCELLABLE_STATUSES.has(session.status);
   const canClose = !!conn && !CANCELLABLE_STATUSES.has(session.status) && !!session.worktreePath;
@@ -317,6 +327,23 @@ function OperationalHeader({
         sessionSlug: session.slug,
         strategy: "squash",
         force: false,
+      });
+    } catch (e) {
+      setLandError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLanding(false);
+    }
+  };
+
+  const handleLandStack = async () => {
+    if (!conn || landing) return;
+    setLanding(true);
+    setLandError(null);
+    try {
+      await postCommand(conn, {
+        kind: "stack",
+        sessionSlug: session.slug,
+        action: "land-all",
       });
     } catch (e) {
       setLandError(e instanceof Error ? e.message : String(e));
@@ -349,6 +376,17 @@ function OperationalHeader({
             title={`Land branch ${session.branch} (squash)`}
           >
             {landing ? "Landing…" : "Land"}
+          </button>
+        )}
+        {canLandStack && (
+          <button
+            type="button"
+            onClick={() => void handleLandStack()}
+            disabled={landing}
+            className={cx("btn-primary text-xs px-2 py-1", landing && "opacity-50 cursor-not-allowed")}
+            title="Land all DAG-task PRs in topological order"
+          >
+            {landing ? "Queuing…" : "Land stack"}
           </button>
         )}
         {canCancel && (
