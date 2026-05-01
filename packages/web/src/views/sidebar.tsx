@@ -158,7 +158,7 @@ export function Sidebar({
             key={f.value}
             onClick={() => onFilterStatus(f.value)}
             className={cx(
-              "w-full flex items-center justify-between gap-2 text-left px-2 py-1 rounded text-xs transition-colors",
+              "w-full flex items-center justify-between gap-2 text-left px-2 py-2 md:py-1 min-h-10 md:min-h-0 rounded text-xs transition-colors",
               filterStatus === f.value
                 ? "text-fg bg-bg-elev"
                 : "text-fg-subtle hover:text-fg-muted",
@@ -179,7 +179,7 @@ export function Sidebar({
             key={f.value}
             onClick={() => onFilterMode(f.value)}
             className={cx(
-              "w-full text-left px-2 py-1 rounded text-xs transition-colors",
+              "w-full text-left px-2 py-2 md:py-1 min-h-10 md:min-h-0 rounded text-xs transition-colors",
               filterMode === f.value
                 ? "text-fg bg-bg-elev"
                 : "text-fg-subtle hover:text-fg-muted",
@@ -197,7 +197,7 @@ export function Sidebar({
             key={f.value}
             onClick={() => onFilterBucket(f.value)}
             className={cx(
-              "w-full text-left px-2 py-1 rounded text-xs transition-colors",
+              "w-full text-left px-2 py-2 md:py-1 min-h-10 md:min-h-0 rounded text-xs transition-colors",
               filterBucket === f.value
                 ? "text-fg bg-bg-elev"
                 : "text-fg-subtle hover:text-fg-muted",
@@ -212,12 +212,12 @@ export function Sidebar({
 
       <div className="px-2 flex flex-col gap-0.5">
         {features.has("loops") && (
-          <button onClick={onOpenLoops} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
+          <button onClick={onOpenLoops} className="w-full flex items-center gap-2 px-2 py-2 md:py-1.5 min-h-10 md:min-h-0 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
             <span>↺</span> Loops
           </button>
         )}
         {features.has("memory") && (
-          <button onClick={onOpenMemory} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
+          <button onClick={onOpenMemory} className="w-full flex items-center gap-2 px-2 py-2 md:py-1.5 min-h-10 md:min-h-0 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
             <span>🧠</span>
             <span className="flex-1 text-left">Memory</span>
             {pendingCount > 0 && (
@@ -231,7 +231,7 @@ export function Sidebar({
           </button>
         )}
         {features.has("runtime-overrides") && (
-          <button onClick={onOpenRuntime} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
+          <button onClick={onOpenRuntime} className="w-full flex items-center gap-2 px-2 py-2 md:py-1.5 min-h-10 md:min-h-0 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
             <span>⚙</span>
             <span className="flex-1 text-left">Runtime</span>
             {admissionUnlimited && (
@@ -246,13 +246,13 @@ export function Sidebar({
           </button>
         )}
         {features.has("audit") && (
-          <button onClick={onOpenAudit} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
+          <button onClick={onOpenAudit} className="w-full flex items-center gap-2 px-2 py-2 md:py-1.5 min-h-10 md:min-h-0 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors">
             <span>📋</span> Audit
           </button>
         )}
         <button
           onClick={onOpenDoctor}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors"
+          className="w-full flex items-center gap-2 px-2 py-2 md:py-1.5 min-h-10 md:min-h-0 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors"
         >
           <span>🧹</span>
           <span className="flex-1 text-left">Cleanup</span>

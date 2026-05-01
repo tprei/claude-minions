@@ -1,9 +1,12 @@
-import { useState, useCallback, type ReactElement, type ReactNode } from "react";
+import { useState, useCallback, useRef, type ReactElement, type ReactNode } from "react";
 import { cx } from "../util/classnames.js";
 import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Sheet } from "../components/Sheet.js";
 import { parseUrl } from "../routing/parseUrl.js";
+import { useConnectionStore } from "../connections/store.js";
+import { MobileNewSessionFab } from "./MobileNewSessionFab.js";
+import { useEdgeSwipe } from "../pwa/gestures.js";
 
 const MOBILE_QUERY = "(max-width: 767px)";
 
@@ -50,11 +53,21 @@ interface LayoutProps {
 
 export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = false, banner }: LayoutProps): ReactElement {
   const isMobile = useMediaQuery(MOBILE_QUERY);
+  const activeId = useConnectionStore(s => s.activeId);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     return !window.matchMedia(MOBILE_QUERY).matches;
   });
   const [railWidth, setRailWidth] = useState<number>(() => loadRailWidth());
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEdgeSwipe(
+    rootRef,
+    useCallback(() => {
+      if (isMobile) setSidebarOpen(true);
+    }, [isMobile]),
+    { edge: "left", edgeWidth: 20, threshold: 60 },
+  );
 
   const closeMobile = (): void => {
     if (isMobile) setSidebarOpen(false);
@@ -70,10 +83,11 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
 
   const sidebarNode = sidebar({ closeMobile });
   const view = parseUrl().view;
-  const chatPrimary = Boolean(chatSurface) && isSessionOpen && view !== "dag";
+  const chatPrimary =
+    Boolean(chatSurface) && isSessionOpen && view !== "dag" && !(isMobile && view === "new");
 
   return (
-    <div className="h-full flex flex-col bg-bg overflow-hidden">
+    <div ref={rootRef} className="h-full flex flex-col bg-bg overflow-hidden">
       {banner && <div className="flex-shrink-0">{banner}</div>}
       <div className="flex-shrink-0 h-12 border-b border-border flex items-center relative z-50 bg-bg">
         <button
@@ -138,6 +152,10 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
             {sidebarNode}
           </div>
         </Sheet>
+      )}
+
+      {isMobile && !chatPrimary && !sidebarOpen && activeId && (
+        <MobileNewSessionFab activeId={activeId} />
       )}
     </div>
   );
