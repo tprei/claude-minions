@@ -25,3 +25,4 @@ export * from "./doctor.js";
 export * from "./cleanup.js";
 export * from "./format.js";
 export * from "./automation.js";
+export * from "./sidecar.js";
