@@ -213,7 +213,9 @@ export class ShipCoordinator {
       text = "Verify summary: no DAG bound to this ship session.";
     } else {
       data["dagId"] = dag.id;
-      const landed = dag.nodes.filter((n) => n.status === "landed");
+      const landed = dag.nodes.filter(
+        (n) => n.status === "landed" || n.status === "pr-open" || n.status === "merged",
+      );
       const lines: string[] = [
         `Verify summary for DAG "${dag.title}" (${landed.length}/${dag.nodes.length} nodes landed):`,
       ];
@@ -356,7 +358,9 @@ export class ShipCoordinator {
     const dag = this.ctx.dags.list().find((d) => d.rootSessionSlug === slug);
     if (!dag) return false;
     if (dag.nodes.length === 0) return false;
-    return dag.nodes.every((n) => n.status === "landed");
+    return dag.nodes.every(
+      (n) => n.status === "landed" || n.status === "pr-open" || n.status === "merged",
+    );
   }
 
   private async readinessReady(slug: string): Promise<boolean> {

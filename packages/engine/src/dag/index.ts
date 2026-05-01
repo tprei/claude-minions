@@ -6,6 +6,7 @@ import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { DagRepo } from "./model.js";
 import { DagScheduler, SUCCESS_NODE_STATUSES } from "./scheduler.js";
 import { DagTerminalHandler } from "./onTerminal.js";
+import { DagMergedHandler } from "./onMerged.js";
 import { registerDagRoutes } from "./routes.js";
 import { parseDagFromTranscript, extractDagBlocks } from "./parser.js";
 import { newSlug, newEventId } from "../util/ids.js";
@@ -96,6 +97,12 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
     scheduler,
     ctx,
     log.child({ subsystem: "dag-terminal" }),
+  );
+  const mergedHandler = new DagMergedHandler(
+    repo,
+    scheduler,
+    ctx,
+    log.child({ subsystem: "dag-merged" }),
   );
 
   reconcileStaleRunningNodes(db, repo, ctx, log);
@@ -304,6 +311,10 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
       await terminalHandler.handle(session);
     },
 
+    async onSessionPrMerged(sessionSlug: string): Promise<void> {
+      await mergedHandler.handle(sessionSlug);
+    },
+
     async onSessionCiTerminal(sessionSlug: string): Promise<void> {
       const node = repo.getNodeBySession(sessionSlug);
       if (!node) return;
@@ -314,14 +325,14 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
       const session = ctx.sessions.get(sessionSlug);
       const concluded = session?.metadata["ciSelfHealConcluded"];
 
-      let outcome: "landed" | "ci-failed";
+      let outcome: "pr-open" | "ci-failed";
       if (concluded === "success") {
         repo.updateNode(node.id, {
-          status: "landed",
+          status: "pr-open",
           completedAt: new Date().toISOString(),
           failedReason: null,
         });
-        outcome = "landed";
+        outcome = "pr-open";
         ctx.audit.record(
           "system",
           "dag.node.ci-landed",
@@ -364,7 +375,7 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
 
       await scheduler.tick(dag.id);
 
-      if (outcome === "landed") {
+      if (outcome === "pr-open") {
         const refreshed = repo.get(dag.id);
         if (refreshed?.status === "completed" && refreshed.rootSessionSlug) {
           const parent = ctx.sessions.get(refreshed.rootSessionSlug);
@@ -449,7 +460,12 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
       if (!dag) throw new EngineError("not_found", `dag not found: ${dagId}`);
       const cancelledNodeIds: string[] = [];
       for (const node of dag.nodes) {
-        if (node.status === "landed") continue;
+        if (
+          node.status === "landed" ||
+          node.status === "pr-open" ||
+          node.status === "merged"
+        )
+          continue;
         const from: DAGNodeStatus = node.status;
         repo.updateNode(node.id, {
           status: "cancelled",

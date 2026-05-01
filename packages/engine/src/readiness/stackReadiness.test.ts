@@ -56,12 +56,16 @@ const openPr: PRSummary = {
   title: "feat",
 };
 
-function makeNode(id: string, sessionSlug: string | undefined): DAGNode {
+function makeNode(
+  id: string,
+  sessionSlug: string | undefined,
+  status: DAGNode["status"] = "merged",
+): DAGNode {
   return {
     id,
     title: `node ${id}`,
     prompt: `do ${id}`,
-    status: "landed",
+    status,
     dependsOn: [],
     sessionSlug,
     metadata: {},
@@ -102,7 +106,7 @@ function makeDeps(args: {
 }
 
 describe("computeStackReadiness", () => {
-  test("ready when all nodes have open PR + ci_passed + no conflicts and quality null", () => {
+  test("ready when all DAG nodes are merged", () => {
     const parentSlug = "ship-parent";
     const childA = makeSession("child-a", { pr: openPr, attention: [flag("ci_passed")] });
     const childB = makeSession("child-b", {
@@ -110,8 +114,8 @@ describe("computeStackReadiness", () => {
       attention: [flag("ci_passed")],
     });
     const dag = makeDag(parentSlug, [
-      makeNode("n1", "child-a"),
-      makeNode("n2", "child-b"),
+      makeNode("n1", "child-a", "merged"),
+      makeNode("n2", "child-b", "merged"),
     ]);
 
     const deps = makeDeps({
@@ -131,13 +135,56 @@ describe("computeStackReadiness", () => {
     assert.ok(nodeChecks.every((c) => c.status === "ok"));
   });
 
+  test("ready when all DAG nodes are landed (legacy alias)", () => {
+    const parentSlug = "ship-parent";
+    const childA = makeSession("child-a", { pr: openPr, attention: [flag("ci_passed")] });
+    const dag = makeDag(parentSlug, [makeNode("n1", "child-a", "landed")]);
+
+    const deps = makeDeps({
+      parentSlug,
+      dag,
+      childSessions: [childA],
+    });
+
+    const result = computeStackReadiness(parentSlug, deps);
+    assert.equal(result.status, "ready");
+  });
+
+  test("pending when a node is pr-open but not merged", () => {
+    const parentSlug = "ship-parent";
+    const childA = makeSession("child-a", { pr: openPr, attention: [flag("ci_passed")] });
+    const childB = makeSession("child-b", {
+      pr: { ...openPr, number: 2, url: "https://example.test/pr/2" },
+      attention: [flag("ci_passed")],
+    });
+    const dag = makeDag(parentSlug, [
+      makeNode("n1", "child-a", "merged"),
+      makeNode("n2", "child-b", "pr-open"),
+    ]);
+    dag.nodes[1]!.title = "awaiting-merge-node";
+
+    const deps = makeDeps({
+      parentSlug,
+      dag,
+      childSessions: [childA, childB],
+    });
+
+    const result = computeStackReadiness(parentSlug, deps);
+
+    assert.equal(result.status, "pending");
+    const stack = result.checks.find((c) => c.id === "stack");
+    assert.equal(stack?.status, "pending");
+    assert.match(stack?.detail ?? "", /awaiting-merge-node/);
+    assert.match(stack?.detail ?? "", /not merged/i);
+  });
+
   test("pending when one node's child session has no PR; detail names the failing node", () => {
     const parentSlug = "ship-parent";
     const childA = makeSession("child-a", { pr: openPr, attention: [flag("ci_passed")] });
     const childB = makeSession("child-b", { attention: [flag("ci_passed")] });
     const dag = makeDag(parentSlug, [
-      makeNode("n1", "child-a"),
-      makeNode("n2", "child-b"),
+      makeNode("n1", "child-a", "merged"),
+      makeNode("n2", "child-b", "running"),
     ]);
     dag.nodes[1]!.title = "missing-pr-node";
 
@@ -164,8 +211,8 @@ describe("computeStackReadiness", () => {
       attention: [flag("ci_failed")],
     });
     const dag = makeDag(parentSlug, [
-      makeNode("n1", "child-a"),
-      makeNode("n2", "child-b"),
+      makeNode("n1", "child-a", "merged"),
+      makeNode("n2", "child-b", "running"),
     ]);
     dag.nodes[1]!.title = "ci-fail-node";
 
@@ -209,7 +256,7 @@ describe("computeStackReadiness", () => {
   test("pending when child's quality report failed", () => {
     const parentSlug = "ship-parent";
     const childA = makeSession("child-a", { pr: openPr, attention: [flag("ci_passed")] });
-    const dag = makeDag(parentSlug, [makeNode("n1", "child-a")]);
+    const dag = makeDag(parentSlug, [makeNode("n1", "child-a", "running")]);
     const quality = new Map<string, QualityReport>([
       [
         "child-a",

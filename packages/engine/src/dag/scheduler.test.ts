@@ -410,6 +410,39 @@ describe("DagScheduler", () => {
     );
   });
 
+  test("pr-open counts as completed for downstream dependency resolution", async () => {
+    const nodeA = makeNode("A", "pr-open");
+    const nodeB = makeNode("B", "pending", ["A"]);
+
+    const dag = makeDag("dag1", [nodeA, nodeB]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 1, "B spawns once A is in pr-open (PR opened)");
+    const bNode = repo.getNode("B");
+    assert.equal(bNode?.status, "running", "B should be running");
+  });
+
+  test("merged counts as completed for downstream dependency resolution and DAG completion", async () => {
+    const nodeA = makeNode("A", "merged");
+    const nodeB = makeNode("B", "merged", ["A"]);
+
+    const dag = makeDag("dag1", [nodeA, nodeB]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const spawnedSessions: Session[] = [];
+    const ctx = makeMockCtx(spawnedSessions);
+
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    await scheduler.tick("dag1");
+
+    assert.equal(spawnedSessions.length, 0, "no sessions spawned for an all-merged DAG");
+    assert.equal(repo.get("dag1")?.status, "completed");
+  });
+
   test("admission-denied EngineError keeps node pending and bumps admissionRetries", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
 

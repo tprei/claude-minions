@@ -7,6 +7,8 @@ export type DAGNodeStatus =
   | "skipped"
   | "ci-pending"
   | "ci-failed"
+  | "pr-open"
+  | "merged"
   | "landed"
   | "rebasing"
   | "rebase-conflict"
