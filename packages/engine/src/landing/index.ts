@@ -28,6 +28,7 @@ import type { SessionStateUpdater } from "./sessionStateUpdater.js";
 
 export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
 export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
+export type RunGhInWorktreeFn = (args: string[], opts: { cwd: string; log: Logger }) => Promise<string>;
 export type { EditPullRequestBaseFn } from "./editPRBase.js";
 export type { CommitsAheadFn } from "./commitsAhead.js";
 
@@ -41,14 +42,15 @@ export interface LandingManagerDeps {
   rebaseOnto?: RebaseOntoFn;
   commitsAhead?: CommitsAheadFn;
   sessionRepo?: SessionStateUpdater | null;
+  runGh?: RunGhInWorktreeFn;
 }
 
 function isOnlineRemote(remote: string): boolean {
   return /^(https?:\/\/|ssh:\/\/|git:\/\/|git@)/.test(remote);
 }
 
-function runGh(args: string[], opts: { cwd: string; log: Logger }): Promise<string> {
-  return new Promise((resolve, reject) => {
+const defaultRunGhInWorktree: RunGhInWorktreeFn = (args, opts) =>
+  new Promise<string>((resolve, reject) => {
     const child = spawn("gh", args, { cwd: opts.cwd, env: process.env });
     let stdout = "";
     let stderr = "";
@@ -64,7 +66,6 @@ function runGh(args: string[], opts: { cwd: string; log: Logger }): Promise<stri
       }
     });
   });
-}
 
 const defaultEditPullRequestBase: EditPullRequestBaseFn = createEditPullRequestBase(defaultRunGh);
 
@@ -76,6 +77,7 @@ export class LandingManager {
   private readonly rebaseOnto: RebaseOntoFn;
   private readonly commitsAhead: CommitsAheadFn;
   private readonly sessionRepo: SessionStateUpdater | null;
+  private readonly runGh: RunGhInWorktreeFn;
 
   constructor(
     private readonly ctx: EngineContext,
@@ -91,6 +93,7 @@ export class LandingManager {
     this.rebaseOnto = deps.rebaseOnto ?? defaultRebaseOnto;
     this.commitsAhead = deps.commitsAhead ?? defaultCommitsAhead;
     this.sessionRepo = deps.sessionRepo ?? null;
+    this.runGh = deps.runGh ?? defaultRunGhInWorktree;
   }
 
   async land(slug: string, strategy: "merge" | "squash" | "rebase" = "squash", force = false): Promise<void> {
@@ -127,10 +130,33 @@ export class LandingManager {
 
     if (onlineFlow && refreshedAfterPush.pr) {
       const prNumber = refreshedAfterPush.pr.number;
+      const preMerge = await this.inspectPrBeforeMerge(prNumber, session.worktreePath, slug);
+      if (preMerge.action === "skip") {
+        this.log.info("merge skipped: PR no longer in mergeable state", {
+          slug,
+          prNumber,
+          reason: preMerge.reason,
+        });
+        return;
+      }
+      if (preMerge.action === "conflict") {
+        this.ctx.sessions.appendAttention(slug, {
+          kind: "rebase_conflict",
+          message: `PR #${prNumber} has merge conflicts on GitHub; rebase required before landing.`,
+          raisedAt: new Date().toISOString(),
+        });
+        this.ctx.audit.record(
+          "system",
+          "landing.merge.blocked",
+          { kind: "session", id: slug },
+          { prNumber, reason: "conflicting" },
+        );
+        return;
+      }
       const flag = strategy === "squash" ? "--squash" : strategy === "rebase" ? "--rebase" : "--merge";
       const args = ["pr", "merge", String(prNumber), flag, "--delete-branch=false"];
       try {
-        await runGh(args, { cwd: session.worktreePath, log: this.log });
+        await this.runGh(args, { cwd: session.worktreePath, log: this.log });
       } catch (err) {
         throw new EngineError(
           "upstream",
@@ -475,16 +501,69 @@ export class LandingManager {
     this.log.info("rebase succeeded for session", { slug, baseBranch });
   }
 
+  private async inspectPrBeforeMerge(
+    prNumber: number,
+    cwd: string,
+    slug: string,
+  ): Promise<{ action: "merge" } | { action: "skip"; reason: string } | { action: "conflict" }> {
+    let raw: string;
+    try {
+      raw = await this.runGh(
+        ["pr", "view", String(prNumber), "--json", "state,mergeable"],
+        { cwd, log: this.log },
+      );
+    } catch (err) {
+      this.log.warn("gh pr view failed before merge; proceeding optimistically", {
+        slug,
+        prNumber,
+        err: (err as Error).message,
+      });
+      return { action: "merge" };
+    }
+
+    let parsed: { state?: string; mergeable?: string };
+    try {
+      parsed = JSON.parse(raw) as { state?: string; mergeable?: string };
+    } catch (err) {
+      this.log.warn("could not parse gh pr view output before merge; proceeding optimistically", {
+        slug,
+        prNumber,
+        err: (err as Error).message,
+      });
+      return { action: "merge" };
+    }
+
+    const state = (parsed.state ?? "").toUpperCase();
+    if (state && state !== "OPEN") {
+      const reason = state === "MERGED" ? "already-merged" : state === "CLOSED" ? "closed" : state.toLowerCase();
+      this.ctx.audit.record(
+        "system",
+        "landing.merge.skipped",
+        { kind: "session", id: slug },
+        { prNumber, reason, state },
+      );
+      return { action: "skip", reason };
+    }
+
+    const mergeable = (parsed.mergeable ?? "").toUpperCase();
+    if (mergeable === "CONFLICTING") {
+      return { action: "conflict" };
+    }
+
+    return { action: "merge" };
+  }
+
   private db_setPrMerged(slug: string): void {
     const session = this.ctx.sessions.get(slug);
     if (!session) return;
     if (!session.pr) return;
+    const merged: PRSummary = { ...session.pr, state: "merged" };
+    if (this.sessionRepo) {
+      this.sessionRepo.setPr(slug, merged);
+    }
     this.ctx.bus.emit({
       kind: "session_updated",
-      session: {
-        ...session,
-        pr: { ...session.pr, state: "merged" },
-      },
+      session: { ...session, pr: merged },
     });
   }
 

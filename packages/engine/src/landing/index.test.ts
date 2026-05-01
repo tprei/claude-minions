@@ -10,6 +10,7 @@ import {
   type EditPullRequestBaseFn,
   type EnsurePullRequestFn,
   type PushBranchFn,
+  type RunGhInWorktreeFn,
   type SessionStateUpdater,
 } from "./index.js";
 import { RestackManager } from "./restack.js";
@@ -961,5 +962,248 @@ describe("LandingManager.openForReview live-base re-resolution", () => {
     assert.equal(rebaseCalls.length, 0, "no rebase when base survives");
     const resolveAudit = h.audit.find((e) => e.action === "landing.base.resolved");
     assert.equal(resolveAudit, undefined, "no resolution audit when base unchanged");
+  });
+});
+
+interface LandHarness {
+  ctx: EngineContext;
+  audit: AuditEvent[];
+  attentionCalls: Array<{ slug: string; flag: import("@minions/shared").AttentionFlag }>;
+  prEdits: Array<{ slug: string; pr: PRSummary | null }>;
+  sessionMap: Map<string, Session>;
+  updater: SessionStateUpdater;
+}
+
+function makeLandHarness(opts: { session: Session }): LandHarness {
+  const audit: AuditEvent[] = [];
+  const attentionCalls: Array<{ slug: string; flag: import("@minions/shared").AttentionFlag }> = [];
+  const prEdits: Array<{ slug: string; pr: PRSummary | null }> = [];
+  const sessionMap = new Map([[opts.session.slug, opts.session]]);
+  const repoBinding: RepoBinding = {
+    id: "repo-1",
+    label: "repo-1",
+    remote: "https://github.com/acme/repo.git",
+  };
+
+  const updater: SessionStateUpdater = {
+    update(slug, patch) {
+      const cur = sessionMap.get(slug);
+      if (!cur) return;
+      sessionMap.set(slug, { ...cur, baseBranch: patch.baseBranch ?? cur.baseBranch });
+    },
+    setPr(slug, pr) {
+      const cur = sessionMap.get(slug);
+      if (!cur) return;
+      sessionMap.set(slug, { ...cur, pr: pr ?? undefined });
+      prEdits.push({ slug, pr });
+    },
+  };
+
+  const ctx: EngineContext = {
+    sessions: {
+      create: async () => {
+        throw new Error("not implemented");
+      },
+      get: (slug) => sessionMap.get(slug) ?? null,
+      list: () => Array.from(sessionMap.values()),
+      listPaged: () => ({ items: [] }),
+      listWithTranscript: () => [],
+      transcript: () => [],
+      stop: async () => {},
+      close: async () => {},
+      delete: async () => {},
+      reply: async () => {},
+      setDagId: () => {},
+      setMetadata: () => {},
+      markCompleted: () => {},
+      markWaitingInput: () => {},
+      appendAttention: (slug, flag) => {
+        attentionCalls.push({ slug, flag });
+        const cur = sessionMap.get(slug);
+        if (cur) sessionMap.set(slug, { ...cur, attention: [...cur.attention, flag] });
+      },
+      dismissAttention: () => { throw new Error("not implemented"); },
+      kickReplyQueue: async () => false,
+      resumeAllActive: async () => {},
+      diff: async (slug) => ({
+        sessionSlug: slug,
+        patch: "",
+        stats: [],
+        truncated: false,
+        byteSize: 0,
+        generatedAt: new Date().toISOString(),
+      }),
+      screenshots: async () => [],
+      screenshotPath: () => "",
+      checkpoints: () => [],
+      restoreCheckpoint: async () => {},
+      updateBucket: () => {},
+    },
+    landing: {
+      land: async () => {},
+      openForReview: async () => null,
+      retryRebase: async () => {},
+      onUpstreamMerged: async () => {},
+    },
+    bus: {
+      emit: () => {},
+      subscribe: () => () => {},
+    } as unknown as EventBus,
+    audit: {
+      record: (actor, action, target, detail) => {
+        audit.push({
+          id: String(audit.length + 1),
+          timestamp: new Date().toISOString(),
+          actor,
+          action,
+          target,
+          detail,
+        });
+      },
+      list: () => audit.slice(),
+    },
+    lifecycle: {} as EngineContext["lifecycle"],
+    mutex: new KeyedMutex(),
+    runtime: {
+      schema: () => ({ groups: [], fields: [] }),
+      values: () => ({}),
+      effective: () => ({}),
+      update: async () => {},
+    },
+    dags: {} as EngineContext["dags"],
+    ship: {} as EngineContext["ship"],
+    loops: {} as EngineContext["loops"],
+    variants: {} as EngineContext["variants"],
+    ci: {} as EngineContext["ci"],
+    quality: {} as EngineContext["quality"],
+    readiness: {} as EngineContext["readiness"],
+    intake: {} as EngineContext["intake"],
+    memory: {} as EngineContext["memory"],
+    resource: {} as EngineContext["resource"],
+    push: {} as EngineContext["push"],
+    digest: {} as EngineContext["digest"],
+    github: {
+      enabled: () => false,
+      fetchPR: async () => { throw new Error("not implemented"); },
+    },
+    stats: {} as EngineContext["stats"],
+    cleanup: {} as EngineContext["cleanup"],
+    env: {} as EngineContext["env"],
+    log: createLogger("error"),
+    db: {} as EngineContext["db"],
+    workspaceDir: "/tmp",
+    previousMarker: null,
+    features: () => [],
+    featuresPending: () => [],
+    repos: () => [repoBinding],
+    getRepo: (id) => (repoBinding.id === id ? repoBinding : null),
+    shutdown: async () => {},
+  };
+
+  return { ctx, audit, attentionCalls, prEdits, sessionMap, updater };
+}
+
+describe("LandingManager.land safe merge", () => {
+  test("skips merge with audit when PR is already MERGED", async () => {
+    const summary: PRSummary = {
+      number: 88,
+      url: "https://github.com/acme/repo/pull/88",
+      state: "open",
+      draft: false,
+      base: "main",
+      head: "minions/done",
+      title: "done",
+    };
+    const session = buildSession("done", { branch: "minions/done", pr: summary, worktreePath: "/tmp" });
+    const h = makeLandHarness({ session });
+
+    const ghCalls: string[][] = [];
+    const runGh: RunGhInWorktreeFn = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === "pr" && args[1] === "view") {
+        return JSON.stringify({ state: "MERGED", mergeable: "MERGEABLE" });
+      }
+      throw new Error(`unexpected gh call: ${args.join(" ")}`);
+    };
+
+    const log = createLogger("error");
+    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log, {
+      sessionRepo: h.updater,
+    });
+    const manager = new LandingManager(h.ctx, noopDagRepoForUpstream, restack, log, {
+      pushBranch: async () => {},
+      ensurePullRequest: async () => summary,
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+      commitsAhead: oneCommitAhead,
+      runGh,
+      sessionRepo: h.updater,
+    });
+
+    await manager.land("done", "squash", true);
+
+    assert.ok(
+      !ghCalls.some((c) => c[0] === "pr" && c[1] === "merge"),
+      "must not invoke gh pr merge when PR is already merged",
+    );
+    const skipped = h.audit.find((e) => e.action === "landing.merge.skipped");
+    assert.ok(skipped, "landing.merge.skipped audited");
+    assert.equal(
+      (skipped?.detail as { reason?: string } | undefined)?.reason,
+      "already-merged",
+    );
+    assert.equal(h.attentionCalls.length, 0, "no attention raised on merged PR");
+  });
+
+  test("raises rebase_conflict attention without merging when mergeable is CONFLICTING", async () => {
+    const summary: PRSummary = {
+      number: 91,
+      url: "https://github.com/acme/repo/pull/91",
+      state: "open",
+      draft: false,
+      base: "main",
+      head: "minions/conflict",
+      title: "conflict",
+    };
+    const session = buildSession("conflict", { branch: "minions/conflict", pr: summary, worktreePath: "/tmp" });
+    const h = makeLandHarness({ session });
+
+    const ghCalls: string[][] = [];
+    const runGh: RunGhInWorktreeFn = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === "pr" && args[1] === "view") {
+        return JSON.stringify({ state: "OPEN", mergeable: "CONFLICTING" });
+      }
+      throw new Error(`unexpected gh call: ${args.join(" ")}`);
+    };
+
+    const log = createLogger("error");
+    const restack = new RestackManager(h.ctx, noopDagRepoForUpstream, log, {
+      sessionRepo: h.updater,
+    });
+    const manager = new LandingManager(h.ctx, noopDagRepoForUpstream, restack, log, {
+      pushBranch: async () => {},
+      ensurePullRequest: async () => summary,
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+      commitsAhead: oneCommitAhead,
+      runGh,
+      sessionRepo: h.updater,
+    });
+
+    await manager.land("conflict", "squash", true);
+
+    assert.ok(
+      !ghCalls.some((c) => c[0] === "pr" && c[1] === "merge"),
+      "must not invoke gh pr merge when mergeable is CONFLICTING",
+    );
+    assert.equal(h.attentionCalls.length, 1, "rebase_conflict attention raised once");
+    assert.equal(h.attentionCalls[0]?.flag.kind, "rebase_conflict");
+    const blocked = h.audit.find((e) => e.action === "landing.merge.blocked");
+    assert.ok(blocked, "landing.merge.blocked audited");
+    assert.equal(
+      (blocked?.detail as { reason?: string } | undefined)?.reason,
+      "conflicting",
+    );
   });
 });
