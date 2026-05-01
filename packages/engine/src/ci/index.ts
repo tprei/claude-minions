@@ -55,6 +55,9 @@ interface GhPrView {
   headRefOid: string;
   title: string;
   statusCheckRollup: GhRollupEntry[] | null;
+  mergeable: string | null;
+  mergeStateStatus: string | null;
+  reviewDecision: string | null;
 }
 
 const FAIL_CONCLUSIONS = new Set(["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]);
@@ -319,7 +322,7 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     const prJson = await runGh([
       "pr", "view", String(prNumber),
       "--repo", repoSlug,
-      "--json", "number,url,state,isDraft,baseRefName,headRefName,headRefOid,title,statusCheckRollup",
+      "--json", "number,url,state,isDraft,baseRefName,headRefName,headRefOid,title,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision",
     ]);
 
     const pr = JSON.parse(prJson) as GhPrView;
@@ -409,11 +412,12 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     const fresh = ctx.sessions.get(slug);
     if (!fresh) return;
 
+    const summary = summarizeChecks(checks);
+
     const dagNode = dagRepo.getNodeBySession(slug);
     if (dagNode) {
-      const base = summarizeChecks(checks);
       const nextSummary: DagNodeCiSummary = {
-        ...base,
+        ...summary,
         prNumber: refreshedPr.number,
         prUrl: refreshedPr.url,
         updatedAt: new Date().toISOString(),
@@ -478,6 +482,24 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
           { previousMessage: update.previousMessage },
         );
       }
+
+      const flagEnabled = ctx.runtime.effective()["autoMergeOnGreen"] === true;
+      const sessionKindRaw = fresh.metadata["kind"];
+      const decision = decideAutoMerge({
+        flagEnabled,
+        prState: refreshedPr.state,
+        prDraft: refreshedPr.draft,
+        ciState: summary.state,
+        failedCount: summary.counts.failed,
+        mergeable: prData.mergeable,
+        mergeStateStatus: prData.mergeStateStatus,
+        reviewDecision: prData.reviewDecision,
+        sessionKind: typeof sessionKindRaw === "string" ? sessionKindRaw : undefined,
+        sessionMode: fresh.mode,
+      });
+      if (decision.kind === "merge") {
+        await applyAutoMerge(slug, owner, repoName, prNumber);
+      }
     }
 
     const updated = ctx.sessions.get(slug);
@@ -486,6 +508,37 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     }
 
     await handlePrUpdated(slug, ctx, log);
+  }
+
+  async function applyAutoMerge(
+    slug: string,
+    owner: string,
+    repoName: string,
+    prNumber: number,
+  ): Promise<void> {
+    try {
+      await runGh([
+        "api",
+        "-X", "PUT",
+        `repos/${owner}/${repoName}/pulls/${prNumber}/merge`,
+        "-f", "merge_method=squash",
+      ]);
+    } catch (err) {
+      log.warn("auto-merge failed", { slug, prNumber, err: (err as Error).message });
+      ctx.audit.record(
+        "system",
+        "pr.auto-merge.failed",
+        { kind: "session", id: slug },
+        { prNumber, error: (err as Error).message },
+      );
+      return;
+    }
+    ctx.audit.record(
+      "system",
+      "pr.auto-merged",
+      { kind: "session", id: slug },
+      { prNumber, strategy: "squash" },
+    );
   }
 
   async function applySelfHealSuccess(slug: string): Promise<void> {
