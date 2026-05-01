@@ -4,6 +4,7 @@ import type { EngineContext } from "../context.js";
 import type { Logger } from "../logger.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
 import { ShipCoordinator } from "./coordinator.js";
+import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 
 interface ShipStateRow {
   session_slug: string;
@@ -75,10 +76,17 @@ function reconcileOnBoot(db: Database.Database, ctx: EngineContext, log: Logger)
   }
 }
 
-export function createShipSubsystem(deps: SubsystemDeps): SubsystemResult<EngineContext["ship"]> {
-  const { ctx, db, log } = deps;
+export function createShipSubsystem(
+  deps: SubsystemDeps & { automationRepo?: AutomationJobRepo },
+): SubsystemResult<EngineContext["ship"]> {
+  const { ctx, db, log, automationRepo } = deps;
 
-  const coordinator = new ShipCoordinator(db, ctx, log.child({ subsystem: "ship-coordinator" }));
+  const coordinator = new ShipCoordinator(
+    db,
+    ctx,
+    log.child({ subsystem: "ship-coordinator" }),
+    automationRepo ?? null,
+  );
 
   reconcileOnBoot(db, ctx, log.child({ subsystem: "ship-coordinator" }));
 

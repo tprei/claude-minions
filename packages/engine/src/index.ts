@@ -43,6 +43,7 @@ import { createAutomationRunner } from "./automation/runner.js";
 import type { JobHandler } from "./automation/types.js";
 import { createCiPollHandler, enqueueCiPoll } from "./automation/handlers/ciPoll.js";
 import { createCiFetchLogsHandler } from "./automation/handlers/ciFetchLogs.js";
+import { createStackLandHandler } from "./automation/handlers/stackLand.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -87,6 +88,8 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
     return result.api;
   }
 
+  const automationRepo = new AutomationJobRepo(db);
+
   ctx.audit = wire(createAuditSubsystem(deps));
   ctx.runtime = wire(createRuntimeSubsystem(deps));
   ctx.memory = wire(createMemorySubsystem(deps));
@@ -112,7 +115,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.intake = wire(createIntakeSubsystem(deps));
   ctx.sessions = wire(createSessionsSubsystem(deps));
   ctx.dags = wire(createDagSubsystem(deps));
-  ctx.ship = wire(createShipSubsystem(deps));
+  ctx.ship = wire(createShipSubsystem({ ...deps, automationRepo }));
   ctx.landing = wire(createLandingSubsystem({ ...deps, dagRepo: new DagRepo(db, bus) }));
   ctx.loops = wire(createLoopsSubsystem(deps));
   ctx.variants = wire(createVariantsSubsystem(deps));
@@ -131,12 +134,18 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   const unsubscribeCompletion = wireCompletionHandlers(ctx, engineLog);
   shutdownHooks.push(unsubscribeCompletion);
 
-  const automationRepo = new AutomationJobRepo(db);
   const automationHandlers = new Map<string, JobHandler>();
   automationHandlers.set("ci-poll", createCiPollHandler({ repo: automationRepo }));
   automationHandlers.set(
     "ci-fetch-logs",
     createCiFetchLogsHandler({ workspaceDir: env.workspace }),
+  );
+  automationHandlers.set(
+    "stack-land",
+    createStackLandHandler({
+      automationRepo,
+      dagRepo: new DagRepo(db, bus),
+    }),
   );
   const automationRunner = createAutomationRunner({
     repo: automationRepo,
