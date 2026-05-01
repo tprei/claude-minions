@@ -4,11 +4,13 @@ import type { DagRepo } from "./model.js";
 import type { Logger } from "../logger.js";
 import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { enqueueDagTick } from "../automation/handlers/dagTick.js";
-import { isEngineError } from "../errors.js";
+import { isEngineError, EngineError } from "../errors.js";
 
 const DEFAULT_MAX_CONCURRENT = 3;
 const ADMISSION_RETRY_DELAY_MS = 30_000;
 const MAX_ADMISSION_RETRIES = 60;
+
+const STALE_READY_THRESHOLD_MS = 60_000;
 
 const TERMINAL_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
   "completed",
@@ -43,12 +45,18 @@ function isAdmissionDenied(err: unknown): boolean {
 }
 
 export class DagScheduler {
+  private readonly staleReadyFirstSeen = new Map<string, number>();
+
   constructor(
     private readonly repo: DagRepo,
     private readonly ctx: EngineContext,
     private readonly log: Logger,
-    private readonly automationRepo: AutomationJobRepo | null = null,
-  ) {}
+    private readonly automationRepo: AutomationJobRepo,
+  ) {
+    if (!automationRepo) {
+      throw new EngineError("internal", "automation runner missing — DagScheduler requires automationRepo");
+    }
+  }
 
   async tick(dagId?: string): Promise<void> {
     const dags = dagId
@@ -196,13 +204,6 @@ export class DagScheduler {
       reason: message,
     });
 
-    if (!this.automationRepo) {
-      this.log.error("dag scheduler has no automation repo; admission retry will not fire", {
-        dagId,
-        nodeId: node.id,
-      });
-      return;
-    }
     enqueueDagTick(this.automationRepo, dagId, ADMISSION_RETRY_DELAY_MS);
   }
 
@@ -241,38 +242,68 @@ export class DagScheduler {
     return DEFAULT_MAX_CONCURRENT;
   }
 
-  // TODO: extract to sidecar
+  /**
+   * Runs on a 30s interval. Flips running nodes to failed when their session has
+   * terminated, and re-dispatches DAGs that have nodes stuck in ready >60s with
+   * no session (absorbs the sidecar dagStaleReady rule for unattended Docker).
+   */
   async watchdogTick(): Promise<void> {
     const dags = this.repo.list().filter((d) => d.status === "active");
+    const liveStaleKeys = new Set<string>();
+
     for (const dag of dags) {
       let mutated = false;
+      let hasStaleReady = false;
+
       for (const node of dag.nodes) {
-        if (node.status !== "running") continue;
-        if (!node.sessionSlug) continue;
-        const session = this.ctx.sessions.get(node.sessionSlug);
-        if (!session) continue;
-        if (!TERMINAL_SESSION_STATUSES.has(session.status)) continue;
-        const from = node.status;
-        this.repo.updateNode(node.id, {
-          status: "failed",
-          failedReason: `watchdog: session ${node.sessionSlug} terminated as ${session.status}`,
-          completedAt: new Date().toISOString(),
-        });
-        mutated = true;
-        this.ctx.audit.record(
-          "system",
-          "dag.watchdog",
-          { kind: "dag", id: dag.id },
-          { nodeId: node.id, from, to: "failed", sessionStatus: session.status },
-        );
-        this.log.warn("dag watchdog flipped node to failed", {
-          dagId: dag.id,
-          nodeId: node.id,
-          sessionSlug: node.sessionSlug,
-          sessionStatus: session.status,
-        });
+        if (node.status === "running") {
+          if (!node.sessionSlug) continue;
+          const session = this.ctx.sessions.get(node.sessionSlug);
+          if (!session) continue;
+          if (!TERMINAL_SESSION_STATUSES.has(session.status)) continue;
+          const from = node.status;
+          this.repo.updateNode(node.id, {
+            status: "failed",
+            failedReason: `watchdog: session ${node.sessionSlug} terminated as ${session.status}`,
+            completedAt: new Date().toISOString(),
+          });
+          mutated = true;
+          this.ctx.audit.record(
+            "system",
+            "dag.watchdog",
+            { kind: "dag", id: dag.id },
+            { nodeId: node.id, from, to: "failed", sessionStatus: session.status },
+          );
+          this.log.warn("dag watchdog flipped node to failed", {
+            dagId: dag.id,
+            nodeId: node.id,
+            sessionSlug: node.sessionSlug,
+            sessionStatus: session.status,
+          });
+        } else if (node.status === "ready" && !node.sessionSlug) {
+          const key = `${dag.id}:${node.id}`;
+          liveStaleKeys.add(key);
+          const seen = this.staleReadyFirstSeen.get(key);
+          if (!seen) {
+            this.staleReadyFirstSeen.set(key, Date.now());
+          } else if (Date.now() - seen >= STALE_READY_THRESHOLD_MS) {
+            hasStaleReady = true;
+          }
+        }
       }
+
       if (mutated) this.recomputeDagStatus(dag.id);
+
+      if (hasStaleReady) {
+        this.log.warn("dag watchdog: re-dispatching stale-ready dag", { dagId: dag.id });
+        await this.tick(dag.id);
+      }
+    }
+
+    for (const k of [...this.staleReadyFirstSeen.keys()]) {
+      if (!liveStaleKeys.has(k)) {
+        this.staleReadyFirstSeen.delete(k);
+      }
     }
   }
 }

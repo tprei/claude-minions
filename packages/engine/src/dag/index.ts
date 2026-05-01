@@ -89,7 +89,7 @@ export async function dispatchAfterBootReconcile(
 }
 
 export function createDagSubsystem(
-  deps: SubsystemDeps & { automationRepo?: AutomationJobRepo },
+  deps: SubsystemDeps & { automationRepo: AutomationJobRepo },
 ): SubsystemResult<EngineContext["dags"]> {
   const { ctx, db, bus, log, automationRepo } = deps;
 
@@ -98,7 +98,7 @@ export function createDagSubsystem(
     repo,
     ctx,
     log.child({ subsystem: "dag-scheduler" }),
-    automationRepo ?? null,
+    automationRepo,
   );
   const terminalHandler = new DagTerminalHandler(
     repo,

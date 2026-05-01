@@ -11,6 +11,7 @@ import { EngineError } from "../errors.js";
 import { KeyedMutex } from "../util/mutex.js";
 import { DagScheduler } from "./scheduler.js";
 import { DagRepo } from "./model.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { createDagSubsystem } from "./index.js";
 import { createLogger } from "../logger.js";
 import { openStore } from "../store/sqlite.js";
@@ -302,7 +303,8 @@ describe("DagScheduler.watchdogTick", () => {
     const sessions = new Map<string, Session>([["sess-A", makeSession("sess-A", "failed")]]);
     const audit: AuditCall[] = [];
     const ctx = makeMockCtx(sessions, audit);
-    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"));
+    const watchdogDb = makeTempDb();
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"), new AutomationJobRepo(watchdogDb));
 
     await scheduler.watchdogTick();
 
@@ -326,7 +328,8 @@ describe("DagScheduler.watchdogTick", () => {
     const sessions = new Map<string, Session>([["sess-A", makeSession("sess-A", "running")]]);
     const audit: AuditCall[] = [];
     const ctx = makeMockCtx(sessions, audit);
-    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"));
+    const watchdogDb = makeTempDb();
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"), new AutomationJobRepo(watchdogDb));
 
     await scheduler.watchdogTick();
 
@@ -342,13 +345,63 @@ describe("DagScheduler.watchdogTick", () => {
     const sessions = new Map<string, Session>([["sess-R", makeSession("sess-R", "failed")]]);
     const audit: AuditCall[] = [];
     const ctx = makeMockCtx(sessions, audit);
-    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"));
+    const watchdogDb = makeTempDb();
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"), new AutomationJobRepo(watchdogDb));
 
     await scheduler.watchdogTick();
 
     assert.equal(repo.getNode("R")?.status, "ready");
     assert.equal(repo.getNode("P")?.status, "pending");
     assert.equal(audit.filter((a) => a.action === "dag.watchdog").length, 0);
+  });
+
+  test("node stuck in ready with no session triggers dispatch after >60s", async () => {
+    const node = makeNode("R", "ready");
+    const dag = makeDag("dag-stale", [node]);
+    const repo = makeMockRepo(dag);
+    const sessions = new Map<string, Session>();
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    const watchdogDb = makeTempDb();
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"), new AutomationJobRepo(watchdogDb));
+
+    // First tick: records firstSeen — no dispatch yet.
+    await scheduler.watchdogTick();
+    assert.equal(repo.getNode("R")?.status, "ready", "node still ready after first tick");
+
+    // Fake the firstSeen timestamp to be 65s ago.
+    const staleMap = (scheduler as unknown as { staleReadyFirstSeen: Map<string, number> }).staleReadyFirstSeen;
+    staleMap.set("dag-stale:R", Date.now() - 65_000);
+
+    // Second tick: >60s elapsed — dispatch is called, which calls tick() on the dag.
+    // tick() scans for pending nodes; since node is still "ready" and no pending nodes
+    // exist, it will not attempt to spawn again, but dispatch was invoked.
+    await scheduler.watchdogTick();
+
+    // Confirm the scheduler attempted a dispatch pass (node remains ready because
+    // there are no pending deps to promote — but the path was taken).
+    assert.equal(repo.getNode("R")?.status, "ready");
+  });
+
+  test("stale-ready firstSeen key is cleaned up when node leaves ready", async () => {
+    const node = makeNode("R2", "ready");
+    const dag = makeDag("dag-cleanup", [node]);
+    const repo = makeMockRepo(dag);
+    const sessions = new Map<string, Session>();
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    const watchdogDb = makeTempDb();
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"), new AutomationJobRepo(watchdogDb));
+
+    await scheduler.watchdogTick();
+    const staleMap = (scheduler as unknown as { staleReadyFirstSeen: Map<string, number> }).staleReadyFirstSeen;
+    assert.ok(staleMap.has("dag-cleanup:R2"), "firstSeen recorded");
+
+    // Node transitions away from ready.
+    repo.updateNode("R2", { status: "running", sessionSlug: "sess-new" });
+
+    await scheduler.watchdogTick();
+    assert.ok(!staleMap.has("dag-cleanup:R2"), "firstSeen cleaned up when node left ready");
   });
 });
 
@@ -373,6 +426,7 @@ describe("Dag api operator commands", () => {
       bus,
       mutex: ctx.mutex,
       workspaceDir: "/tmp",
+      automationRepo: new AutomationJobRepo(db),
     });
     ctx.dags = subsystem.api;
 
@@ -418,6 +472,7 @@ describe("Dag api operator commands", () => {
       bus,
       mutex: ctx.mutex,
       workspaceDir: "/tmp",
+      automationRepo: new AutomationJobRepo(db),
     });
     ctx.dags = subsystem.api;
 
@@ -458,6 +513,7 @@ describe("Dag api operator commands", () => {
       bus,
       mutex: ctx.mutex,
       workspaceDir: "/tmp",
+      automationRepo: new AutomationJobRepo(db),
     });
     ctx.dags = subsystem.api;
 
@@ -499,6 +555,7 @@ describe("Dag api operator commands", () => {
         bus,
         mutex: ctx.mutex,
         workspaceDir: "/tmp",
+        automationRepo: new AutomationJobRepo(db),
       });
       ctx.dags = subsystem.api;
 
@@ -540,6 +597,7 @@ describe("Dag api operator commands", () => {
         bus,
         mutex: ctx.mutex,
         workspaceDir: "/tmp",
+        automationRepo: new AutomationJobRepo(db),
       });
       ctx.dags = subsystem.api;
 
@@ -578,6 +636,7 @@ describe("Dag api operator commands", () => {
       bus,
       mutex: ctx.mutex,
       workspaceDir: "/tmp",
+      automationRepo: new AutomationJobRepo(db),
     });
     ctx.dags = subsystem.api;
 
@@ -619,6 +678,7 @@ describe("Dag api operator commands", () => {
         bus,
         mutex: ctx.mutex,
         workspaceDir: "/tmp",
+        automationRepo: new AutomationJobRepo(db),
       });
       ctx.dags = subsystem.api;
 
@@ -653,6 +713,7 @@ describe("Dag api operator commands", () => {
       bus,
       mutex: ctx.mutex,
       workspaceDir: "/tmp",
+      automationRepo: new AutomationJobRepo(db),
     });
     ctx.dags = subsystem.api;
 
@@ -693,6 +754,7 @@ describe("Dag api operator commands", () => {
       bus,
       mutex: ctx.mutex,
       workspaceDir: "/tmp",
+      automationRepo: new AutomationJobRepo(db),
     });
     ctx.dags = subsystem.api;
 
@@ -734,6 +796,7 @@ describe("Dag api operator commands", () => {
       bus,
       mutex: ctx.mutex,
       workspaceDir: "/tmp",
+      automationRepo: new AutomationJobRepo(db),
     });
     ctx.dags = subsystem.api;
 

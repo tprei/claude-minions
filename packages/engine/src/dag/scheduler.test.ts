@@ -1,4 +1,4 @@
-import { test, describe } from "node:test";
+import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
@@ -244,6 +244,10 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
 }
 
 describe("DagScheduler", () => {
+  let sharedEnv: AutomationEnv;
+  before(() => { sharedEnv = openAutomationEnv(); });
+  after(() => { sharedEnv.cleanup(); });
+
   test("tick spawns B when A is done", async () => {
     const nodeA = makeNode("A", "done");
     const nodeB = makeNode("B", "pending", ["A"]);
@@ -254,7 +258,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
     await scheduler.tick("dag1");
 
@@ -276,7 +280,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
     await scheduler.tick("dag1");
 
     assert.equal(spawnedSessions.length, 1, "session spawned for A");
@@ -298,7 +302,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
     await scheduler.tick("dag1");
 
@@ -327,7 +331,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
     await scheduler.tick("dag1");
 
@@ -344,7 +348,7 @@ describe("DagScheduler", () => {
       const spawnedSessions: Session[] = [];
       const ctx = makeMockCtx(spawnedSessions);
 
-      const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+      const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
       await scheduler.tick("dag1");
 
@@ -364,7 +368,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
     await scheduler.tick("dag1");
 
@@ -380,7 +384,7 @@ describe("DagScheduler", () => {
     const dag = makeDag("dag1", [nodeA, nodeB]);
     const repo = makeMockRepo(dag) as unknown as DagRepo;
     const ctx = makeMockCtx([]);
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
     await scheduler.tick("dag1");
     assert.equal(repo.get("dag1")?.status, "failed", "initial aggregation flips to failed");
@@ -403,7 +407,7 @@ describe("DagScheduler", () => {
     const repo = makeMockRepo(dag) as unknown as DagRepo;
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
     await scheduler.tick("dag1");
     assert.equal(repo.get("dag1")?.status, "failed");
@@ -425,7 +429,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
     await scheduler.tick("dag1");
 
@@ -446,7 +450,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
     await scheduler.tick("dag1");
 
     assert.equal(spawnedSessions.length, 1, "B spawns once A is in pr-open (PR opened)");
@@ -463,7 +467,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
     await scheduler.tick("dag1");
 
     assert.equal(spawnedSessions.length, 0, "no sessions spawned for an all-merged DAG");
@@ -557,7 +561,7 @@ describe("DagScheduler", () => {
       );
     };
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
     await scheduler.tick("dag1");
 
     const node = repo.getNode("A");
@@ -584,7 +588,7 @@ describe("DagScheduler", () => {
       throw new Error("network blew up");
     };
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
     await scheduler.tick("dag1");
 
     const node = repo.getNode("A");
@@ -608,7 +612,7 @@ describe("DagScheduler", () => {
     const spawnedSessions: Session[] = [];
     const ctx = makeMockCtx(spawnedSessions);
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), sharedEnv.repo);
 
     await scheduler.tick("dag1");
 

@@ -10,6 +10,7 @@ import { openStore } from "../store/sqlite.js";
 import { createLogger } from "../logger.js";
 import { DagRepo } from "./model.js";
 import { DagScheduler } from "./scheduler.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { dispatchAfterBootReconcile } from "./index.js";
 
 interface Env {
@@ -112,7 +113,8 @@ describe("createDagSubsystem boot dispatch", () => {
 
       const spawned: Session[] = [];
       const ctx = makeCtx(spawned);
-      const scheduler = new DagScheduler(env.repo, ctx, createLogger("error"));
+      const automationRepo = new AutomationJobRepo(env.db);
+      const scheduler = new DagScheduler(env.repo, ctx, createLogger("error"), automationRepo);
 
       await dispatchAfterBootReconcile(scheduler, ["dag-boot"], ctx, createLogger("error"));
 
@@ -150,7 +152,8 @@ describe("createDagSubsystem boot dispatch", () => {
 
       const spawned: Session[] = [];
       const ctx = makeCtx(spawned);
-      const scheduler = new DagScheduler(env.repo, ctx, createLogger("error"));
+      const automationRepo = new AutomationJobRepo(env.db);
+      const scheduler = new DagScheduler(env.repo, ctx, createLogger("error"), automationRepo);
 
       await dispatchAfterBootReconcile(scheduler, ["dag-done"], ctx, createLogger("error"));
 

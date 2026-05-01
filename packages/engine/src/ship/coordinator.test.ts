@@ -20,6 +20,7 @@ import os from "node:os";
 import fs from "node:fs";
 import { ShipCoordinator } from "./coordinator.js";
 import { createDagSubsystem } from "../dag/index.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 
 function makeTempDb(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "minions-test-"));
@@ -521,6 +522,7 @@ describe("ShipCoordinator", () => {
       bus: ctx.bus,
       mutex: ctx.mutex,
       workspaceDir: "/tmp",
+      automationRepo: new AutomationJobRepo(db),
     });
     ctx.dags = dagSub.api;
 
