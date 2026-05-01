@@ -289,25 +289,48 @@ describe("runDoctorChecks", () => {
     assert.equal(out.status, "ok");
   });
 
-  it("sidecar-status is degraded when no pidfile exists", async () => {
+  it("sidecar-status is error when no pidfile exists", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-sc-"));
     try {
       const ctx = makeStubCtx({ env: { workspace } as EngineContext["env"] });
       const out = await DOCTOR_CHECKS["sidecar-status"](ctx, {} as NodeJS.ProcessEnv);
-      assert.equal(out.status, "degraded");
-      assert.match(out.detail ?? "", /sidecar/i);
+      assert.equal(out.status, "error");
+      assert.match(out.detail ?? "", /no pidfile/i);
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
     }
   });
 
-  it("sidecar-status is ok when pidfile points at the current process", async () => {
+  it("sidecar-status is degraded when heartbeat is missing or stale", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-sc-"));
     try {
       fs.writeFileSync(path.join(workspace, ".sidecar.pid"), String(process.pid));
       const ctx = makeStubCtx({ env: { workspace } as EngineContext["env"] });
+
+      const noHeartbeat = await DOCTOR_CHECKS["sidecar-status"](ctx, {} as NodeJS.ProcessEnv);
+      assert.equal(noHeartbeat.status, "degraded");
+      assert.match(noHeartbeat.detail ?? "", /stale/i);
+
+      const stale = new Date(Date.now() - 120_000).toISOString();
+      fs.writeFileSync(path.join(workspace, ".sidecar.heartbeat"), stale);
+      const staleOut = await DOCTOR_CHECKS["sidecar-status"](ctx, {} as NodeJS.ProcessEnv);
+      assert.equal(staleOut.status, "degraded");
+      assert.match(staleOut.detail ?? "", new RegExp(stale.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("sidecar-status is ok when pidfile is alive and heartbeat is fresh", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-sc-"));
+    try {
+      fs.writeFileSync(path.join(workspace, ".sidecar.pid"), String(process.pid));
+      fs.writeFileSync(path.join(workspace, ".sidecar.heartbeat"), new Date().toISOString());
+      const ctx = makeStubCtx({ env: { workspace } as EngineContext["env"] });
       const out = await DOCTOR_CHECKS["sidecar-status"](ctx, {} as NodeJS.ProcessEnv);
       assert.equal(out.status, "ok");
+      assert.match(out.detail ?? "", new RegExp(`pid=${process.pid}`));
+      assert.match(out.detail ?? "", /heartbeat \d+s ago/);
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
     }
