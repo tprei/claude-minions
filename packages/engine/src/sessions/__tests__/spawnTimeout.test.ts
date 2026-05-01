@@ -140,7 +140,10 @@ describe("SessionRegistry — provider.spawn hang times out", () => {
     registry.stopStuckPendingSweep();
     __setSpawnTimeoutMsForTests(null);
     db.close();
-    fs.rmSync(workspaceDir, { recursive: true, force: true });
+    // withTimeout only races for rejection; the underlying setupAndSpawn keeps
+    // running, so initScratchRepo's git child processes may still be writing
+    // into .git when we tear down. Retry on ENOTEMPTY to absorb that race.
+    fs.rmSync(workspaceDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   test("hung provider.spawn → setupAndSpawn rejects, session ends 'failed' with attention", async () => {
