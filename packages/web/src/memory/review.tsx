@@ -48,7 +48,7 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
         </div>
         <span className={cx(
           "pill shrink-0",
-          memory.status === "pending" ? "bg-yellow-900/40 text-yellow-300" : "bg-bg-elev/40 text-fg-muted"
+          memory.status === "pending" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300" : "bg-bg-elev/40 text-fg-muted"
         )}>
           {memory.status}
         </span>
@@ -74,8 +74,8 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
       </div>
 
       {memory.rejectionReason && (
-        <div className="rounded-lg bg-red-950/30 border border-red-900/40 p-3">
-          <p className="text-xs text-red-400 mb-1">Rejection reason</p>
+        <div className="rounded-lg bg-red-50 border border-red-200 dark:bg-red-950/30 dark:border-red-900/40 p-3">
+          <p className="text-xs text-red-700 dark:text-red-400 mb-1">Rejection reason</p>
           <p className="text-sm text-fg-muted">{memory.rejectionReason}</p>
         </div>
       )}
@@ -94,7 +94,7 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
           <div className="flex gap-2">
             <button className="btn" onClick={() => setMode("view")}>Back</button>
             <button
-              className="btn bg-red-900/40 border-red-700 text-red-300 hover:bg-red-900/60"
+              className="btn bg-red-100 text-red-800 border-red-300 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300 dark:border-red-700 dark:hover:bg-red-900/60"
               disabled={acting}
               onClick={() => act({ decision: "reject", reason: rejectReason || undefined })}
             >
@@ -135,14 +135,14 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
           {memory.status === "pending" && (
             <>
               <button
-                className="btn bg-green-900/40 border-green-700 text-green-300 hover:bg-green-900/60"
+                className="btn bg-green-100 text-green-800 border-green-300 hover:bg-green-200 dark:bg-green-900/40 dark:text-green-300 dark:border-green-700 dark:hover:bg-green-900/60"
                 disabled={acting}
                 onClick={() => act({ decision: "approve" })}
               >
                 {acting ? "…" : "Approve"}
               </button>
               <button
-                className="btn bg-red-900/40 border-red-700 text-red-300 hover:bg-red-900/60"
+                className="btn bg-red-100 text-red-800 border-red-300 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300 dark:border-red-700 dark:hover:bg-red-900/60"
                 disabled={acting}
                 onClick={() => setMode("reject")}
               >
@@ -159,7 +159,7 @@ export function MemoryReview({ memory, supersededMemory, allMemories, onReview, 
           )}
           <button className="btn" onClick={onEdit}>Edit</button>
           <button
-            className="btn border-red-800 text-red-400 hover:bg-red-950/40 ml-auto"
+            className="btn bg-red-100 text-red-800 border-red-300 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300 dark:border-red-700 dark:hover:bg-red-950/40 ml-auto"
             disabled={acting}
             onClick={() => act({ decision: "delete" })}
           >

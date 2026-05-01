@@ -3,18 +3,18 @@ import type { Memory, MemoryKind, MemoryStatus } from "@minions/shared";
 import { cx } from "../util/classnames.js";
 
 const KIND_COLOR: Record<MemoryKind, string> = {
-  user: "bg-violet-900/40 text-violet-300",
-  feedback: "bg-amber-900/40 text-amber-300",
-  project: "bg-blue-900/40 text-blue-300",
-  reference: "bg-emerald-900/40 text-emerald-300",
+  user: "bg-violet-900/40 text-violet-700 dark:text-violet-300",
+  feedback: "bg-amber-900/40 text-amber-700 dark:text-amber-300",
+  project: "bg-blue-900/40 text-blue-700 dark:text-blue-300",
+  reference: "bg-emerald-900/40 text-emerald-700 dark:text-emerald-300",
 };
 
 const STATUS_COLOR: Record<MemoryStatus, string> = {
-  pending: "bg-yellow-900/40 text-yellow-300",
-  approved: "bg-green-900/40 text-green-300",
-  rejected: "bg-red-900/40 text-red-300",
+  pending: "bg-yellow-900/40 text-yellow-700 dark:text-yellow-300",
+  approved: "bg-green-900/40 text-green-700 dark:text-green-300",
+  rejected: "bg-red-900/40 text-red-700 dark:text-red-300",
   superseded: "bg-bg-elev/40 text-fg-muted",
-  pending_deletion: "bg-red-900/40 text-red-400",
+  pending_deletion: "bg-red-900/40 text-red-700 dark:text-red-400",
 };
 
 const MAX_RENDER = 200;
@@ -110,14 +110,14 @@ function MemoryRow({ memory, onClick, onApprove, onReject, onEdit }: RowProps) {
         {memory.status === "pending" && (
           <>
             <button
-              className="btn text-xs bg-green-900/40 border-green-700 text-green-300 hover:bg-green-900/60"
+              className="btn text-xs bg-green-100 border-green-400 text-green-800 hover:bg-green-200 dark:bg-green-900/40 dark:border-green-700 dark:text-green-300 dark:hover:bg-green-900/60"
               disabled={acting}
               onClick={() => run(onApprove)}
             >
               Approve
             </button>
             <button
-              className="btn text-xs bg-red-900/40 border-red-700 text-red-300 hover:bg-red-900/60"
+              className="btn text-xs bg-red-100 border-red-400 text-red-800 hover:bg-red-200 dark:bg-red-900/40 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/60"
               disabled={acting}
               onClick={() => run(onReject)}
             >
