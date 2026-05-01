@@ -74,6 +74,7 @@ export interface EngineContext {
     openForReview: (slug: string) => Promise<import("@minions/shared").PRSummary | null>;
     retryRebase: (slug: string) => Promise<void>;
     onUpstreamMerged: (slug: string) => Promise<void>;
+    editPRBase: (slug: string, newBase: string) => Promise<void>;
   };
 
   loops: {

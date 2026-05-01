@@ -102,6 +102,7 @@ function makeHarness(sessions: Session[]): RestackHarness {
         }
       },
       onUpstreamMerged: async () => {},
+      editPRBase: async () => {},
     },
     bus: {
       emit: (ev: { kind: string; [k: string]: unknown }) => {

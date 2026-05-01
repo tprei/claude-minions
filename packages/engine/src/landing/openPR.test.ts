@@ -148,6 +148,7 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ens
       openForReview: async () => null,
       retryRebase: async () => {},
       onUpstreamMerged: async () => {},
+      editPRBase: async () => {},
     },
     bus: {
       emit: () => {},

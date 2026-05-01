@@ -44,6 +44,7 @@ import type { JobHandler } from "./automation/types.js";
 import { createCiPollHandler, enqueueCiPoll } from "./automation/handlers/ciPoll.js";
 import { createCiFetchLogsHandler } from "./automation/handlers/ciFetchLogs.js";
 import { createStackLandHandler } from "./automation/handlers/stackLand.js";
+import { createRestackDescendantsHandler } from "./automation/handlers/restackDescendants.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -116,7 +117,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.sessions = wire(createSessionsSubsystem(deps));
   ctx.dags = wire(createDagSubsystem(deps));
   ctx.ship = wire(createShipSubsystem({ ...deps, automationRepo }));
-  ctx.landing = wire(createLandingSubsystem({ ...deps, dagRepo: new DagRepo(db, bus) }));
+  ctx.landing = wire(createLandingSubsystem({ ...deps, dagRepo: new DagRepo(db, bus), automationRepo }));
   ctx.loops = wire(createLoopsSubsystem(deps));
   ctx.variants = wire(createVariantsSubsystem(deps));
   ctx.ci = wire(createCiSubsystem(deps));
@@ -143,6 +144,13 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   automationHandlers.set(
     "stack-land",
     createStackLandHandler({
+      automationRepo,
+      dagRepo: new DagRepo(db, bus),
+    }),
+  );
+  automationHandlers.set(
+    "restack-descendants",
+    createRestackDescendantsHandler({
       automationRepo,
       dagRepo: new DagRepo(db, bus),
     }),
