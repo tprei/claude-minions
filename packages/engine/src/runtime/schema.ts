@@ -460,6 +460,19 @@ const fields: RuntimeField[] = [
     applies: "restart",
   },
   {
+    key: "automationTickSec",
+    label: "Automation runner tick (seconds)",
+    description:
+      "How often the automation job runner polls for due jobs. Restart the engine to apply changes.",
+    type: "number",
+    default: 5,
+    min: 1,
+    max: 60,
+    step: 1,
+    group: "execution",
+    applies: "restart",
+  },
+  {
     key: "bootRecovery",
     label: "Boot recovery enabled",
     description:
