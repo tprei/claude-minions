@@ -79,7 +79,7 @@ export function Sheet({ open, onClose, side = "bottom", title, children, classNa
         )}
         <div
           className="p-4"
-          style={side === "bottom" ? { paddingBottom: "env(safe-area-inset-bottom)" } : undefined}
+          style={side === "bottom" ? { paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" } : undefined}
         >
           {title && (
             <div className="flex items-center justify-between mb-4">

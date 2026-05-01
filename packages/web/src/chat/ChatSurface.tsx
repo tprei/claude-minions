@@ -823,6 +823,7 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
         type="button"
         onClick={() => setOpen(true)}
         className="fixed bottom-4 right-4 btn text-xs z-40 shadow-lg"
+        style={{ marginBottom: "env(safe-area-inset-bottom)" }}
       >
         💬 Open chat (?)
       </button>
