@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { EventBus } from "../../bus/eventBus.js";
-import { SessionRegistry, __setSpawnTimeoutMsForTests } from "../registry.js";
+import {
+  SessionRegistry,
+  STUCK_PENDING_GRACE_MS,
+  __setSpawnTimeoutMsForTests,
+} from "../registry.js";
 import { createLogger } from "../../logger.js";
 import { migrations } from "../../store/migrations.js";
 import type {
@@ -151,7 +155,7 @@ describe("SessionRegistry — provider.spawn hang times out", () => {
     );
     assert.ok(err, "create() must reject when provider.spawn hangs");
     assert.ok(isEngineError(err), "must reject with EngineError");
-    assert.match(String(err), /provider\.spawn timed out/i);
+    assert.match(String(err), /setupAndSpawn timed out/i);
 
     // Yield once so the failSessionWithAttention emits before we read state.
     await flushMicrotasks();
@@ -208,15 +212,15 @@ describe("SessionRegistry — stuck-pending sweep", () => {
     ).run(slug, slug, "p", "task", FAST_PROVIDER, createdAtIso, createdAtIso);
   }
 
-  test("sweep marks sessions older than 60s as failed with attention", () => {
-    const oldIso = new Date(Date.now() - 90_000).toISOString();
+  test("sweep marks sessions older than the grace window as failed with attention", () => {
+    const oldIso = new Date(Date.now() - (STUCK_PENDING_GRACE_MS + 30_000)).toISOString();
     const recentIso = new Date(Date.now() - 5_000).toISOString();
 
     insertPending("stuck-slug", oldIso);
     insertPending("recent-slug", recentIso);
 
     const swept = registry.sweepStuckPending();
-    assert.equal(swept, 1, "only the >60s pending session should be swept");
+    assert.equal(swept, 1, "only the past-grace pending session should be swept");
 
     const stuck = registry.get("stuck-slug")!;
     assert.equal(stuck.status, "failed");

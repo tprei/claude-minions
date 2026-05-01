@@ -113,7 +113,7 @@ export interface SpawnPendingResult {
 }
 
 const DEFAULT_SPAWN_TIMEOUT_MS = 120_000;
-const STUCK_PENDING_GRACE_MS = 180_000;
+export const STUCK_PENDING_GRACE_MS = 180_000;
 const STUCK_PENDING_SWEEP_INTERVAL_MS = 30_000;
 
 let spawnTimeoutMs = DEFAULT_SPAWN_TIMEOUT_MS;
