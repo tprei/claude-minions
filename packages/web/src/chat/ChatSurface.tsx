@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKe
 import type { Session, SessionStatus } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS, EMPTY_TRANSCRIPTS } from "../store/sessionStore.js";
 import { useRootStore } from "../store/root.js";
-import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript } from "../transport/rest.js";
+import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript, deleteSession } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
 import { Diff } from "../components/Diff.js";
 import { Button } from "../components/Button.js";
@@ -15,6 +15,7 @@ import { QuickActions } from "./quickActions.js";
 import { RecoveryFooter } from "./RecoveryFooter.js";
 import { PRPanel } from "./PRPanel.js";
 import { CancelSessionDialog } from "./cancelSession.js";
+import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
@@ -284,6 +285,8 @@ function OperationalHeader({
   const [landing, setLanding] = useState(false);
   const [landError, setLandError] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   function navTo(view: "list" | "dag", slug?: string | null, dagId?: string) {
     const activeId = useConnectionStore.getState().activeId;
@@ -300,6 +303,8 @@ function OperationalHeader({
     !session.pr;
 
   const canCancel = !!conn && CANCELLABLE_STATUSES.has(session.status);
+  const canClose = !!conn && !CANCELLABLE_STATUSES.has(session.status) && !!session.worktreePath;
+  const canDelete = !!conn;
 
   const handleLand = async () => {
     if (!conn || landing) return;
@@ -355,6 +360,26 @@ function OperationalHeader({
             Cancel
           </Button>
         )}
+        {canClose && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCloseOpen(true)}
+            title="Close (cancel + remove worktree, keep history)"
+          >
+            Close
+          </Button>
+        )}
+        {canDelete && (
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => setDeleteOpen(true)}
+            title="Delete session permanently"
+          >
+            Delete
+          </Button>
+        )}
         <button
           type="button"
           onClick={onClose}
@@ -370,6 +395,37 @@ function OperationalHeader({
           onClose={() => setCancelOpen(false)}
           sessions={[{ slug: session.slug, title: session.title }]}
           conn={conn}
+        />
+      )}
+      {conn && (
+        <ConfirmDialog
+          open={closeOpen}
+          onClose={() => setCloseOpen(false)}
+          title="Close session"
+          body={`Cancel ${session.title} (${session.slug}) and remove its worktree on disk? Transcript and history are preserved.`}
+          confirmLabel="Close session"
+          variant="danger"
+          onConfirm={async () => {
+            await postCommand(conn, { kind: "close", sessionSlug: session.slug, removeWorktree: true });
+          }}
+        />
+      )}
+      {conn && (
+        <ConfirmDialog
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          title="Delete session"
+          body={`Permanently delete ${session.title} (${session.slug})? This removes the session row, transcript, screenshots, checkpoints, worktree on disk, and uploads. Cannot be undone.`}
+          confirmLabel="Delete session"
+          variant="danger"
+          onConfirm={async () => {
+            await deleteSession(conn, session.slug);
+            const activeIdNow = useConnectionStore.getState().activeId;
+            if (activeIdNow) {
+              const { query } = parseUrl();
+              setUrlState({ connectionId: activeIdNow, view: "list", sessionSlug: null, query });
+            }
+          }}
         />
       )}
       {landError && (
