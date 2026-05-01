@@ -1,5 +1,6 @@
-import { useEffect, type ReactElement, type ReactNode } from "react";
+import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import { cx } from "../util/classnames.js";
+import { useSwipeToDismiss } from "../pwa/gestures.js";
 
 type SheetSide = "bottom" | "right" | "left";
 
@@ -31,6 +32,8 @@ const slideOut: Record<SheetSide, string> = {
 };
 
 export function Sheet({ open, onClose, side = "bottom", title, children, className }: SheetProps): ReactElement {
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent): void => {
@@ -39,6 +42,11 @@ export function Sheet({ open, onClose, side = "bottom", title, children, classNa
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [open, onClose]);
+
+  useSwipeToDismiss(containerRef, onClose, {
+    direction: "down",
+    enabled: () => side === "bottom" && (containerRef.current?.scrollTop ?? 0) === 0,
+  });
 
   return (
     <div
@@ -56,6 +64,7 @@ export function Sheet({ open, onClose, side = "bottom", title, children, classNa
         aria-hidden="true"
       />
       <div
+        ref={containerRef}
         className={cx(
           "absolute card shadow-2xl transition-transform duration-300",
           sideClass[side],
@@ -63,7 +72,15 @@ export function Sheet({ open, onClose, side = "bottom", title, children, classNa
           className,
         )}
       >
-        <div className="p-4">
+        {side === "bottom" && (
+          <div className="flex justify-center mt-1 mb-2">
+            <div className="w-10 h-1 rounded-full bg-fg-subtle" />
+          </div>
+        )}
+        <div
+          className="p-4"
+          style={side === "bottom" ? { paddingBottom: "env(safe-area-inset-bottom)" } : undefined}
+        >
           {title && (
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-fg">{title}</h2>

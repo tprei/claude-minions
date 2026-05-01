@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 interface SwipeToDismissOptions {
   threshold?: number;
   direction?: "left" | "right" | "down" | "up";
+  enabled?: () => boolean;
 }
 
 export function useSwipeToDismiss(
@@ -12,6 +13,8 @@ export function useSwipeToDismiss(
 ): void {
   const threshold = opts.threshold ?? 60;
   const direction = opts.direction ?? "down";
+  const enabledRef = useRef(opts.enabled);
+  enabledRef.current = opts.enabled;
 
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -20,6 +23,11 @@ export function useSwipeToDismiss(
     if (!el) return;
 
     function onPointerDown(e: PointerEvent) {
+      const gate = enabledRef.current;
+      if (gate && !gate()) {
+        startRef.current = null;
+        return;
+      }
       startRef.current = { x: e.clientX, y: e.clientY };
     }
 
