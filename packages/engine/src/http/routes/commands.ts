@@ -142,6 +142,11 @@ function validateCommand(body: unknown): Command {
         force: typeof b["force"] === "boolean" ? b["force"] : undefined,
       };
     }
+    case "open-for-review":
+      return {
+        kind: "open-for-review",
+        sessionSlug: assertString(b["sessionSlug"], "sessionSlug"),
+      };
     case "retry-rebase":
       return {
         kind: "retry-rebase",
@@ -286,6 +291,10 @@ async function dispatchCommand(cmd: Command, ctx: EngineContext): Promise<Comman
 
     case "land":
       await ctx.landing.land(cmd.sessionSlug, cmd.strategy, cmd.force);
+      return { ok: true };
+
+    case "open-for-review":
+      await ctx.landing.openForReview(cmd.sessionSlug);
       return { ok: true };
 
     case "retry-rebase":

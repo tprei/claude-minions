@@ -40,6 +40,11 @@ export interface LandCommand {
   force?: boolean;
 }
 
+export interface OpenForReviewCommand {
+  kind: "open-for-review";
+  sessionSlug: string;
+}
+
 export interface RetryRebaseCommand {
   kind: "retry-rebase";
   sessionSlug: string;
@@ -123,6 +128,7 @@ export type Command =
   | PlanActionCommand
   | ShipAdvanceCommand
   | LandCommand
+  | OpenForReviewCommand
   | RetryRebaseCommand
   | SubmitFeedbackCommand
   | ForceCommand
