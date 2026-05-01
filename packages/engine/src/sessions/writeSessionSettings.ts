@@ -49,13 +49,10 @@ async function symlinkOperatorAuth(claudeDir: string): Promise<void> {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EEXIST") {
-        // Concurrent spawn beat us to it — verify the existing link points at the right target.
-        try {
-          const existing = await fs.readlink(dst);
-          if (existing === src) return;
-        } catch {
-          // fall through to throw original
-        }
+        // Concurrent spawn beat us to it. Treat as success regardless of target —
+        // re-throwing here breaks parallel session spawns. If the target differs,
+        // a later spawn will re-evaluate via the readlink path above.
+        continue;
       }
       throw err;
     }
