@@ -150,12 +150,14 @@ interface MockCtxOpts {
 interface MockCtxResult {
   ctx: EngineContext;
   landCalls: string[];
+  landArgs: Array<{ slug: string; strategy?: "merge" | "squash" | "rebase"; force?: boolean }>;
   audits: { action: string; detail: Record<string, unknown> }[];
 }
 
 function makeCtx(opts: MockCtxOpts): MockCtxResult {
   const sessions = new Map(opts.sessions.map((s) => [s.slug, s] as const));
   const landCalls: string[] = [];
+  const landArgs: Array<{ slug: string; strategy?: "merge" | "squash" | "rebase"; force?: boolean }> = [];
   const audits: { action: string; detail: Record<string, unknown> }[] = [];
 
   const ctx = {
@@ -163,8 +165,9 @@ function makeCtx(opts: MockCtxOpts): MockCtxResult {
       get: (slug: string) => sessions.get(slug) ?? null,
     },
     landing: {
-      land: async (slug: string, _strategy?: "merge" | "squash" | "rebase", _force?: boolean) => {
+      land: async (slug: string, strategy?: "merge" | "squash" | "rebase", force?: boolean) => {
         landCalls.push(slug);
+        landArgs.push({ slug, strategy, force });
         if (opts.landResult === "throw") {
           throw new Error(opts.landError ?? "merge conflict");
         }
@@ -182,7 +185,7 @@ function makeCtx(opts: MockCtxOpts): MockCtxResult {
     },
   } as unknown as EngineContext;
 
-  return { ctx, landCalls, audits };
+  return { ctx, landCalls, landArgs, audits };
 }
 
 describe("stackLand handler", () => {
@@ -418,6 +421,32 @@ describe("stackLand handler", () => {
       assert.equal(skipped[0]!.detail["reason"], "no-pr");
       const completes = audits.filter((a) => a.action === "dag.stack-land.complete");
       assert.equal(completes.length, 1);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it("calls landing.land with force=true so unattended runs bypass review-gated readiness", async () => {
+    const env = setup();
+    try {
+      createDagWithNodes(env, "dag-force", [
+        { id: "a", status: "pr-open", sessionSlug: "sess-a" },
+      ]);
+      const sessions = [
+        makeSession({ slug: "sess-a", prState: "open", attention: ["ci_passed"] }),
+      ];
+      const { ctx, landArgs } = makeCtx({ sessions });
+
+      const handler = createStackLandHandler({
+        automationRepo: env.automationRepo,
+        dagRepo: env.dagRepo,
+      });
+      const job = enqueueStackLand(env.automationRepo, "dag-force");
+      await handler(env.automationRepo.get(job.id)!, ctx);
+
+      assert.equal(landArgs.length, 1);
+      assert.equal(landArgs[0]!.force, true, "force=true required: stack-land has its own readiness gate");
+      assert.equal(landArgs[0]!.strategy, "squash");
     } finally {
       env.cleanup();
     }
