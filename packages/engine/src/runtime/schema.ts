@@ -306,6 +306,16 @@ const fields: RuntimeField[] = [
     group: "execution",
     applies: "restart",
   },
+  {
+    key: "bootRecovery",
+    label: "Boot recovery enabled",
+    description:
+      "On engine restart, scan ship sessions whose stage was think/plan/verify and raise an attention flag if the session could not be auto-resumed. DAG-stage ships rely on the existing watchdog. Disable to silence the boot scan.",
+    type: "boolean",
+    default: true,
+    group: "execution",
+    applies: "restart",
+  },
 ];
 
 export const runtimeConfigSchema: RuntimeConfigSchema = {
