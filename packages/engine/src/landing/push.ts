@@ -10,7 +10,7 @@ export async function pushBranch(
   const git = simpleGit(worktreePath);
   log.info("pushing branch to origin", { worktreePath, branch });
   try {
-    await git.push(["-u", "origin", branch]);
+    await git.push(["-u", "--force-with-lease", "origin", branch]);
   } catch (err) {
     const message = (err as Error).message;
     throw new EngineError("upstream", `failed to push ${branch} to origin: ${message}`);
