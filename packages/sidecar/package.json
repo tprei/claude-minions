@@ -9,8 +9,7 @@
     "dev": "tsx watch src/cli.ts",
     "start": "node dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test --test-reporter=spec",
-    "lint": "echo skip"
+    "test": "node --import tsx --test --test-reporter=spec"
   },
   "dependencies": {
     "@minions/shared": "workspace:*",

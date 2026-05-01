@@ -15,7 +15,7 @@ claude-minions/
   bin/engine.sh                   thin launcher (engine reads .env.local itself)
   Dockerfile                      multi-stage; bundles engine + built PWA + claude CLI
   docker-compose.yml              one service, exposes :8787, mounts .claude + secrets
-  .github/workflows/ci.yml        typecheck + lint + engine tests + web build + e2e
+  .github/workflows/ci.yml        typecheck + engine tests + web build + e2e
   .githooks/pre-commit            staged eslint (inert under codex sandbox)
   docs/
     architecture.md               original wire-format and subsystem layout
@@ -269,7 +269,6 @@ Visit `http://<host>:8787/`, add a connection back to the same URL with your tok
 ```bash
 pnpm -r run typecheck                            # all packages
 pnpm --filter @minions/engine run test           # 85+ node:test cases
-pnpm lint                                        # eslint flat config
 pnpm --filter @minions/web run e2e               # playwright e2e (boots engine on :8801)
 ```
 

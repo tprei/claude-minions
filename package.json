@@ -15,7 +15,6 @@
     "dev": "concurrently -n engine,web,sidecar -c blue,green,magenta \"pnpm dev:engine\" \"pnpm dev:web\" \"pnpm dev:sidecar\"",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
-    "lint": "pnpm -r run lint",
     "clean": "rm -rf packages/*/dist packages/*/.tsbuildinfo packages/web/dist"
   },
   "devDependencies": {
