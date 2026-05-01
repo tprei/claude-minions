@@ -20,6 +20,7 @@ import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
 import { useSwipeToDismiss } from "../pwa/gestures.js";
+import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { cx } from "../util/classnames.js";
 import type { SlashCommand, SlashContext, SlashUiResult } from "./slashCommands.js";
 import { setUrlState } from "../routing/urlState.js";
@@ -48,6 +49,21 @@ const MIN_WIDTH = 80;
 const MAX_WIDTH = 720;
 const DEFAULT_WIDTH = 380;
 const CHAT_PANEL = "chat";
+const MOBILE_QUERY = "(max-width: 767px)";
+const SWIPE_THRESHOLD = 60;
+
+function hasHorizontalScrollAncestor(target: EventTarget | null, root: HTMLElement): boolean {
+  let node: Element | null = target instanceof Element ? target : null;
+  while (node && node !== root) {
+    const style = window.getComputedStyle(node);
+    const ox = style.overflowX;
+    if ((ox === "auto" || ox === "scroll") && node.scrollWidth > node.clientWidth) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
 
 function clampWidth(n: number): number {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, n));
@@ -614,6 +630,50 @@ const NOOP = (): void => {};
 function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, onOpenHelp, onOpenCost, onOpenExecutePlan }: PanelProps) {
   const events = useSessionTranscript(session);
   const conn = useRootStore((s) => s.getActiveConnection());
+  const isMobile = useMediaQuery(MOBILE_QUERY);
+  const tabPanelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const el = tabPanelRef.current;
+    if (!el) return;
+
+    let start: { x: number; y: number; ignore: boolean } | null = null;
+
+    const onPointerDown = (e: PointerEvent): void => {
+      const ignore = hasHorizontalScrollAncestor(e.target, el);
+      start = { x: e.clientX, y: e.clientY, ignore };
+    };
+
+    const onPointerUp = (e: PointerEvent): void => {
+      const s = start;
+      start = null;
+      if (!s || s.ignore) return;
+      const dx = e.clientX - s.x;
+      const dy = e.clientY - s.y;
+      if (Math.abs(dx) <= Math.abs(dy)) return;
+      if (Math.abs(dx) < SWIPE_THRESHOLD) return;
+      const idx = SURFACE_TABS.findIndex((t) => t.id === activeTab);
+      if (idx < 0) return;
+      const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+      if (nextIdx < 0 || nextIdx >= SURFACE_TABS.length) return;
+      const next = SURFACE_TABS[nextIdx];
+      if (next) onTabChange(next.id);
+    };
+
+    const onPointerCancel = (): void => {
+      start = null;
+    };
+
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", onPointerCancel);
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", onPointerCancel);
+    };
+  }, [isMobile, activeTab, onTabChange]);
 
   const handleSlashCommand = useCallback(
     async (cmd: SlashCommand, args: string[]) => {
@@ -694,6 +754,7 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
       <OperationalHeader session={session} onClose={onClose} onOpenExecutePlan={onOpenExecutePlan} />
       <SurfaceTablist tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
       <div
+        ref={tabPanelRef}
         role="tabpanel"
         aria-labelledby={`surface-tab-${activeTab}`}
         className="flex-1 min-h-0 flex flex-col overflow-hidden"
