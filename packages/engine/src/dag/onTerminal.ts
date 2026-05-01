@@ -3,6 +3,8 @@ import type { EngineContext } from "../context.js";
 import type { DagRepo } from "./model.js";
 import type { Logger } from "../logger.js";
 import type { DagScheduler } from "./scheduler.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
+import { enqueueVerifyChild } from "../automation/handlers/verifyChild.js";
 
 const DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS = 3;
 
@@ -90,6 +92,7 @@ export class DagTerminalHandler {
           failedReason: null,
         });
         this.log.info("dag node pr-open", { dagId: dag.id, nodeId: node.id, sessionSlug: session.slug });
+        if (pr) this.enqueueVerifierSafe(session.slug);
         await this.scheduler.tick(dag.id);
         await this.maybeReleaseShipParent(dag.id);
         return;
@@ -176,6 +179,18 @@ export class DagTerminalHandler {
     } catch (err) {
       this.log.error("failed to release ship parent after dag completion", {
         dagId,
+        err: (err as Error).message,
+      });
+    }
+  }
+
+  private enqueueVerifierSafe(sessionSlug: string): void {
+    try {
+      const repo = new AutomationJobRepo(this.ctx.db);
+      enqueueVerifyChild(repo, sessionSlug);
+    } catch (err) {
+      this.log.warn("enqueueVerifyChild failed", {
+        slug: sessionSlug,
         err: (err as Error).message,
       });
     }

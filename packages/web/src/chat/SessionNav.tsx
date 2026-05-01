@@ -46,6 +46,7 @@ const MODE_COLOR: Record<SessionMode, string> = {
   ship: "bg-bg-elev text-fg-muted",
   "rebase-resolver": "bg-bg-elev text-fg-muted",
   loop: "bg-bg-elev text-fg-muted",
+  "verify-child": "bg-bg-elev text-fg-muted",
 };
 
 function truncate(text: string, max: number): string {

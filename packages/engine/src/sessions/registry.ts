@@ -69,6 +69,9 @@ export function derivePermissionTier(
   if (mode === "think") {
     return "read";
   }
+  if (mode === "verify-child") {
+    return "read";
+  }
   if (mode === "ship") {
     const stage = shipStage ?? "think";
     return READ_ONLY_STAGES.has(stage) ? "read" : "full";
