@@ -22,6 +22,10 @@ async function refetch(conn: Connection, isDisposed: () => boolean): Promise<voi
   await saveSnapshot(conn.id, { sessions, dags });
 }
 
+export async function refetchConnection(conn: Connection): Promise<void> {
+  await refetch(conn, () => false);
+}
+
 async function fetchVersion(conn: Connection, isDisposed: () => boolean): Promise<void> {
   try {
     const info = await getVersion(conn);
