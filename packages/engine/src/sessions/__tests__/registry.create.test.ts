@@ -245,6 +245,94 @@ describe("SessionRegistry.create runtime defaultSessionBudgetUsd fallback", () =
   });
 });
 
+describe("SessionRegistry.create defaultSelfHealCi runtime flag", () => {
+  let db: Database.Database;
+  let bus: EventBus;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    db = makeInMemoryDb();
+    bus = new EventBus();
+    workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "registry-create-selfheal-"),
+    );
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  test("flag on, no metadata override → metadata.selfHealCi === true", async () => {
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx({ defaultSelfHealCi: true }),
+    });
+
+    const session = await registry.create({
+      prompt: "task with default self-heal",
+      mode: "task",
+    });
+
+    assert.equal(session.metadata["selfHealCi"], true);
+  });
+
+  test("flag on, caller passes selfHealCi=false → caller wins", async () => {
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx({ defaultSelfHealCi: true }),
+    });
+
+    const session = await registry.create({
+      prompt: "explicit opt-out",
+      mode: "task",
+      metadata: { selfHealCi: false },
+    });
+
+    assert.equal(session.metadata["selfHealCi"], false);
+  });
+
+  test("flag off → metadata.selfHealCi stays unset", async () => {
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx({ defaultSelfHealCi: false }),
+    });
+
+    const session = await registry.create({
+      prompt: "no flag, no override",
+      mode: "task",
+    });
+
+    assert.equal("selfHealCi" in session.metadata, false);
+  });
+
+  test("flag on but mode=ship → not applied", async () => {
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx({ defaultSelfHealCi: true }),
+    });
+
+    const session = await registry.create({
+      prompt: "ship session",
+      mode: "ship",
+    });
+
+    assert.equal("selfHealCi" in session.metadata, false);
+  });
+});
+
 describe("SessionRegistry.create slug suggestions", () => {
   let db: Database.Database;
   let bus: EventBus;

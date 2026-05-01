@@ -426,6 +426,15 @@ export class SessionRegistry {
       }
     }
 
+    const reqMetadata: Record<string, unknown> = { ...(req.metadata ?? {}) };
+    if (
+      mode === "task" &&
+      !("selfHealCi" in reqMetadata) &&
+      ctx.runtime.effective()["defaultSelfHealCi"] === true
+    ) {
+      reqMetadata["selfHealCi"] = true;
+    }
+
     // Hold the per-slug mutex from the moment we insert the session row through
     // the end of setupAndSpawn (and the final buildSession read). delete() takes
     // the same mutex, so a concurrent cleanup cannot drop the parent row (and
@@ -442,7 +451,7 @@ export class SessionRegistry {
         providerName, req.modelHint ?? null,
         now, now, null, null, null,
         null, null, null, null,
-        JSON.stringify(req.metadata ?? {}),
+        JSON.stringify(reqMetadata),
         permissionTier,
         bucket,
         costBudgetUsd ?? null,
