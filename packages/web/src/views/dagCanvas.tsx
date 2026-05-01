@@ -45,19 +45,19 @@ const DAG_MAX_WIDTH = 1600;
 
 const STATUS_COLOR: Record<DAGNodeStatus, string> = {
   pending: "border-border bg-bg-soft text-fg-muted",
-  ready: "border-blue-600 bg-blue-950 text-blue-300",
-  running: "border-green-500 bg-green-950 text-green-300",
-  done: "border-teal-600 bg-teal-950 text-teal-300",
-  failed: "border-red-500 bg-red-950 text-red-300",
+  ready: "border-blue-400 bg-blue-100 text-blue-800 dark:border-blue-600 dark:bg-blue-950 dark:text-blue-300",
+  running: "border-green-400 bg-green-100 text-green-800 dark:border-green-500 dark:bg-green-950 dark:text-green-300",
+  done: "border-teal-400 bg-teal-100 text-teal-800 dark:border-teal-600 dark:bg-teal-950 dark:text-teal-300",
+  failed: "border-red-400 bg-red-100 text-red-800 dark:border-red-500 dark:bg-red-950 dark:text-red-300",
   skipped: "border-border bg-bg-elev text-fg-subtle",
-  "ci-pending": "border-amber-500 bg-amber-950 text-amber-300",
-  "ci-failed": "border-orange-500 bg-orange-950 text-orange-300",
-  landed: "border-purple-600 bg-purple-950 text-purple-300",
-  "pr-open": "border-indigo-500 bg-indigo-950 text-indigo-300",
-  merged: "border-purple-700 bg-purple-950 text-purple-200",
-  rebasing: "border-yellow-500 bg-yellow-950 text-yellow-300",
-  "rebase-conflict": "border-red-700 bg-red-950 text-red-400",
-  cancelled: "border-zinc-600 bg-zinc-900 text-zinc-400",
+  "ci-pending": "border-amber-400 bg-amber-100 text-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300",
+  "ci-failed": "border-orange-400 bg-orange-100 text-orange-800 dark:border-orange-500 dark:bg-orange-950 dark:text-orange-300",
+  landed: "border-purple-400 bg-purple-100 text-purple-800 dark:border-purple-600 dark:bg-purple-950 dark:text-purple-300",
+  "pr-open": "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-500 dark:bg-indigo-950 dark:text-indigo-300",
+  merged: "border-purple-400 bg-purple-100 text-purple-900 dark:border-purple-700 dark:bg-purple-950 dark:text-purple-200",
+  rebasing: "border-yellow-400 bg-yellow-100 text-yellow-800 dark:border-yellow-500 dark:bg-yellow-950 dark:text-yellow-300",
+  "rebase-conflict": "border-red-400 bg-red-100 text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-400",
+  cancelled: "border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-400",
 };
 
 const NODE_W = 180;
@@ -65,9 +65,9 @@ const NODE_H = 80;
 const PARENT_NODE_ID = "__parent__";
 
 const CI_PILL_CLASS: Record<DagNodeCiSummary["state"], string> = {
-  passing: "border-green-700 bg-green-950/70 text-green-300",
-  failing: "border-red-700 bg-red-950/70 text-red-300",
-  pending: "border-zinc-600 bg-zinc-900/70 text-zinc-300",
+  passing: "border-green-400 bg-green-100/70 text-green-800 dark:border-green-700 dark:bg-green-950/70 dark:text-green-300",
+  failing: "border-red-400 bg-red-100/70 text-red-800 dark:border-red-700 dark:bg-red-950/70 dark:text-red-300",
+  pending: "border-zinc-300 bg-zinc-100/70 text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900/70 dark:text-zinc-300",
 };
 
 const CI_PILL_LABEL: Record<DagNodeCiSummary["state"], string> = {
@@ -234,7 +234,7 @@ export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
       data-testid="dag-node"
       data-node-id={node.id}
     >
-      <Handle type="target" position={Position.Top} className="!bg-zinc-600" />
+      <Handle type="target" position={Position.Top} className="!bg-zinc-400 dark:!bg-zinc-600" />
       {showAttention && (
         <span
           aria-label={hasCiFailedAttention ? "CI failed" : "needs attention"}
@@ -247,7 +247,7 @@ export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
                 ? "node failed"
                 : "session has attention flags"
           }
-          className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none border border-red-300 shadow"
+          className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none border border-red-700 dark:border-red-300 shadow"
         >
           !
         </span>
@@ -279,13 +279,13 @@ export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
               e.stopPropagation();
               onRequestRetry(node.id);
             }}
-            className="text-[10px] px-1.5 py-0.5 rounded border border-red-700 bg-red-950/60 text-red-300 hover:bg-red-900/60 hover:text-red-200"
+            className="text-[10px] px-1.5 py-0.5 rounded border border-red-400 bg-red-100/60 text-red-700 hover:bg-red-200/60 hover:text-red-800 dark:border-red-700 dark:bg-red-950/60 dark:text-red-300 dark:hover:bg-red-900/60 dark:hover:text-red-200"
           >
             retry
           </button>
         )}
       </div>
-      <Handle type="source" position={Position.Bottom} className="!bg-zinc-600" />
+      <Handle type="source" position={Position.Bottom} className="!bg-zinc-400 dark:!bg-zinc-600" />
     </div>
   );
 }
@@ -300,7 +300,7 @@ function ParentNodeComponent({ data }: NodeProps<ParentNodeData>) {
     >
       <div className="text-[10px] uppercase tracking-wide opacity-60">parent</div>
       <div className="font-medium leading-tight line-clamp-2 break-words">{data.sessionSlug}</div>
-      <Handle type="source" position={Position.Bottom} className="!bg-zinc-600" />
+      <Handle type="source" position={Position.Bottom} className="!bg-zinc-400 dark:!bg-zinc-600" />
     </div>
   );
 }
