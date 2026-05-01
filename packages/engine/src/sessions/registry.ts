@@ -1089,9 +1089,25 @@ export class SessionRegistry {
         });
         log.info("resumed session", { slug });
       } catch (err) {
-        log.error("failed to resume session", { slug, err: String(err) });
+        const errString = String(err);
+        if (/No deferred tool marker found/i.test(errString)) {
+          log.warn("session resume skipped: stale deferred-tool marker after engine restart", {
+            slug,
+            err: errString,
+          });
+          this.failSessionWithAttention(
+            slug,
+            "resume failed: stale marker after engine restart; please retry or re-dispatch",
+          );
+          ctx.audit.record("system", "session.resume.failed", { kind: "session", id: slug }, {
+            reason: "stale_marker",
+            error: errString,
+          });
+          continue;
+        }
+        log.error("failed to resume session", { slug, err: errString });
         ctx.audit.record("system", "session.resume.failed", { kind: "session", id: slug }, {
-          error: String(err),
+          error: errString,
         });
         this.updateSessionStatus.run("failed", nowIso(), nowIso(), slug);
         const updatedRow = this.getSessionRow(slug)!;

@@ -294,6 +294,97 @@ describe("resume on boot", () => {
     }
   });
 
+  test("(a3) sessions: resumeAllActive tolerates stale deferred-tool marker and continues resuming other sessions", async () => {
+    const STALE_PROVIDER_NAME = "stale-marker-test";
+    const failingSlugs = new Set<string>();
+
+    const staleMarkerProvider: AgentProvider = {
+      name: STALE_PROVIDER_NAME,
+      async spawn(opts) {
+        return buildSilentHandle(`stale-${opts.sessionSlug}`);
+      },
+      async resume(opts) {
+        if (failingSlugs.has(opts.sessionSlug)) {
+          throw new Error(
+            "Error: No deferred tool marker found in the resumed session. Either the session was not deferred, the marker is stale (tool already ran), or it exceeds the tail-scan window.",
+          );
+        }
+        return buildSilentHandle(opts.externalId ?? `stale-${opts.sessionSlug}`);
+      },
+      parseStreamChunk(_buf: string, state: ParseStreamState) {
+        return { events: [], state };
+      },
+      detectQuotaError(_text: string) {
+        return false;
+      },
+    };
+    registerProvider(staleMarkerProvider);
+
+    const db = makeDb();
+    const bus = new EventBus();
+    const workspaceDir = makeWorkspace();
+    const audit = makeAudit(db);
+
+    const ctx = makeCtx({ db, bus, workspaceDir, audit });
+
+    const failingSlug = newSlug();
+    const okSlug = newSlug();
+    failingSlugs.add(failingSlug);
+
+    for (const slug of [failingSlug, okSlug]) {
+      const worktreePath = path.join(workspaceDir, slug);
+      fs.mkdirSync(worktreePath, { recursive: true });
+      insertSessionRow(db, {
+        slug,
+        mode: "task",
+        status: "running",
+        worktreePath,
+        provider: STALE_PROVIDER_NAME,
+      });
+    }
+
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: ctx.log,
+      workspaceDir,
+      ctx,
+    });
+
+    try {
+      await registry.resumeAllActive();
+
+      const failedRow = db
+        .prepare(`SELECT status, attention FROM sessions WHERE slug = ?`)
+        .get(failingSlug) as { status: string; attention: string } | undefined;
+      assert.equal(failedRow?.status, "failed", "stale-marker session should be marked failed");
+      const attention = JSON.parse(failedRow!.attention) as Array<{ kind: string; message: string }>;
+      const manual = attention.find((a) => a.kind === "manual_intervention");
+      assert.ok(manual, "expected manual_intervention attention flag");
+      assert.match(manual!.message, /stale marker/i);
+
+      const okRow = db
+        .prepare(`SELECT status FROM sessions WHERE slug = ?`)
+        .get(okSlug) as { status: string } | undefined;
+      assert.equal(okRow?.status, "running", "non-failing session should still be running");
+
+      const events = listAudit(db);
+      const failEvent = events.find(
+        (e) => e.action === "session.resume.failed" && e.target?.id === failingSlug,
+      );
+      assert.ok(failEvent, "expected session.resume.failed audit event");
+      const detail = failEvent?.detail as Record<string, unknown> | undefined;
+      assert.equal(detail?.["reason"], "stale_marker");
+
+      const resumeEvent = events.find(
+        (e) => e.action === "session.resume" && e.target?.id === okSlug,
+      );
+      assert.ok(resumeEvent, "expected session.resume audit event for non-failing session");
+    } finally {
+      await registry.stop(okSlug).catch(() => {});
+    }
+  });
+
   test("(a2) sessions: resumeAllActive marks failed when worktree_path missing", async () => {
     const db = makeDb();
     const bus = new EventBus();
