@@ -366,7 +366,7 @@ test("stop clears interval timer and awaits in-flight tick", async () => {
     nowVal = T0 + 2 * 60 * 60 * 1000;
 
     assert.ok(timeoutCb, "timeout callback must be captured");
-    timeoutCb!();
+    (timeoutCb as unknown as () => void)();
 
     assert.ok(intervalCb, "interval callback must be captured after timeout fires");
 
