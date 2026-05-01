@@ -47,6 +47,58 @@ export function useSwipeToDismiss(
   }, [ref, onDismiss, threshold, direction]);
 }
 
+interface EdgeSwipeOptions {
+  edge?: "left" | "right";
+  threshold?: number;
+  edgeWidth?: number;
+}
+
+export function useEdgeSwipe(
+  ref: React.RefObject<HTMLElement | null>,
+  onTrigger: () => void,
+  opts: EdgeSwipeOptions = {},
+): void {
+  const edge = opts.edge ?? "left";
+  const threshold = opts.threshold ?? 60;
+  const edgeWidth = opts.edgeWidth ?? 20;
+
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    function onPointerDown(e: PointerEvent) {
+      const target = el;
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      const fromLeft = e.clientX - rect.left;
+      const fromRight = rect.right - e.clientX;
+      const armed = edge === "left" ? fromLeft <= edgeWidth : fromRight <= edgeWidth;
+      if (armed) {
+        startRef.current = { x: e.clientX, y: e.clientY };
+      } else {
+        startRef.current = null;
+      }
+    }
+
+    function onPointerUp(e: PointerEvent) {
+      if (!startRef.current) return;
+      const dx = e.clientX - startRef.current.x;
+      startRef.current = null;
+      const exceeded = edge === "left" ? dx > threshold : -dx > threshold;
+      if (exceeded) onTrigger();
+    }
+
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointerup", onPointerUp);
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [ref, onTrigger, edge, threshold, edgeWidth]);
+}
+
 interface PullToRefreshOptions {
   threshold?: number;
 }

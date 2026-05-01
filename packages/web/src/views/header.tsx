@@ -8,8 +8,6 @@ import { cx } from "../util/classnames.js";
 import { sseStatusStore, type SseStatus } from "../transport/sseStatus.js";
 import { registerPush, unregisterPush, usePushPermission } from "../pwa/push.js";
 import { ThemeToggle } from "../pwa/ThemeToggle.js";
-import { setUrlState } from "../routing/urlState.js";
-import { parseUrl } from "../routing/parseUrl.js";
 
 interface PushApi {
   get: (path: string) => Promise<unknown>;
@@ -160,7 +158,7 @@ export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): 
         <button
           onClick={() => setPickerOpen(v => !v)}
           className={cx(
-            "pill border border-border bg-bg-soft hover:bg-bg-elev transition-colors cursor-pointer gap-2 pr-3",
+            "pill border border-border bg-bg-soft hover:bg-bg-elev transition-colors cursor-pointer gap-2 pr-3 min-h-11 sm:min-h-0",
             pickerOpen && "border-accent/60",
           )}
         >
@@ -191,7 +189,11 @@ export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): 
         )}
       </div>
 
-      {activeId && <VersionPopover connId={activeId} />}
+      {activeId && (
+        <div className="hidden sm:block">
+          <VersionPopover connId={activeId} />
+        </div>
+      )}
 
       {activeId && <SseStatusPill connId={activeId} />}
 
@@ -207,33 +209,13 @@ export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): 
         <ThemeToggle />
       </div>
 
-      {activeId && <MobileNewSessionButton activeId={activeId} />}
-
       <MobileActions
         resourceIndicator={resourceIndicator}
         installPrompt={installPrompt}
         api={api ?? null}
+        connId={activeId ?? null}
       />
     </div>
-  );
-}
-
-function MobileNewSessionButton({ activeId }: { activeId: string }): ReactElement {
-  function openNew(): void {
-    const { sessionSlug, query } = parseUrl();
-    setUrlState({ connectionId: activeId, view: "new", sessionSlug, query });
-  }
-  return (
-    <button
-      type="button"
-      data-testid="header-new-session"
-      onClick={openNew}
-      aria-label="New session"
-      title="New session"
-      className="sm:hidden w-8 h-8 flex items-center justify-center rounded-lg bg-accent text-white hover:bg-accent-soft transition-colors flex-shrink-0"
-    >
-      <span className="text-base leading-none">+</span>
-    </button>
   );
 }
 
@@ -241,9 +223,10 @@ interface MobileActionsProps {
   resourceIndicator?: ReactNode;
   installPrompt?: ReactNode;
   api: PushApi | null;
+  connId: string | null;
 }
 
-function MobileActions({ resourceIndicator, installPrompt, api }: MobileActionsProps): ReactElement {
+function MobileActions({ resourceIndicator, installPrompt, api, connId }: MobileActionsProps): ReactElement {
   const [open, setOpen] = useState(false);
   return (
     <div className="sm:hidden relative flex-shrink-0">
@@ -253,7 +236,7 @@ function MobileActions({ resourceIndicator, installPrompt, api }: MobileActionsP
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label="More actions"
-        className="w-8 h-8 flex items-center justify-center rounded-lg text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors"
+        className="w-11 h-11 flex items-center justify-center rounded-lg text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors"
       >
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h.01M12 12h.01M19 12h.01" />
@@ -264,7 +247,7 @@ function MobileActions({ resourceIndicator, installPrompt, api }: MobileActionsP
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} aria-hidden="true" />
           <div
             data-testid="header-mobile-actions"
-            className="absolute right-0 top-9 z-40 card p-2 flex flex-col items-stretch gap-1 shadow-2xl min-w-[180px]"
+            className="absolute right-0 top-12 z-40 card p-2 flex flex-col items-stretch gap-1 shadow-2xl min-w-[180px]"
           >
             {resourceIndicator && (
               <div className="flex items-center gap-2 px-2 py-1">
@@ -283,6 +266,12 @@ function MobileActions({ resourceIndicator, installPrompt, api }: MobileActionsP
               <ThemeToggle />
               <span className="text-xs text-fg-muted">Theme</span>
             </div>
+            {connId && (
+              <div className="flex items-center gap-2 px-2 py-1">
+                <VersionPopover connId={connId} />
+                <span className="text-xs text-fg-muted">Version</span>
+              </div>
+            )}
           </div>
         </>
       )}

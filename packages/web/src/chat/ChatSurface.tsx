@@ -18,6 +18,7 @@ import { CancelSessionDialog } from "./cancelSession.js";
 import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
+import { useSwipeToDismiss } from "../pwa/gestures.js";
 import { cx } from "../util/classnames.js";
 import type { SlashCommand, SlashContext, SlashUiResult } from "./slashCommands.js";
 import { setUrlState } from "../routing/urlState.js";
@@ -679,6 +680,15 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
     setWidth((w) => clampWidth(w - delta));
   }, []);
 
+  const primaryRef = useRef<HTMLDivElement | null>(null);
+  const closeToList = useCallback(() => {
+    const activeIdNow = useConnectionStore.getState().activeId;
+    if (!activeIdNow) return;
+    const { view, query } = parseUrl();
+    setUrlState({ connectionId: activeIdNow, view, sessionSlug: null, query });
+  }, []);
+  useSwipeToDismiss(primaryRef, closeToList, { direction: "right", threshold: 80 });
+
   if (!session) return null;
 
   const modals = (
@@ -694,15 +704,9 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
   );
 
   if (primary) {
-    const closeToList = () => {
-      const activeIdNow = useConnectionStore.getState().activeId;
-      if (!activeIdNow) return;
-      const { view, query } = parseUrl();
-      setUrlState({ connectionId: activeIdNow, view, sessionSlug: null, query });
-    };
     return (
       <>
-        <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-bg-soft">
+        <div ref={primaryRef} className="flex-1 min-w-0 min-h-0 flex flex-col bg-bg-soft">
           <SurfacePanel
             session={session}
             activeTab={activeTab}
