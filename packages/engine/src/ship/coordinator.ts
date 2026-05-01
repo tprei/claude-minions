@@ -13,6 +13,8 @@ import {
 } from "./stages.js";
 import { parseDagFromTranscript } from "../dag/parser.js";
 import { EngineError } from "../errors.js";
+import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
+import { enqueueStackLand } from "../automation/handlers/stackLand.js";
 
 const THINK_MIN_ASSISTANT_TEXT_LENGTH = 80;
 
@@ -76,6 +78,7 @@ export class ShipCoordinator {
     private readonly db: Database.Database,
     private readonly ctx: EngineContext,
     private readonly log: Logger,
+    private readonly automationRepo: AutomationJobRepo | null = null,
   ) {
     this.stmtGetState = db.prepare(`SELECT * FROM ship_state WHERE session_slug = ?`);
     this.stmtUpsertState = db.prepare(`
@@ -188,6 +191,25 @@ export class ShipCoordinator {
           slug,
           message: (e as Error).message,
         });
+      }
+
+      if (this.automationRepo) {
+        const dag = this.ctx.dags.list().find((d) => d.rootSessionSlug === slug);
+        if (dag) {
+          try {
+            enqueueStackLand(this.automationRepo, dag.id);
+            this.log.info("stack-land job enqueued for ship verify", {
+              slug,
+              dagId: dag.id,
+            });
+          } catch (e) {
+            this.log.warn("failed to enqueue stack-land job on verify", {
+              slug,
+              dagId: dag.id,
+              message: (e as Error).message,
+            });
+          }
+        }
       }
 
       const ready = await this.readinessReady(slug);
