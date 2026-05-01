@@ -835,7 +835,7 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
     return (
       <>
         <Sheet open={open} onClose={() => setOpen(false)} title={session.title}>
-          <div className="h-[80vh] flex flex-col">
+          <div className="h-[80dvh] flex flex-col">
             <SurfacePanel
               session={session}
               activeTab={activeTab}
