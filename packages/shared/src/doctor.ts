@@ -16,3 +16,21 @@ export interface DoctorCheck {
   detail?: string;
   checkedAt: string;
 }
+
+export type AlertKind =
+  | "stalled-pending"
+  | "human-input-stuck"
+  | "automation-exhausted"
+  | "disk-pressure"
+  | "github-auth"
+  | "provider-auth"
+  | "repeated-ci-fail";
+
+export type AlertSeverity = "info" | "warn" | "error";
+
+export interface Alert {
+  kind: AlertKind;
+  severity: AlertSeverity;
+  count?: number;
+  detail?: string;
+}
