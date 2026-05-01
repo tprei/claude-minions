@@ -206,7 +206,7 @@ function ScreenshotsPanel({ session }: { session: Session }) {
 
   if (loading) return <div className="flex items-center justify-center h-full"><Spinner /></div>;
   return (
-    <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-2">
+    <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
       {screenshots.length === 0 && <p className="text-sm text-fg-subtle col-span-2">No screenshots.</p>}
       {screenshots.map((s) => (
         <div key={s.filename} className="flex flex-col gap-1">
