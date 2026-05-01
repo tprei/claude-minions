@@ -42,6 +42,7 @@ import { AutomationJobRepo } from "./store/repos/automationJobRepo.js";
 import { createAutomationRunner } from "./automation/runner.js";
 import type { JobHandler } from "./automation/types.js";
 import { createCiPollHandler, enqueueCiPoll } from "./automation/handlers/ciPoll.js";
+import { createCiFetchLogsHandler } from "./automation/handlers/ciFetchLogs.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -133,6 +134,10 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   const automationRepo = new AutomationJobRepo(db);
   const automationHandlers = new Map<string, JobHandler>();
   automationHandlers.set("ci-poll", createCiPollHandler({ repo: automationRepo }));
+  automationHandlers.set(
+    "ci-fetch-logs",
+    createCiFetchLogsHandler({ workspaceDir: env.workspace }),
+  );
   const automationRunner = createAutomationRunner({
     repo: automationRepo,
     ctx,

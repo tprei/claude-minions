@@ -6,6 +6,8 @@ import { parseGithubRemote } from "../github/parseRemote.js";
 import { onPrUpdated as handlePrUpdated } from "./prLifecycle.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
 import { DagRepo } from "../dag/model.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
+import { enqueueCiFetchLogs } from "../automation/handlers/ciFetchLogs.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -322,6 +324,7 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
   const { ctx, log, db, bus } = deps;
   const sessionRepo = new SessionRepo(db);
   const dagRepo = new DagRepo(db, bus);
+  const automationRepo = new AutomationJobRepo(db);
 
   async function fetchPrAndChecks(
     owner: string,
@@ -338,6 +341,29 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     const pr = JSON.parse(prJson) as GhPrView;
     const checks = rollupToChecks(pr.statusCheckRollup);
     return { pr, checks };
+  }
+
+  async function findLatestFailedRunId(
+    owner: string,
+    repo: string,
+    head: string,
+  ): Promise<string | null> {
+    try {
+      const listJson = await runGh([
+        "run", "list",
+        "--repo", `${owner}/${repo}`,
+        "--branch", head,
+        "--status", "failure",
+        "--limit", "1",
+        "--json", "databaseId",
+      ]);
+      const runs = JSON.parse(listJson) as { databaseId: number }[];
+      const runId = runs[0]?.databaseId;
+      return runId ? String(runId) : null;
+    } catch (err) {
+      log.warn("ci runId lookup failed", { head, err: (err as Error).message });
+      return null;
+    }
   }
 
   async function fetchFailedLogs(owner: string, repo: string, head: string): Promise<string> {
@@ -460,18 +486,35 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
 
       if (decision.kind === "success") {
         await applySelfHealSuccess(slug);
-      } else if (decision.kind === "retry") {
-        await applySelfHealRetry(
-          slug,
-          decision.nextAttempts,
-          decision.failedNames,
-          owner,
-          repoName,
-          prData.headRefName,
-          prNumber,
-        );
-      } else if (decision.kind === "exhausted") {
-        await applySelfHealExhausted(slug, fresh.attention, decision.failedNames, decision.attempts);
+      } else if (decision.kind === "retry" || decision.kind === "exhausted") {
+        const runId = await findLatestFailedRunId(owner, repoName, prData.headRefName);
+        if (runId) {
+          try {
+            enqueueCiFetchLogs(automationRepo, {
+              sessionSlug: slug,
+              runId,
+              failedJobNames: decision.failedNames,
+            });
+          } catch (err) {
+            log.warn("ci poll: failed to enqueue ci-fetch-logs", {
+              slug,
+              err: (err as Error).message,
+            });
+          }
+        }
+        if (decision.kind === "retry") {
+          await applySelfHealRetry(
+            slug,
+            decision.nextAttempts,
+            decision.failedNames,
+            owner,
+            repoName,
+            prData.headRefName,
+            prNumber,
+          );
+        } else {
+          await applySelfHealExhausted(slug, fresh.attention, decision.failedNames, decision.attempts);
+        }
       }
     } else {
       const raisedAt = new Date().toISOString();
