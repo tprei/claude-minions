@@ -219,6 +219,7 @@ function makeMockCtx(
       },
       list: (): AuditEvent[] => [],
     },
+    lifecycle: {} as EngineContext["lifecycle"],
     dags: {} as EngineContext["dags"],
     ship: {} as EngineContext["ship"],
     landing: {} as EngineContext["landing"],

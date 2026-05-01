@@ -19,6 +19,7 @@ import { createRuntimeSubsystem } from "./runtime/index.js";
 import { createMemorySubsystem } from "./memory/index.js";
 import { createResourceSubsystem } from "./resource/index.js";
 import { createPushSubsystem } from "./push/index.js";
+import { createLifecycleSubsystem } from "./lifecycle/index.js";
 import { createDigestSubsystem } from "./digest/index.js";
 import { createGithubSubsystem, type GithubSubsystemDeps } from "./github/index.js";
 import { createQualitySubsystem } from "./quality/index.js";
@@ -86,6 +87,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.memory = wire(createMemorySubsystem(deps));
   ctx.resource = wire(createResourceSubsystem(deps));
   ctx.push = wire(createPushSubsystem(deps));
+  ctx.lifecycle = wire(createLifecycleSubsystem(deps));
   ctx.digest = wire(createDigestSubsystem(deps));
   const githubDeps: GithubSubsystemDeps = {
     db,
