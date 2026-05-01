@@ -1,11 +1,29 @@
-import { forwardRef, useEffect, useMemo, useRef } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import type { Session, SessionMode, SessionStatus } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore } from "../connections/store.js";
+import { useRootStore } from "../store/root.js";
+import { postCommand } from "../transport/rest.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { relTime } from "../util/time.js";
 import { cx } from "../util/classnames.js";
+import { CancelSessionDialog } from "./cancelSession.js";
+import { ConfirmDialog } from "../components/ConfirmDialog.js";
+
+const CANCELLABLE_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  "pending",
+  "running",
+  "waiting_input",
+]);
 
 const MAX_SESSIONS = 30;
 const TITLE_MAX = 18;
@@ -102,33 +120,90 @@ const SessionPill = forwardRef<HTMLButtonElement, PillProps>(function SessionPil
   { session, active, onClick },
   ref,
 ) {
+  const conn = useRootStore((s) => s.getActiveConnection());
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+
+  const isCancellable = CANCELLABLE_STATUSES.has(session.status);
+  const canCancel = !!conn && isCancellable;
+  const canCloseTerminal = !!conn && !isCancellable && !!session.worktreePath;
+  const showClose = canCancel || canCloseTerminal;
+
+  const handleCloseClick = (e: ReactMouseEvent | ReactKeyboardEvent): void => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (canCancel) setCancelOpen(true);
+    else if (canCloseTerminal) setCloseOpen(true);
+  };
+
   return (
-    <button
-      ref={ref}
-      type="button"
-      onClick={onClick}
-      className={cx(
-        "snap-start shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs transition-colors",
-        active
-          ? "bg-accent/20 text-fg border-accent/40"
-          : "bg-bg-soft text-fg-muted hover:text-fg border-border",
-      )}
-      aria-current={active ? "true" : undefined}
-      title={session.title}
-    >
-      <span className={cx("w-1.5 h-1.5 rounded-full shrink-0", STATUS_DOT[session.status])} />
-      <span className={cx("pill text-[10px] px-1.5 py-0 shrink-0", MODE_COLOR[session.mode])}>
-        {session.mode}
-      </span>
-      <span
+    <>
+      <button
+        ref={ref}
+        type="button"
+        onClick={onClick}
         className={cx(
-          "leading-tight text-left",
-          active ? "max-w-[10rem] sm:max-w-[14rem] sm:truncate line-clamp-2" : "truncate max-w-[8rem]",
+          "group relative snap-start shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs transition-colors",
+          active
+            ? "bg-accent/20 text-fg border-accent/40"
+            : "bg-bg-soft text-fg-muted hover:text-fg border-border",
         )}
+        aria-current={active ? "true" : undefined}
+        title={session.title}
       >
-        {active ? session.title : truncate(session.title, TITLE_MAX)}
-      </span>
-      <span className="text-[10px] text-fg-subtle shrink-0">{relTime(session.updatedAt)}</span>
-    </button>
+        <span className={cx("w-1.5 h-1.5 rounded-full shrink-0", STATUS_DOT[session.status])} />
+        <span className={cx("pill text-[10px] px-1.5 py-0 shrink-0", MODE_COLOR[session.mode])}>
+          {session.mode}
+        </span>
+        <span
+          className={cx(
+            "leading-tight text-left",
+            active ? "max-w-[10rem] sm:max-w-[14rem] sm:truncate line-clamp-2" : "truncate max-w-[8rem]",
+          )}
+        >
+          {active ? session.title : truncate(session.title, TITLE_MAX)}
+        </span>
+        <span className="text-[10px] text-fg-subtle shrink-0">{relTime(session.updatedAt)}</span>
+        {showClose && (
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label="Close session"
+            onClick={handleCloseClick}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") handleCloseClick(e);
+            }}
+            className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity absolute top-0.5 right-0.5 inline-flex items-center justify-center w-3.5 h-3.5 rounded text-[11px] leading-none text-fg-subtle hover:text-fg hover:bg-bg-elev"
+          >
+            ×
+          </span>
+        )}
+      </button>
+      {conn && canCancel && (
+        <CancelSessionDialog
+          open={cancelOpen}
+          onClose={() => setCancelOpen(false)}
+          sessions={[{ slug: session.slug, title: session.title }]}
+          conn={conn}
+        />
+      )}
+      {conn && canCloseTerminal && (
+        <ConfirmDialog
+          open={closeOpen}
+          onClose={() => setCloseOpen(false)}
+          onConfirm={async () => {
+            await postCommand(conn, {
+              kind: "close",
+              sessionSlug: session.slug,
+              removeWorktree: true,
+            });
+          }}
+          title="Close session"
+          body={`Remove the worktree for ${session.title} on disk? Transcript and history are preserved.`}
+          confirmLabel="Close session"
+          variant="danger"
+        />
+      )}
+    </>
   );
 });
