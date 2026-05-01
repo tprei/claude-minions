@@ -69,7 +69,7 @@ export function createStackLandHandler(deps: StackLandHandlerDeps): JobHandler {
 
     const dag = deps.dagRepo.get(dagId);
     if (!dag) return;
-    if (dag.status !== "active") return;
+    if (dag.status === "cancelled" || dag.status === "failed") return;
 
     const sorted = topoSort(dag.nodes);
 
@@ -83,9 +83,24 @@ export function createStackLandHandler(deps: StackLandHandlerDeps): JobHandler {
 
       const session = node.sessionSlug ? ctx.sessions.get(node.sessionSlug) : null;
       const pr = session?.pr;
+
+      if (!session || !pr) {
+        deps.dagRepo.updateNode(node.id, { status: "merged" });
+        ctx.audit.record(
+          "system",
+          "dag.stack-land.skipped",
+          { kind: "dag", id: dagId },
+          { nodeId: node.id, sessionSlug: node.sessionSlug ?? null, reason: "no-pr" },
+        );
+        continue;
+      }
+
+      if (pr.state === "merged") {
+        deps.dagRepo.updateNode(node.id, { status: "merged" });
+        continue;
+      }
+
       const ready =
-        !!session &&
-        !!pr &&
         pr.state === "open" &&
         session.attention.some((a) => a.kind === "ci_passed") &&
         !session.attention.some((a) => a.kind === "ci_failed" || a.kind === "ci_pending");

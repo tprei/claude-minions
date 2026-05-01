@@ -354,4 +354,99 @@ describe("stackLand handler", () => {
       env.cleanup();
     }
   });
+
+  it("lands the stack when dag.status is completed (all nodes pr-open)", async () => {
+    const env = setup();
+    try {
+      const nodeIds = createDagWithNodes(env, "dag-completed", [
+        { id: "a", status: "pr-open", sessionSlug: "sess-a" },
+        { id: "b", status: "pr-open", sessionSlug: "sess-b", dependsOn: ["a"] },
+      ]);
+      env.dagRepo.update("dag-completed", { status: "completed" });
+      const sessions = [
+        makeSession({ slug: "sess-a", prState: "open", attention: ["ci_passed"] }),
+        makeSession({ slug: "sess-b", prState: "open", attention: ["ci_passed"] }),
+      ];
+      const { ctx, landCalls, audits } = makeCtx({ sessions });
+
+      const handler = createStackLandHandler({
+        automationRepo: env.automationRepo,
+        dagRepo: env.dagRepo,
+      });
+      const job = enqueueStackLand(env.automationRepo, "dag-completed");
+      await handler(env.automationRepo.get(job.id)!, ctx);
+
+      assert.deepEqual(landCalls, ["sess-a", "sess-b"], "both nodes landed in topo order");
+      assert.equal(env.dagRepo.getNode(nodeIds[0]!)?.status, "merged");
+      assert.equal(env.dagRepo.getNode(nodeIds[1]!)?.status, "merged");
+      const completes = audits.filter((a) => a.action === "dag.stack-land.complete");
+      assert.equal(completes.length, 1, "complete audit emitted after stack lands");
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it("skips a pr-open node with no PR (e.g., verify node) and marks it merged", async () => {
+    const env = setup();
+    try {
+      const nodeIds = createDagWithNodes(env, "dag-verify", [
+        { id: "a", status: "pr-open", sessionSlug: "sess-a" },
+        { id: "verify", status: "pr-open", sessionSlug: "sess-verify", dependsOn: ["a"] },
+      ]);
+      env.dagRepo.update("dag-verify", { status: "completed" });
+      const verifySession = {
+        ...makeSession({ slug: "sess-verify" }),
+        pr: undefined,
+      };
+      const sessions = [
+        makeSession({ slug: "sess-a", prState: "open", attention: ["ci_passed"] }),
+        verifySession,
+      ];
+      const { ctx, landCalls, audits } = makeCtx({ sessions });
+
+      const handler = createStackLandHandler({
+        automationRepo: env.automationRepo,
+        dagRepo: env.dagRepo,
+      });
+      const job = enqueueStackLand(env.automationRepo, "dag-verify");
+      await handler(env.automationRepo.get(job.id)!, ctx);
+
+      assert.deepEqual(landCalls, ["sess-a"], "only the node with a PR is landed");
+      assert.equal(env.dagRepo.getNode(nodeIds[1]!)?.status, "merged");
+      const skipped = audits.filter((a) => a.action === "dag.stack-land.skipped");
+      assert.equal(skipped.length, 1, "verify node skip audited");
+      assert.equal(skipped[0]!.detail["reason"], "no-pr");
+      const completes = audits.filter((a) => a.action === "dag.stack-land.complete");
+      assert.equal(completes.length, 1);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it("treats a PR that is already merged on GitHub as a no-op merged node", async () => {
+    const env = setup();
+    try {
+      const nodeIds = createDagWithNodes(env, "dag-already-merged", [
+        { id: "a", status: "pr-open", sessionSlug: "sess-a" },
+      ]);
+      const sessions = [
+        makeSession({ slug: "sess-a", prState: "merged", attention: ["ci_passed"] }),
+      ];
+      const { ctx, landCalls, audits } = makeCtx({ sessions });
+
+      const handler = createStackLandHandler({
+        automationRepo: env.automationRepo,
+        dagRepo: env.dagRepo,
+      });
+      const job = enqueueStackLand(env.automationRepo, "dag-already-merged");
+      await handler(env.automationRepo.get(job.id)!, ctx);
+
+      assert.deepEqual(landCalls, [], "no land call when PR is already merged upstream");
+      assert.equal(env.dagRepo.getNode(nodeIds[0]!)?.status, "merged");
+      const completes = audits.filter((a) => a.action === "dag.stack-land.complete");
+      assert.equal(completes.length, 1);
+    } finally {
+      env.cleanup();
+    }
+  });
 });
