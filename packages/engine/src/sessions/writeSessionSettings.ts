@@ -18,8 +18,18 @@ const WRITE_TOOLS_ALLOW = [
   "TodoWrite(*)",
 ];
 
+// WebFetch and WebSearch are billed per call and routinely cost 5–20× a
+// `gh api` round-trip for the same data. The runtime image ships `gh` + git
+// + curl + a pre-authenticated GH_TOKEN env, so the agent always has a
+// cheaper path to GitHub. Block both tools across all permission tiers.
+const TOOLS_DENY = ["WebFetch", "WebSearch"];
+
 export function permissionsAllowFor(tier: PermissionTier): string[] {
   return tier === "read" ? READ_TOOLS_ALLOW : WRITE_TOOLS_ALLOW;
+}
+
+export function permissionsDenyFor(_tier: PermissionTier): string[] {
+  return TOOLS_DENY;
 }
 
 async function symlinkOperatorAuth(claudeDir: string): Promise<void> {
@@ -76,6 +86,7 @@ export async function writeSessionSettings(
     },
     permissions: {
       allow: permissionsAllowFor(permissionTier),
+      deny: permissionsDenyFor(permissionTier),
     },
     includeCoAuthoredBy: false,
     disableWelcomeMessage: true,
