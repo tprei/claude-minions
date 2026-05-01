@@ -1,5 +1,8 @@
-import { test, describe, beforeEach } from "node:test";
+import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
 import type { DAG, DAGNode, Session } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { EventBus } from "../bus/eventBus.js";
@@ -7,6 +10,8 @@ import { DagScheduler } from "./scheduler.js";
 import { DagRepo } from "./model.js";
 import { createLogger } from "../logger.js";
 import { EngineError } from "../errors.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
+import { openStore } from "../store/sqlite.js";
 
 function makeNode(
   id: string,
@@ -112,6 +117,26 @@ function makeMockRepo(dag: DAG): MockDagRepo {
   };
 
   return repo;
+}
+
+interface AutomationEnv {
+  repo: AutomationJobRepo;
+  cleanup: () => void;
+}
+
+function openAutomationEnv(): AutomationEnv {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "minions-dag-scheduler-"));
+  const dbPath = path.join(tmpDir, "test.db");
+  const log = createLogger("error");
+  const db = openStore({ path: dbPath, log });
+  const repo = new AutomationJobRepo(db);
+  return {
+    repo,
+    cleanup: () => {
+      db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    },
+  };
 }
 
 function makeMockCtx(spawnedSessions: Session[]): EngineContext {
@@ -445,9 +470,7 @@ describe("DagScheduler", () => {
     assert.equal(repo.get("dag1")?.status, "completed");
   });
 
-  test("admission-denied EngineError keeps node pending and bumps admissionRetries", async (t) => {
-    t.mock.timers.enable({ apis: ["setTimeout"] });
-
+  test("admission-denied EngineError keeps node pending and bumps admissionRetries", async () => {
     const nodeA = makeNode("A", "pending");
     const dag = makeDag("dag1", [nodeA]);
     const repo = makeMockRepo(dag) as unknown as DagRepo;
@@ -463,37 +486,38 @@ describe("DagScheduler", () => {
       );
     };
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
-    await scheduler.tick("dag1");
+    const env = openAutomationEnv();
+    try {
+      const scheduler = new DagScheduler(repo, ctx, createLogger("error"), env.repo);
+      await scheduler.tick("dag1");
 
-    assert.equal(createCalls, 1);
-    const node = repo.getNode("A");
-    assert.equal(node?.status, "pending", "node remains pending after admission denial");
-    assert.ok(
-      node?.failedReason === undefined || node?.failedReason === null,
-      "no failed reason set",
-    );
-    assert.equal(
-      (node?.metadata as { admissionRetries?: number }).admissionRetries,
-      1,
-      "admissionRetries bumped to 1",
-    );
+      assert.equal(createCalls, 1);
+      const node = repo.getNode("A");
+      assert.equal(node?.status, "pending", "node remains pending after admission denial");
+      assert.ok(
+        node?.failedReason === undefined || node?.failedReason === null,
+        "no failed reason set",
+      );
+      assert.equal(
+        (node?.metadata as { admissionRetries?: number }).admissionRetries,
+        1,
+        "admissionRetries bumped to 1",
+      );
 
-    const finalDag = repo.get("dag1");
-    assert.equal(finalDag?.status, "active", "dag stays active");
+      const finalDag = repo.get("dag1");
+      assert.equal(finalDag?.status, "active", "dag stays active");
+    } finally {
+      env.cleanup();
+    }
   });
 
-  test("admission-denied schedules a re-tick after backoff", async (t) => {
-    t.mock.timers.enable({ apis: ["setTimeout"] });
-
+  test("admission-denied enqueues a durable dag-tick job for retry", async () => {
     const nodeA = makeNode("A", "pending");
     const dag = makeDag("dag1", [nodeA]);
     const repo = makeMockRepo(dag) as unknown as DagRepo;
     const ctx = makeMockCtx([]);
 
-    let createCalls = 0;
     ctx.sessions.create = async () => {
-      createCalls++;
       throw new EngineError(
         "conflict",
         "Admission denied: dag_task 4 at dagCap 4",
@@ -501,19 +525,23 @@ describe("DagScheduler", () => {
       );
     };
 
-    const scheduler = new DagScheduler(repo, ctx, createLogger("error"));
-    await scheduler.tick("dag1");
-    assert.equal(createCalls, 1);
+    const env = openAutomationEnv();
+    try {
+      const before = Date.now();
+      const scheduler = new DagScheduler(repo, ctx, createLogger("error"), env.repo);
+      await scheduler.tick("dag1");
 
-    t.mock.timers.tick(30_000);
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-
-    assert.ok(createCalls >= 2, `expected re-tick after 30s; createCalls=${createCalls}`);
+      const jobs = env.repo.findByTarget("dag", "dag1").filter((j) => j.kind === "dag-tick");
+      assert.equal(jobs.length, 1, "exactly one dag-tick job enqueued");
+      assert.equal(jobs[0]!.payload["dagId"], "dag1");
+      const runAt = new Date(jobs[0]!.nextRunAt).getTime();
+      assert.ok(runAt - before >= 30_000 - 1_000, `dag-tick scheduled ~30s out (got ${runAt - before}ms)`);
+    } finally {
+      env.cleanup();
+    }
   });
 
-  test("admission-denied escalates to failed after MAX_ADMISSION_RETRIES", async (t) => {
-    t.mock.timers.enable({ apis: ["setTimeout"] });
-
+  test("admission-denied escalates to failed after MAX_ADMISSION_RETRIES", async () => {
     const nodeA = makeNode("A", "pending");
     nodeA.metadata = { admissionRetries: 59 };
 

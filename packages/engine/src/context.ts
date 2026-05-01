@@ -62,6 +62,7 @@ export interface EngineContext {
     retry: (dagId: string, nodeId: string) => Promise<void>;
     cancel: (dagId: string) => Promise<void>;
     forceLand: (dagId: string, nodeId: string) => Promise<void>;
+    tick: (dagId: string) => Promise<void>;
     tryCreateFromTranscript: (slug: string) => Promise<{ created: boolean; dagId?: string }>;
   };
 
