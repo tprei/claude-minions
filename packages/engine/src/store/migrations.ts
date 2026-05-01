@@ -363,6 +363,32 @@ CREATE INDEX idx_engine_lifecycle_ts ON engine_lifecycle_events(timestamp DESC);
 `,
 };
 
+const m008_automation_jobs: Migration = {
+  name: "008_automation_jobs",
+  sql: `
+CREATE TABLE automation_jobs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  target_kind TEXT NULL,
+  target_id TEXT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK (status IN ('pending','running','succeeded','failed','expired')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  next_run_at TEXT NOT NULL,
+  lease_owner TEXT NULL,
+  lease_expires_at TEXT NULL,
+  last_error TEXT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX automation_jobs_pending_due ON automation_jobs(status, next_run_at) WHERE status = 'pending';
+CREATE INDEX automation_jobs_target ON automation_jobs(target_kind, target_id);
+CREATE INDEX automation_jobs_lease ON automation_jobs(lease_expires_at) WHERE lease_owner IS NOT NULL;
+`,
+};
+
 export const migrations: Migration[] = [
   m001_initial,
   m002_reply_queue_state,
@@ -371,4 +397,5 @@ export const migrations: Migration[] = [
   m005_session_cost_budget,
   m006_dag_nodes_ci_summary,
   m007_engine_lifecycle_events,
+  m008_automation_jobs,
 ];
