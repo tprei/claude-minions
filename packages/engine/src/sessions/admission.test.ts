@@ -2,11 +2,48 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   checkAdmission,
+  checkResourceFloor,
   classifyMode,
   emptyRunningByClass,
   type RunningByClass,
 } from "./admission.js";
-import type { RuntimeOverrides } from "@minions/shared";
+import type { ResourceSnapshot, RuntimeOverrides } from "@minions/shared";
+
+function makeSnapshot(overrides: {
+  freeDiskBytes?: number;
+  totalDiskBytes?: number;
+  freeMemoryBytes?: number;
+  memoryLimitBytes?: number;
+  eventLoopLagMs?: number;
+  runningSessions?: number;
+} = {}): ResourceSnapshot {
+  const totalDiskBytes = overrides.totalDiskBytes ?? 1_000_000_000_000;
+  const freeDiskBytes = overrides.freeDiskBytes ?? totalDiskBytes;
+  const memoryLimitBytes = overrides.memoryLimitBytes ?? 32_000_000_000;
+  const freeMemoryBytes = overrides.freeMemoryBytes ?? memoryLimitBytes;
+  return {
+    timestamp: new Date(0).toISOString(),
+    cgroupAware: false,
+    cpu: { usagePct: 0, limitCores: 8, cores: 8 },
+    memory: {
+      usedBytes: memoryLimitBytes - freeMemoryBytes,
+      limitBytes: memoryLimitBytes,
+      rssBytes: 0,
+    },
+    disk: {
+      usedBytes: totalDiskBytes - freeDiskBytes,
+      totalBytes: totalDiskBytes,
+      workspacePath: "/tmp",
+      workspaceUsedBytes: 0,
+    },
+    eventLoop: { lagMs: overrides.eventLoopLagMs ?? 0 },
+    sessions: {
+      total: overrides.runningSessions ?? 0,
+      running: overrides.runningSessions ?? 0,
+      waiting: 0,
+    },
+  };
+}
 
 const RUNTIME: RuntimeOverrides = {
   admissionTotalSlots: 4,
@@ -172,5 +209,69 @@ describe("checkAdmission", () => {
     if (!decision.admit) {
       assert.match(decision.reason, /loopCap/);
     }
+  });
+});
+
+describe("checkResourceFloor", () => {
+  test("denies admission when free disk is below the disk floor", () => {
+    const runtime: RuntimeOverrides = { admissionDiskFloorBytes: 5_000_000_000 };
+    const snapshot = makeSnapshot({
+      totalDiskBytes: 100_000_000_000,
+      freeDiskBytes: 4_000_000_000,
+    });
+    const decision = checkResourceFloor(runtime, snapshot);
+    assert.equal(decision.admit, false);
+    if (!decision.admit) assert.match(decision.reason, /resource:disk/);
+  });
+
+  test("denies admission when free memory is below the memory floor", () => {
+    const runtime: RuntimeOverrides = { admissionMemoryFloorBytes: 1_000_000_000 };
+    const snapshot = makeSnapshot({
+      memoryLimitBytes: 16_000_000_000,
+      freeMemoryBytes: 500_000_000,
+    });
+    const decision = checkResourceFloor(runtime, snapshot);
+    assert.equal(decision.admit, false);
+    if (!decision.admit) assert.match(decision.reason, /resource:memory/);
+  });
+
+  test("denies admission when event-loop lag exceeds the ceiling", () => {
+    const runtime: RuntimeOverrides = { admissionEventLoopLagCeilingMs: 250 };
+    const snapshot = makeSnapshot({ eventLoopLagMs: 400 });
+    const decision = checkResourceFloor(runtime, snapshot);
+    assert.equal(decision.admit, false);
+    if (!decision.admit) assert.match(decision.reason, /resource:lag/);
+  });
+
+  test("denies admission when active claude processes exceed the cap", () => {
+    const runtime: RuntimeOverrides = { admissionMaxClaudeProcesses: 12 };
+    const snapshot = makeSnapshot({ runningSessions: 13 });
+    const decision = checkResourceFloor(runtime, snapshot);
+    assert.equal(decision.admit, false);
+    if (!decision.admit) assert.match(decision.reason, /resource:processes/);
+  });
+
+  test("admits when no sample is available yet (first second of boot)", () => {
+    const decision = checkResourceFloor({}, null);
+    assert.equal(decision.admit, true);
+  });
+
+  test("resource floors apply even when admissionUnlimited=true", () => {
+    const runtime: RuntimeOverrides = {
+      admissionUnlimited: true,
+      admissionDiskFloorBytes: 5_000_000_000,
+    };
+    const snapshot = makeSnapshot({
+      totalDiskBytes: 100_000_000_000,
+      freeDiskBytes: 1_000_000_000,
+    });
+    const decision = checkAdmission(
+      "interactive",
+      emptyRunningByClass(),
+      runtime,
+      snapshot,
+    );
+    assert.equal(decision.admit, false);
+    if (!decision.admit) assert.match(decision.reason, /resource:disk/);
   });
 });

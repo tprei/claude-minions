@@ -104,6 +104,7 @@ function makeStubCtx(providerName: string): EngineContext {
     },
     memory: { renderPreamble: () => "" },
     runtime: { effective: () => ({}) },
+    resource: { latest: () => null },
   } as unknown as EngineContext;
 }
 

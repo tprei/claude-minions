@@ -100,6 +100,7 @@ function makeCtxWithAuditSpy(calls: AuditCall[]): EngineContext {
     },
     memory: { renderPreamble: () => "" },
     runtime: { effective: () => ({}) },
+    resource: { latest: () => null },
   } as unknown as EngineContext;
 }
 
