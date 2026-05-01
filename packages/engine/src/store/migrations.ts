@@ -347,6 +347,22 @@ ALTER TABLE dag_nodes ADD COLUMN ci_summary TEXT;
 `,
 };
 
+const m007_engine_lifecycle_events: Migration = {
+  name: "007_engine_lifecycle_events",
+  sql: `
+CREATE TABLE engine_lifecycle_events (
+  id         TEXT PRIMARY KEY,
+  timestamp  TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  severity   TEXT NOT NULL,
+  message    TEXT NOT NULL,
+  detail     TEXT
+) WITHOUT ROWID;
+
+CREATE INDEX idx_engine_lifecycle_ts ON engine_lifecycle_events(timestamp DESC);
+`,
+};
+
 export const migrations: Migration[] = [
   m001_initial,
   m002_reply_queue_state,
@@ -354,4 +370,5 @@ export const migrations: Migration[] = [
   m004_session_bucket,
   m005_session_cost_budget,
   m006_dag_nodes_ci_summary,
+  m007_engine_lifecycle_events,
 ];

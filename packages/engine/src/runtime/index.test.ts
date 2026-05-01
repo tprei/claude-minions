@@ -60,6 +60,7 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
       },
       list: (): AuditEvent[] => [],
     },
+    lifecycle: {} as EngineContext["lifecycle"],
     dags: {} as EngineContext["dags"],
     ship: {} as EngineContext["ship"],
     landing: {} as EngineContext["landing"],

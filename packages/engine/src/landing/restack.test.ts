@@ -122,6 +122,7 @@ function makeHarness(sessions: Session[]): RestackHarness {
       },
       list: () => audit.slice(),
     },
+    lifecycle: {} as EngineContext["lifecycle"],
     mutex,
     runtime: {
       schema: () => ({ groups: [], fields: [] }),

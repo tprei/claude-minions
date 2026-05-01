@@ -194,6 +194,7 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
     intake: {} as EngineContext["intake"],
     memory: {} as EngineContext["memory"],
     audit: {} as EngineContext["audit"],
+    lifecycle: {} as EngineContext["lifecycle"],
     resource: {} as EngineContext["resource"],
     push: {} as EngineContext["push"],
     digest: {} as EngineContext["digest"],
