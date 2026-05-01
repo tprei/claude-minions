@@ -8,7 +8,10 @@ export type DoctorCheckName =
   | "dependency-cache"
   | "mcp-availability"
   | "push-config"
-  | "sidecar-status";
+  | "sidecar-status"
+  | "git-push-auth"
+  | "rest-pr-create-permission"
+  | "rest-checks-read";
 
 export interface DoctorCheck {
   name: DoctorCheckName;
