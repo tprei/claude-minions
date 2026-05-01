@@ -8,6 +8,8 @@ import { cx } from "../util/classnames.js";
 import { sseStatusStore, type SseStatus } from "../transport/sseStatus.js";
 import { registerPush, unregisterPush, usePushPermission } from "../pwa/push.js";
 import { ThemeToggle } from "../pwa/ThemeToggle.js";
+import { setUrlState } from "../routing/urlState.js";
+import { parseUrl } from "../routing/parseUrl.js";
 
 interface PushApi {
   get: (path: string) => Promise<unknown>;
@@ -205,12 +207,33 @@ export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): 
         <ThemeToggle />
       </div>
 
+      {activeId && <MobileNewSessionButton activeId={activeId} />}
+
       <MobileActions
         resourceIndicator={resourceIndicator}
         installPrompt={installPrompt}
         api={api ?? null}
       />
     </div>
+  );
+}
+
+function MobileNewSessionButton({ activeId }: { activeId: string }): ReactElement {
+  function openNew(): void {
+    const { sessionSlug, query } = parseUrl();
+    setUrlState({ connectionId: activeId, view: "new", sessionSlug, query });
+  }
+  return (
+    <button
+      type="button"
+      data-testid="header-new-session"
+      onClick={openNew}
+      aria-label="New session"
+      title="New session"
+      className="sm:hidden w-8 h-8 flex items-center justify-center rounded-lg bg-accent text-white hover:bg-accent-soft transition-colors flex-shrink-0"
+    >
+      <span className="text-base leading-none">+</span>
+    </button>
   );
 }
 
