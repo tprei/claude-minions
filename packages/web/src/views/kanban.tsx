@@ -2,11 +2,13 @@ import { useMemo } from "react";
 import type { Session, SessionStatus, SessionMode } from "@minions/shared";
 import { formatCostUsd, formatTokens } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
-import { useConnectionStore } from "../connections/store.js";
+import { useConnectionStore, type Connection } from "../connections/store.js";
+import { useRootStore } from "../store/root.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { relTime } from "../util/time.js";
 import { cx } from "../util/classnames.js";
+import { SessionActionsMenu } from "../chat/SessionActionsMenu.js";
 
 const COLUMNS: { status: SessionStatus; label: string; limit?: number }[] = [
   { status: "pending", label: "Pending" },
@@ -58,6 +60,7 @@ interface Props {
 
 export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) {
   const activeId = useConnectionStore((s) => s.activeId);
+  const conn = useRootStore((s) => s.getActiveConnection());
   const sessionsMap = useSessionStore(
     (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
   );
@@ -130,6 +133,7 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
                 <KanbanCard
                   key={s.slug}
                   session={s}
+                  conn={conn}
                   childSlugs={childrenBySlug.get(s.slug) ?? []}
                   onClick={() => navigate(s.slug)}
                   onOpenDag={navigateToDag}
@@ -154,13 +158,14 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
 
 interface KanbanCardProps {
   session: Session;
+  conn: Connection | null;
   childSlugs: string[];
   onClick: () => void;
   onOpenDag: (dagId: string) => void;
   onOpenParent: (parentSlug: string) => void;
 }
 
-function KanbanCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: KanbanCardProps) {
+function KanbanCard({ session, conn, childSlugs, onClick, onOpenDag, onOpenParent }: KanbanCardProps) {
   const hasOps =
     Boolean(session.shipStage) ||
     Boolean(session.pr) ||
@@ -178,11 +183,14 @@ function KanbanCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: K
     >
       <div className="flex items-start justify-between gap-1.5">
         <span className="text-xs text-fg leading-snug line-clamp-2">{session.title}</span>
-        {session.attention.length > 0 && (
-          <span className="pill bg-red-900 text-red-300 text-[10px] shrink-0">
-            {session.attention.length}
-          </span>
-        )}
+        <div className="flex items-center gap-1 shrink-0">
+          {session.attention.length > 0 && (
+            <span className="pill bg-red-900 text-red-300 text-[10px]">
+              {session.attention.length}
+            </span>
+          )}
+          {conn && <SessionActionsMenu session={session} conn={conn} />}
+        </div>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className={cx("pill text-[10px]", MODE_COLOR[session.mode])}>
