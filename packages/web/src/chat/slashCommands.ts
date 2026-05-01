@@ -19,7 +19,16 @@ export interface SlashMessageResult {
 
 export interface SlashUiResult {
   kind: "ui";
-  action: "help" | "stats" | "loops" | "config" | "doctor" | "status" | "diff" | "cost";
+  action:
+    | "help"
+    | "stats"
+    | "loops"
+    | "config"
+    | "doctor"
+    | "status"
+    | "diff"
+    | "cost"
+    | "execute-plan";
 }
 
 export type SlashResult = SlashCommandResult | SlashMessageResult | SlashUiResult;
@@ -340,5 +349,14 @@ export const slashCommands: SlashCommand[] = [
     args: [],
     hint: "Open diff view",
     build: () => ({ kind: "ui", action: "diff" }),
+  },
+  {
+    name: "execute-plan",
+    args: [],
+    hint: "Open the execute-plan modal for this think thread",
+    build: (_args, ctx) => {
+      requireSession(ctx, "execute-plan");
+      return { kind: "ui", action: "execute-plan" };
+    },
   },
 ];
