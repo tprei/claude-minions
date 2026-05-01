@@ -11,6 +11,8 @@ import { EngineError } from "../../errors.js";
 import { newId } from "../../util/ids.js";
 import { nowIso } from "../../util/time.js";
 import { SessionRepo } from "../../store/repos/sessionRepo.js";
+import { AutomationJobRepo } from "../../store/repos/automationJobRepo.js";
+import { enqueueStackLand } from "../../automation/handlers/stackLand.js";
 
 function assertString(val: unknown, field: string): string {
   if (typeof val !== "string" || val.trim() === "") {
@@ -349,6 +351,23 @@ async function dispatchCommand(cmd: Command, ctx: EngineContext): Promise<Comman
     case "stack": {
       ctx.audit.record("operator", `stack:${cmd.action}`, { kind: "session", id: cmd.sessionSlug });
       const session = ctx.sessions.get(cmd.sessionSlug);
+
+      if (cmd.action === "land-all") {
+        if (!session) {
+          throw new EngineError("not_found", `session not found: ${cmd.sessionSlug}`);
+        }
+        const dag = ctx.dags.list().find((d) => d.rootSessionSlug === cmd.sessionSlug);
+        if (!dag) {
+          throw new EngineError(
+            "conflict",
+            `no DAG bound to session ${cmd.sessionSlug}; only ship sessions with a DAG can land-all`,
+          );
+        }
+        const automationRepo = new AutomationJobRepo(ctx.db);
+        const job = enqueueStackLand(automationRepo, dag.id);
+        return { ok: true, data: { dagId: dag.id, jobId: job.id } };
+      }
+
       return { ok: true, data: { stack: session ? { slug: session.slug, branch: session.branch } : null } };
     }
 

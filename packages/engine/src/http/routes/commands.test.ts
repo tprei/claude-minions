@@ -447,3 +447,185 @@ describe("POST /api/commands retry", () => {
     assert.deepEqual(kickCalls, ["sess-r"]);
   });
 });
+
+describe("POST /api/commands stack land-all", () => {
+  let app: FastifyInstance;
+  let baseUrl: string;
+  let db: Database.Database;
+  let auditActions: string[];
+
+  before(async () => {
+    db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    for (const m of migrations) db.exec(m.sql);
+
+    auditActions = [];
+    const sessions = new Map<string, Session>([
+      [
+        "ship-1",
+        {
+          slug: "ship-1",
+          title: "ship session",
+          prompt: "do work",
+          mode: "ship",
+          status: "completed",
+          attention: [],
+          quickActions: [],
+          stats: {
+            turns: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            costUsd: 0,
+            durationMs: 0,
+            toolCalls: 0,
+          },
+          provider: "mock",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          childSlugs: [],
+          metadata: {},
+        } as Session,
+      ],
+    ]);
+    const dags = [
+      {
+        id: "dag-bound",
+        rootSessionSlug: "ship-1",
+        nodes: [],
+      },
+      {
+        id: "dag-other",
+        rootSessionSlug: "some-other-ship",
+        nodes: [],
+      },
+    ];
+    const ctx = {
+      db,
+      sessions: {
+        get: (slug: string) => sessions.get(slug) ?? null,
+      },
+      dags: {
+        list: () => dags,
+      },
+      audit: {
+        record: (_actor: string, action: string) => {
+          auditActions.push(action);
+        },
+      },
+    } as unknown as EngineContext;
+
+    app = Fastify({ logger: false });
+    app.setErrorHandler(async (err, _req, reply) => {
+      if (isEngineError(err)) {
+        await reply.status(err.status).send(err.toJSON());
+        return;
+      }
+      const e = err as Error;
+      await reply.status(500).send({ error: "internal", message: e.message });
+    });
+    registerCommandRoutes(app, ctx);
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Fastify did not return a network address");
+    }
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  after(async () => {
+    await app.close();
+    db.close();
+  });
+
+  beforeEach(() => {
+    auditActions.length = 0;
+    db.prepare("DELETE FROM automation_jobs WHERE kind = 'stack-land'").run();
+  });
+
+  async function postCommand(body: unknown): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let parsed: unknown = text;
+    if (text.length > 0) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // keep raw text
+      }
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  it("enqueues a stack-land automation job for the DAG bound to the ship session", async () => {
+    const res = await postCommand({
+      kind: "stack",
+      sessionSlug: "ship-1",
+      action: "land-all",
+    });
+    assert.equal(res.status, 200);
+    const data = (res.body as { ok: boolean; data: { dagId: string; jobId: string } }).data;
+    assert.equal(data.dagId, "dag-bound");
+    assert.ok(data.jobId, "jobId returned");
+    const rows = db
+      .prepare("SELECT kind, target_kind, target_id, status FROM automation_jobs WHERE kind = 'stack-land'")
+      .all() as Array<{ kind: string; target_kind: string; target_id: string; status: string }>;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.target_id, "dag-bound");
+    assert.equal(rows[0]!.status, "pending");
+    assert.ok(auditActions.includes("stack:land-all"));
+  });
+
+  it("returns 409 when the session has no bound DAG", async () => {
+    const res = await postCommand({
+      kind: "stack",
+      sessionSlug: "ship-1",
+      action: "land-all",
+    });
+    assert.equal(res.status, 200, "first call succeeds with bound DAG");
+    db.prepare("DELETE FROM automation_jobs WHERE kind = 'stack-land'").run();
+
+    const noDagCtx = await fetch(`${baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "stack",
+        sessionSlug: "session-with-no-dag",
+        action: "land-all",
+      }),
+    });
+    assert.equal(noDagCtx.status, 404, "missing session → 404 not_found");
+  });
+
+  it("returns 404 when the session does not exist", async () => {
+    const res = await postCommand({
+      kind: "stack",
+      sessionSlug: "ghost-session",
+      action: "land-all",
+    });
+    assert.equal(res.status, 404);
+    const rows = db
+      .prepare("SELECT count(*) as c FROM automation_jobs WHERE kind = 'stack-land'")
+      .get() as { c: number };
+    assert.equal(rows.c, 0, "no job enqueued for missing session");
+  });
+
+  it("non-land-all action remains a no-op show", async () => {
+    const res = await postCommand({
+      kind: "stack",
+      sessionSlug: "ship-1",
+      action: "show",
+    });
+    assert.equal(res.status, 200);
+    const rows = db
+      .prepare("SELECT count(*) as c FROM automation_jobs WHERE kind = 'stack-land'")
+      .get() as { c: number };
+    assert.equal(rows.c, 0, "no stack-land job enqueued for show action");
+  });
+});
