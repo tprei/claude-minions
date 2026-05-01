@@ -26,7 +26,29 @@ export default {
         },
         ok: "rgb(var(--ok) / <alpha-value>)",
         warn: "rgb(var(--warn) / <alpha-value>)",
-        err: "rgb(var(--err) / <alpha-value>)"
+        err: "rgb(var(--err) / <alpha-value>)",
+        tone: {
+          info: {
+            bg: "rgb(var(--tone-info-bg) / <alpha-value>)",
+            border: "rgb(var(--tone-info-border) / <alpha-value>)",
+            fg: "rgb(var(--tone-info-fg) / <alpha-value>)"
+          },
+          warn: {
+            bg: "rgb(var(--tone-warn-bg) / <alpha-value>)",
+            border: "rgb(var(--tone-warn-border) / <alpha-value>)",
+            fg: "rgb(var(--tone-warn-fg) / <alpha-value>)"
+          },
+          err: {
+            bg: "rgb(var(--tone-err-bg) / <alpha-value>)",
+            border: "rgb(var(--tone-err-border) / <alpha-value>)",
+            fg: "rgb(var(--tone-err-fg) / <alpha-value>)"
+          },
+          ok: {
+            bg: "rgb(var(--tone-ok-bg) / <alpha-value>)",
+            border: "rgb(var(--tone-ok-border) / <alpha-value>)",
+            fg: "rgb(var(--tone-ok-fg) / <alpha-value>)"
+          }
+        }
       },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
