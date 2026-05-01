@@ -92,9 +92,9 @@ function DiffLineRow({
   });
   const bg =
     line.kind === "add"
-      ? "bg-green-950 text-green-300"
+      ? "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-300"
       : line.kind === "del"
-        ? "bg-red-950 text-red-300"
+        ? "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-300"
         : "";
   const sign = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
   return (
