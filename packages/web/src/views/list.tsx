@@ -2,11 +2,13 @@ import { useState, useMemo } from "react";
 import type { Session, SessionStatus, SessionMode, SessionBucket } from "@minions/shared";
 import { formatCostUsd } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
-import { useConnectionStore } from "../connections/store.js";
+import { useConnectionStore, type Connection } from "../connections/store.js";
+import { useRootStore } from "../store/root.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { relTime } from "../util/time.js";
 import { cx } from "../util/classnames.js";
+import { SessionActionsMenu } from "../chat/SessionActionsMenu.js";
 
 const STATUS_DOT: Record<SessionStatus, string> = {
   pending: "bg-zinc-500",
@@ -54,6 +56,7 @@ interface Props {
 
 export function ListView({ filterStatus = "all", filterMode = "all", filterBucket = "all" }: Props) {
   const activeId = useConnectionStore((s) => s.activeId);
+  const conn = useRootStore((s) => s.getActiveConnection());
   const sessionsMap = useSessionStore(
     (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
   );
@@ -213,6 +216,9 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
                     sortDir={sortDir}
                     onSort={handleSort}
                   />
+                  <th className="px-4 py-2 font-normal">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -221,6 +227,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
                     key={session.slug}
                     session={session}
                     childSlugs={childrenBySlug.get(session.slug) ?? []}
+                    conn={conn}
                     onClick={() => navigate(session.slug)}
                     onOpenDag={navigateToDag}
                     onOpenParent={navigateToParent}
@@ -234,6 +241,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
                   key={session.slug}
                   session={session}
                   childSlugs={childrenBySlug.get(session.slug) ?? []}
+                  conn={conn}
                   onClick={() => navigate(session.slug)}
                   onOpenDag={navigateToDag}
                   onOpenParent={navigateToParent}
@@ -250,6 +258,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
 interface RowCardProps {
   session: Session;
   childSlugs: string[];
+  conn: Connection | null;
   onClick: () => void;
   onOpenDag: (dagId: string) => void;
   onOpenParent: (parentSlug: string) => void;
@@ -363,7 +372,7 @@ function EmptyState({ filterMode, filterStatus }: { filterMode: FilterMode; filt
   );
 }
 
-function SessionCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: RowCardProps) {
+function SessionCard({ session, childSlugs, conn, onClick, onOpenDag, onOpenParent }: RowCardProps) {
   return (
     <div
       onClick={onClick}
@@ -371,11 +380,14 @@ function SessionCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: 
     >
       <div className="flex items-start justify-between gap-2">
         <span className="text-sm text-fg leading-snug line-clamp-2">{session.title}</span>
-        {session.attention.length > 0 && (
-          <span className="pill bg-red-900 text-red-300 text-[10px] shrink-0">
-            {session.attention.length}
-          </span>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {session.attention.length > 0 && (
+            <span className="pill bg-red-900 text-red-300 text-[10px]">
+              {session.attention.length}
+            </span>
+          )}
+          {conn && <SessionActionsMenu session={session} conn={conn} />}
+        </div>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className={cx("pill text-[10px]", MODE_COLOR[session.mode])}>
@@ -406,7 +418,7 @@ function SessionCard({ session, childSlugs, onClick, onOpenDag, onOpenParent }: 
   );
 }
 
-function SessionRow({ session, childSlugs, onClick, onOpenDag, onOpenParent }: RowCardProps) {
+function SessionRow({ session, childSlugs, conn, onClick, onOpenDag, onOpenParent }: RowCardProps) {
   return (
     <tr
       onClick={onClick}
@@ -445,6 +457,9 @@ function SessionRow({ session, childSlugs, onClick, onOpenDag, onOpenParent }: R
       </td>
       <td className="px-4 py-2 text-fg-subtle text-xs whitespace-nowrap">
         {relTime(session.updatedAt)}
+      </td>
+      <td className="px-4 py-2 text-right whitespace-nowrap">
+        {conn && <SessionActionsMenu session={session} conn={conn} />}
       </td>
     </tr>
   );
