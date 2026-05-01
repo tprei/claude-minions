@@ -41,6 +41,7 @@ import { runBootRecovery } from "./boot/recovery.js";
 import { AutomationJobRepo } from "./store/repos/automationJobRepo.js";
 import { createAutomationRunner } from "./automation/runner.js";
 import type { JobHandler } from "./automation/types.js";
+import { createCiPollHandler, enqueueCiPoll } from "./automation/handlers/ciPoll.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -131,6 +132,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
 
   const automationRepo = new AutomationJobRepo(db);
   const automationHandlers = new Map<string, JobHandler>();
+  automationHandlers.set("ci-poll", createCiPollHandler({ repo: automationRepo }));
   const automationRunner = createAutomationRunner({
     repo: automationRepo,
     ctx,
@@ -225,6 +227,25 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   await ctx.ship.reconcileOnBoot();
   await runBootRecovery(ctx, db, engineLog);
   automationRunner.start();
+
+  // CI polling is driven by the automation runner via ci-poll jobs; the
+  // former CiBabysitter setInterval was removed. Seed one job per open-PR
+  // session here; each handler invocation re-enqueues itself with a 30s delay.
+  let enqueuedCiPolls = 0;
+  for (const s of ctx.sessions.list()) {
+    if (!s.pr || s.pr.state !== "open") continue;
+    if (s.status === "failed" || s.status === "cancelled") continue;
+    const existing = automationRepo.findByTarget("session", s.slug);
+    const hasPending = existing.some(
+      (j) => j.kind === "ci-poll" && (j.status === "pending" || j.status === "running"),
+    );
+    if (hasPending) continue;
+    enqueueCiPoll(automationRepo, s.slug);
+    enqueuedCiPolls++;
+  }
+  if (enqueuedCiPolls > 0) {
+    engineLog.info("enqueued ci-poll jobs on boot", { count: enqueuedCiPolls });
+  }
 
   return ctx;
 }
