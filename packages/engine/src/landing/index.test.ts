@@ -16,6 +16,11 @@ import { RestackManager } from "./restack.js";
 import type { BranchExistsFn, RebaseOntoFn } from "./baseResolver.js";
 import { KeyedMutex } from "../util/mutex.js";
 import { createLogger } from "../logger.js";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
+import { openStore } from "../store/sqlite.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 
 interface OrderHarness {
   ctx: EngineContext;
@@ -1253,5 +1258,135 @@ describe("LandingManager.land safe merge", () => {
       (blocked?.detail as { reason?: string } | undefined)?.reason,
       "conflicting",
     );
+  });
+});
+
+describe("LandingManager.openForReview seeds ci-poll", () => {
+  function setupRepo() {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "minions-landing-cipoll-"));
+    const dbPath = path.join(tmpDir, "test.db");
+    const log = createLogger("error");
+    const db = openStore({ path: dbPath, log });
+    const repo = new AutomationJobRepo(db);
+    return {
+      repo,
+      cleanup: () => {
+        db.close();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  function makeManagerWithRepo(
+    h: OrderHarness,
+    pushBranch: PushBranchFn,
+    ensurePullRequest: EnsurePullRequestFn,
+    automationRepo: AutomationJobRepo,
+  ): LandingManager {
+    const log = createLogger("error");
+    const restack = new RestackManager(h.ctx, noopDagRepo, log, {
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+    });
+    return new LandingManager(h.ctx, noopDagRepo, restack, log, {
+      pushBranch,
+      ensurePullRequest,
+      branchExistsOnRemote: alwaysExistsBranch,
+      rebaseOnto: noopRebase,
+      commitsAhead: oneCommitAhead,
+      automationRepo,
+    });
+  }
+
+  test("enqueues a ci-poll job once the PR is opened", async () => {
+    const { repo, cleanup } = setupRepo();
+    try {
+      const session = buildSession("worker");
+      const h = makeHarness({ session });
+      const sessionMap = new Map<string, Session>([[session.slug, session]]);
+      h.ctx.sessions.get = (slug) => sessionMap.get(slug) ?? null;
+
+      const summary: PRSummary = {
+        number: 7,
+        url: "https://github.com/acme/repo/pull/7",
+        state: "open",
+        draft: false,
+        base: "main",
+        head: session.branch ?? "minions/worker",
+        title: session.title,
+      };
+      const ensurePullRequest: EnsurePullRequestFn = async () => {
+        sessionMap.set(session.slug, { ...session, pr: summary });
+        return summary;
+      };
+      const manager = makeManagerWithRepo(h, async () => {}, ensurePullRequest, repo);
+
+      await manager.openForReview("worker");
+
+      const jobs = repo.findByTarget("session", "worker");
+      const ciPolls = jobs.filter((j) => j.kind === "ci-poll");
+      assert.equal(ciPolls.length, 1, "exactly one ci-poll seeded after PR opens");
+      assert.equal(ciPolls[0]?.status, "pending");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("does not double-enqueue when a pending ci-poll already exists", async () => {
+    const { repo, cleanup } = setupRepo();
+    try {
+      const session = buildSession("worker");
+      const h = makeHarness({ session });
+      const sessionMap = new Map<string, Session>([[session.slug, session]]);
+      h.ctx.sessions.get = (slug) => sessionMap.get(slug) ?? null;
+
+      const summary: PRSummary = {
+        number: 9,
+        url: "https://github.com/acme/repo/pull/9",
+        state: "open",
+        draft: false,
+        base: "main",
+        head: session.branch ?? "minions/worker",
+        title: session.title,
+      };
+      sessionMap.set(session.slug, { ...session, pr: summary });
+      repo.enqueue({
+        kind: "ci-poll",
+        targetKind: "session",
+        targetId: "worker",
+        payload: { sessionSlug: "worker" },
+      });
+
+      const ensurePullRequest: EnsurePullRequestFn = async () => summary;
+      const manager = makeManagerWithRepo(h, async () => {}, ensurePullRequest, repo);
+
+      await manager.openForReview("worker");
+
+      const ciPolls = repo
+        .findByTarget("session", "worker")
+        .filter((j) => j.kind === "ci-poll");
+      assert.equal(ciPolls.length, 1, "no extra ci-poll added when one is already pending");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("skips enqueue when ensurePullRequest does not produce an open PR", async () => {
+    const { repo, cleanup } = setupRepo();
+    try {
+      const session = buildSession("verifier");
+      const h = makeHarness({ session });
+      const ensurePullRequest: EnsurePullRequestFn = async () => null;
+      const manager = makeManagerWithRepo(h, async () => {}, ensurePullRequest, repo);
+
+      await manager.openForReview("verifier");
+
+      const ciPolls = repo
+        .findByTarget("session", "verifier")
+        .filter((j) => j.kind === "ci-poll");
+      assert.equal(ciPolls.length, 0, "no ci-poll seeded when the session has no PR");
+    } finally {
+      cleanup();
+    }
   });
 });
