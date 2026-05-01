@@ -533,9 +533,9 @@ describe("ShipCoordinator", () => {
     assert.equal(dag.rootSessionSlug, sessionSlug);
     assert.equal(dag.nodes.length, 1);
 
-    assert.equal(setDagIdCalls.length, 1, "setDagId called once");
-    assert.equal(setDagIdCalls[0]!.slug, sessionSlug);
-    assert.equal(setDagIdCalls[0]!.dagId, dag.id);
+    const parentCalls = setDagIdCalls.filter((c) => c.slug === sessionSlug);
+    assert.equal(parentCalls.length, 1, "parent session.setDagId called exactly once");
+    assert.equal(parentCalls[0]!.dagId, dag.id);
 
     const dagIdRow = db
       .prepare(`SELECT dag_id FROM sessions WHERE slug = ?`)

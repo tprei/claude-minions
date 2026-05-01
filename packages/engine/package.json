@@ -15,7 +15,7 @@
     "supervise": "node dist/bin/supervise.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "rm -rf dist",
-    "test": "node --import tsx --test --test-reporter=spec src/"
+    "test": "node --import tsx --test --test-reporter=spec 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@minions/shared": "workspace:*",
