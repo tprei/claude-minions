@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { AttentionFlag } from "@minions/shared";
 import {
   applyCiPassedAttention,
+  buildSelfHealExhaustedPlan,
   computeCiAttentionUpdate,
   rollupToChecks,
   summarizeChecks,
@@ -520,6 +521,82 @@ describe("decideAutoMerge", () => {
   test("returns merge when fully green", () => {
     const decision = decideAutoMerge(greenInput);
     assert.deepEqual(decision, { kind: "merge" });
+  });
+});
+
+describe("buildSelfHealExhaustedPlan", () => {
+  const RAISED = "2026-04-30T12:00:00.000Z";
+  const PRIOR = "2026-04-30T11:00:00.000Z";
+
+  test("appends ci_self_heal_exhausted attention with attempts and failed checks", () => {
+    const plan = buildSelfHealExhaustedPlan({
+      current: [],
+      failedNames: ["test", "lint"],
+      attempts: 3,
+      raisedAt: RAISED,
+    });
+    assert.equal(plan.flag.kind, "ci_self_heal_exhausted");
+    assert.equal(plan.flag.message, "CI self-heal failed 3 times: test, lint");
+    assert.equal(plan.flag.raisedAt, RAISED);
+    assert.ok(
+      plan.attention.some(
+        (a) => a.kind === "ci_self_heal_exhausted" && a.message === plan.flag.message,
+      ),
+    );
+  });
+
+  test("disables self-heal in metadata patch and records attempts", () => {
+    const plan = buildSelfHealExhaustedPlan({
+      current: [],
+      failedNames: ["test"],
+      attempts: 5,
+      raisedAt: RAISED,
+    });
+    assert.deepEqual(plan.metadataPatch, {
+      selfHealCi: false,
+      ciSelfHealConcluded: "exhausted",
+      ciSelfHealAttempts: 5,
+    });
+  });
+
+  test("strips ci_pending and updates ci_failed in resulting attention", () => {
+    const plan = buildSelfHealExhaustedPlan({
+      current: [
+        { kind: "ci_pending", message: "running", raisedAt: PRIOR },
+        { kind: "ci_failed", message: "stale", raisedAt: PRIOR },
+        { kind: "needs_input", message: "n", raisedAt: PRIOR },
+      ],
+      failedNames: ["test"],
+      attempts: 3,
+      raisedAt: RAISED,
+    });
+    const kinds = plan.attention.map((a) => a.kind);
+    assert.ok(!kinds.includes("ci_pending"), "ci_pending should be stripped");
+    const failed = plan.attention.find((a) => a.kind === "ci_failed");
+    assert.ok(failed);
+    assert.equal(failed?.message, "CI checks failed: test");
+    assert.equal(failed?.raisedAt, RAISED);
+    assert.ok(plan.attention.some((a) => a.kind === "needs_input"));
+    assert.ok(plan.attention.some((a) => a.kind === "ci_self_heal_exhausted"));
+  });
+
+  test("does not duplicate an existing ci_self_heal_exhausted flag", () => {
+    const plan = buildSelfHealExhaustedPlan({
+      current: [
+        {
+          kind: "ci_self_heal_exhausted",
+          message: "old",
+          raisedAt: PRIOR,
+        },
+      ],
+      failedNames: ["test"],
+      attempts: 3,
+      raisedAt: RAISED,
+    });
+    const exhausted = plan.attention.filter((a) => a.kind === "ci_self_heal_exhausted");
+    assert.equal(exhausted.length, 1);
+    assert.equal(exhausted[0]?.raisedAt, RAISED);
+    assert.equal(exhausted[0]?.message, "CI self-heal failed 3 times: test");
   });
 });
 

@@ -21,6 +21,7 @@ interface Props {
 const GROUP_ORDER: AttentionFlag["kind"][] = [
   "needs_input",
   "ci_failed",
+  "ci_self_heal_exhausted",
   "rebase_conflict",
   "budget_exceeded",
   "judge_review",
@@ -33,6 +34,7 @@ const GROUP_ORDER: AttentionFlag["kind"][] = [
 const GROUP_LABEL: Record<AttentionFlag["kind"], string> = {
   needs_input: "Needs input",
   ci_failed: "CI failed",
+  ci_self_heal_exhausted: "CI self-heal exhausted",
   rebase_conflict: "Rebase conflict",
   budget_exceeded: "Budget exceeded",
   judge_review: "Judge review",
