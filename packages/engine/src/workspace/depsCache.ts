@@ -16,26 +16,18 @@ async function runCommand(cmd: string, args: string[], cwd: string): Promise<voi
 }
 
 async function hardlinkTree(src: string, dst: string): Promise<void> {
-  await ensureDir(dst);
-  const entries = await fs.readdir(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const dstPath = path.join(dst, entry.name);
-    if (entry.isSymbolicLink()) {
-      if (await pathExists(dstPath)) continue;
-      const target = await fs.readlink(srcPath);
-      await fs.symlink(target, dstPath);
-    } else if (entry.isDirectory()) {
-      await hardlinkTree(srcPath, dstPath);
-    } else if (entry.isFile()) {
-      if (await pathExists(dstPath)) continue;
-      try {
-        await fs.link(srcPath, dstPath);
-      } catch {
-        await fs.copyFile(srcPath, dstPath);
-      }
-    }
-  }
+  // `cp -al` (archive + hardlink) replicates the tree with hardlinks for files
+  // and copies for symlinks/dirs in a single syscall path. Orders of magnitude
+  // faster than the per-entry Node loop on large node_modules trees (>10k files).
+  await ensureDir(path.dirname(dst));
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("cp", ["-al", src, dst], { stdio: "ignore" });
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`cp -al ${src} ${dst} exited with code ${code}`));
+    });
+    child.on("error", reject);
+  });
 }
 
 function parseWorkspacePackagesYaml(content: string): string[] {
