@@ -100,9 +100,10 @@ const STUB_SESSION = {
 
 interface HarnessProps {
   postCommand: ReturnType<typeof vi.fn>;
+  onOpenExecutePlan?: () => void;
 }
 
-function Harness({ postCommand }: HarnessProps): ReactElement {
+function Harness({ postCommand, onOpenExecutePlan }: HarnessProps): ReactElement {
   const [helpOpen, setHelpOpen] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("transcript");
@@ -119,11 +120,12 @@ function Harness({ postCommand }: HarnessProps): ReactElement {
           openConfig: () => {},
           openHelp: () => setHelpOpen(true),
           openCost: () => setCostOpen(true),
+          openExecutePlan: () => onOpenExecutePlan?.(),
           setActiveTab,
         });
       }
     },
-    [postCommand],
+    [postCommand, onOpenExecutePlan],
   );
 
   return createElement(
@@ -218,6 +220,20 @@ describe("ChatInput slash popover", () => {
 
     const tab = container.querySelector('[data-testid="active-tab"]');
     expect(tab?.textContent).toBe("diff");
+  });
+
+  it("/execute-plan + Enter calls openExecutePlan", async () => {
+    const postCommand = vi.fn();
+    const onOpenExecutePlan = vi.fn();
+    act(() => {
+      root.render(createElement(Harness, { postCommand, onOpenExecutePlan }));
+    });
+    await flush();
+
+    await typeAndEnter("/execute-plan");
+
+    expect(onOpenExecutePlan).toHaveBeenCalledTimes(1);
+    expect(postCommand).not.toHaveBeenCalled();
   });
 
   it("/help + Enter renders the HelpModal listing all command rows", async () => {

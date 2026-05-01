@@ -10,6 +10,7 @@ import { type Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
 import { HelpModal } from "./HelpModal.js";
 import { CostModal } from "./CostModal.js";
+import { ExecutePlanModal } from "./ExecutePlanModal.js";
 import { QuickActions } from "./quickActions.js";
 import { RecoveryFooter } from "./RecoveryFooter.js";
 import { PRPanel } from "./PRPanel.js";
@@ -55,6 +56,7 @@ export interface SlashUiHandlers {
   openConfig: () => void;
   openHelp: () => void;
   openCost: () => void;
+  openExecutePlan: () => void;
   setActiveTab: (id: string) => void;
 }
 
@@ -73,6 +75,10 @@ export function dispatchSlashUi(action: SlashUiResult["action"], h: SlashUiHandl
   }
   if (action === "config") {
     h.openConfig();
+    return;
+  }
+  if (action === "execute-plan") {
+    h.openExecutePlan();
     return;
   }
   if (!h.activeId) return;
@@ -265,7 +271,15 @@ export function BudgetMeterPill({ costUsd, cap }: { costUsd: number; cap: number
   );
 }
 
-function OperationalHeader({ session, onClose }: { session: Session; onClose: () => void }) {
+function OperationalHeader({
+  session,
+  onClose,
+  onOpenExecutePlan,
+}: {
+  session: Session;
+  onClose: () => void;
+  onOpenExecutePlan: () => void;
+}) {
   const conn = useRootStore((s) => s.getActiveConnection());
   const [landing, setLanding] = useState(false);
   const [landError, setLandError] = useState<string | null>(null);
@@ -310,6 +324,16 @@ function OperationalHeader({ session, onClose }: { session: Session; onClose: ()
     <div className="flex flex-col gap-1 px-3 py-2 border-b border-border">
       <div className="flex items-center gap-2 min-w-0">
         <span className="text-sm font-medium text-fg truncate flex-1">{session.title}</span>
+        {session.mode === "think" && (
+          <button
+            type="button"
+            onClick={onOpenExecutePlan}
+            className="btn text-xs px-2 py-1"
+            title="Execute this think thread's plan in a new session"
+          >
+            Execute plan
+          </button>
+        )}
         {canLand && (
           <button
             type="button"
@@ -487,11 +511,12 @@ interface PanelProps {
   onOpenConfig?: () => void;
   onOpenHelp: () => void;
   onOpenCost: () => void;
+  onOpenExecutePlan: () => void;
 }
 
 const NOOP = (): void => {};
 
-function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, onOpenHelp, onOpenCost }: PanelProps) {
+function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, onOpenHelp, onOpenCost, onOpenExecutePlan }: PanelProps) {
   const events = useSessionTranscript(session);
   const conn = useRootStore((s) => s.getActiveConnection());
 
@@ -510,12 +535,17 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
           openConfig: onOpenConfig ?? NOOP,
           openHelp: onOpenHelp,
           openCost: onOpenCost,
+          openExecutePlan: onOpenExecutePlan,
           setActiveTab: onTabChange,
         });
       }
     },
-    [session, conn, onOpenConfig, onOpenHelp, onOpenCost, onTabChange],
+    [session, conn, onOpenConfig, onOpenHelp, onOpenCost, onOpenExecutePlan, onTabChange],
   );
+
+  const isResumableThink =
+    session.mode === "think" &&
+    (session.status === "completed" || session.status === "failed");
 
   const handleSubmit = useCallback(
     async (text: string, attachments: Attachment[]) => {
@@ -529,8 +559,11 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
         text,
         ...(uploaded.length > 0 ? { attachments: uploaded } : {}),
       });
+      if (isResumableThink) {
+        await postCommand(conn, { kind: "resume-session", sessionSlug: session.slug });
+      }
     },
-    [session.slug, conn],
+    [session.slug, conn, isResumableThink],
   );
 
   const handleRecoveryAction = useCallback(
@@ -546,17 +579,24 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
     await postCommand(conn, { kind: "stop", sessionSlug: session.slug });
   }, [conn, session.slug]);
 
-  const inputDisabled = !conn || session.status === "completed" || session.status === "cancelled" || session.status === "failed";
+  const inputDisabled =
+    !conn ||
+    (!isResumableThink &&
+      (session.status === "completed" ||
+        session.status === "cancelled" ||
+        session.status === "failed"));
   const isRunning = session.status === "running";
   const inputPlaceholder = inputDisabled
     ? `Session ${session.status}.`
-    : isRunning
-      ? "Reply queues to land mid-turn…"
-      : undefined;
+    : isResumableThink
+      ? "Ask for more research…"
+      : isRunning
+        ? "Reply queues to land mid-turn…"
+        : undefined;
 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
-      <OperationalHeader session={session} onClose={onClose} />
+      <OperationalHeader session={session} onClose={onClose} onOpenExecutePlan={onOpenExecutePlan} />
       <SurfaceTablist tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
       <div
         role="tabpanel"
@@ -600,6 +640,7 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
   const [activeTab, setActiveTab] = useState("transcript");
   const [helpOpen, setHelpOpen] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
+  const [executePlanOpen, setExecutePlanOpen] = useState(false);
   const [width, setWidth] = useState<number>(() => {
     const stored = getLayout(CHAT_PANEL);
     return stored ? clampWidth(stored.size) : DEFAULT_WIDTH;
@@ -644,6 +685,11 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
     <>
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       {costOpen && <CostModal session={session} onClose={() => setCostOpen(false)} />}
+      <ExecutePlanModal
+        open={executePlanOpen}
+        onClose={() => setExecutePlanOpen(false)}
+        parentSession={session}
+      />
     </>
   );
 
@@ -665,6 +711,7 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
             onOpenConfig={onOpenConfig}
             onOpenHelp={() => setHelpOpen(true)}
             onOpenCost={() => setCostOpen(true)}
+            onOpenExecutePlan={() => setExecutePlanOpen(true)}
           />
         </div>
         {modals}
@@ -699,6 +746,7 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
               onOpenConfig={onOpenConfig}
               onOpenHelp={() => setHelpOpen(true)}
               onOpenCost={() => setCostOpen(true)}
+              onOpenExecutePlan={() => setExecutePlanOpen(true)}
             />
           </div>
         </Sheet>
@@ -723,6 +771,7 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
             onOpenConfig={onOpenConfig}
             onOpenHelp={() => setHelpOpen(true)}
             onOpenCost={() => setCostOpen(true)}
+            onOpenExecutePlan={() => setExecutePlanOpen(true)}
           />
         </div>
       </div>
