@@ -240,6 +240,16 @@ const fields: RuntimeField[] = [
     applies: "live",
   },
   {
+    key: "defaultSelfHealCi",
+    label: "Default new sessions to CI self-heal",
+    description:
+      "Set selfHealCi=true on every new task session by default, so a CI failure replays the failure as a reply to the same session (no spawned children). Caller-provided metadata.selfHealCi always wins, including explicit false.",
+    type: "boolean",
+    default: false,
+    group: "autonomy",
+    applies: "live",
+  },
+  {
     key: "admissionUnlimited",
     label: "Admission unlimited (disable caps)",
     description:
