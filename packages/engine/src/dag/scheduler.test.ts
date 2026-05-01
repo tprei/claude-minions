@@ -643,3 +643,89 @@ describe("DagScheduler", () => {
     );
   });
 });
+
+describe("DagScheduler.cascadeUpstreamFailures", () => {
+  let env: AutomationEnv;
+  before(() => { env = openAutomationEnv(); });
+  after(() => { env.cleanup(); });
+
+  test("cancels pending nodes whose direct dep is failed", async () => {
+    const A = makeNode("A", "failed");
+    const B = makeNode("B", "pending", ["A"]);
+    const dag = makeDag("dag-cascade-1", [A, B]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const ctx = makeMockCtx([]);
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), env.repo);
+
+    await scheduler.tick("dag-cascade-1");
+
+    const bAfter = repo.getNode("B");
+    assert.equal(bAfter?.status, "cancelled", "B cancelled because A failed");
+    assert.match(bAfter?.failedReason ?? "", /upstream node A failed/);
+  });
+
+  test("transitively cancels chained dependents in a single tick", async () => {
+    const A = makeNode("A", "ci-failed");
+    const B = makeNode("B", "pending", ["A"]);
+    const C = makeNode("C", "pending", ["B"]);
+    const D = makeNode("D", "pending", ["C"]);
+    const dag = makeDag("dag-cascade-2", [A, B, C, D]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const ctx = makeMockCtx([]);
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), env.repo);
+
+    await scheduler.tick("dag-cascade-2");
+
+    assert.equal(repo.getNode("B")?.status, "cancelled");
+    assert.equal(repo.getNode("C")?.status, "cancelled");
+    assert.equal(repo.getNode("D")?.status, "cancelled");
+  });
+
+  test("does not touch nodes that have any successful upstream path", async () => {
+    const Failed = makeNode("Failed", "failed");
+    const Ok = makeNode("Ok", "done");
+    const Joiner = makeNode("Joiner", "pending", ["Failed", "Ok"]);
+    const dag = makeDag("dag-cascade-3", [Failed, Ok, Joiner]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const ctx = makeMockCtx([]);
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), env.repo);
+
+    await scheduler.tick("dag-cascade-3");
+
+    assert.equal(
+      repo.getNode("Joiner")?.status,
+      "cancelled",
+      "Joiner cancels because at least one upstream is failed (any-fail policy)",
+    );
+  });
+
+  test("DAG flips to terminal/failed once cascade fills in", async () => {
+    const A = makeNode("A", "failed");
+    const B = makeNode("B", "pending", ["A"]);
+    const C = makeNode("C", "pr-open");
+    const dag = makeDag("dag-cascade-4", [A, B, C]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const ctx = makeMockCtx([]);
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), env.repo);
+
+    await scheduler.tick("dag-cascade-4");
+
+    const refreshed = repo.get("dag-cascade-4");
+    assert.equal(repo.getNode("B")?.status, "cancelled");
+    assert.equal(refreshed?.status, "failed", "DAG status reflects partial failure");
+  });
+
+  test("no-op when there are no failed nodes", async () => {
+    const A = makeNode("A", "running");
+    const B = makeNode("B", "pending", ["A"]);
+    const dag = makeDag("dag-cascade-5", [A, B]);
+    const repo = makeMockRepo(dag) as unknown as DagRepo;
+    const ctx = makeMockCtx([]);
+    const scheduler = new DagScheduler(repo, ctx, createLogger("error"), env.repo);
+
+    await scheduler.tick("dag-cascade-5");
+
+    assert.equal(repo.getNode("A")?.status, "running");
+    assert.equal(repo.getNode("B")?.status, "pending");
+  });
+});

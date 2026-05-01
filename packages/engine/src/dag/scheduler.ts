@@ -97,19 +97,24 @@ export class DagScheduler {
     const dag = this.repo.get(dagId);
     if (!dag) return;
 
+    this.cascadeUpstreamFailures(dagId);
+
+    const refreshed = this.repo.get(dagId);
+    if (!refreshed) return;
+
     const maxConcurrent = this.resolveMaxConcurrent();
 
-    const runningCount = dag.nodes.filter(
+    const runningCount = refreshed.nodes.filter(
       (n) => n.status === "running" || n.status === "ready" || n.status === "ci-pending",
     ).length;
 
     if (runningCount >= maxConcurrent) return;
 
     const doneIds = new Set(
-      dag.nodes.filter((n) => SUCCESS_NODE_STATUSES.has(n.status)).map((n) => n.id),
+      refreshed.nodes.filter((n) => SUCCESS_NODE_STATUSES.has(n.status)).map((n) => n.id),
     );
 
-    const pending = dag.nodes.filter((n) => n.status === "pending");
+    const pending = refreshed.nodes.filter((n) => n.status === "pending");
 
     let spawned = runningCount;
     for (const node of pending) {
@@ -122,6 +127,39 @@ export class DagScheduler {
     }
 
     this.recomputeDagStatus(dagId);
+  }
+
+  private cascadeUpstreamFailures(dagId: string): void {
+    let anyChanged = false;
+    while (true) {
+      const dag = this.repo.get(dagId);
+      if (!dag) return;
+      const failedIds = new Set(
+        dag.nodes.filter((n) => FAILED_NODE_STATUSES.has(n.status)).map((n) => n.id),
+      );
+      if (failedIds.size === 0) break;
+
+      let passChanged = false;
+      for (const node of dag.nodes) {
+        if (node.status !== "pending") continue;
+        const blockedBy = node.dependsOn.find((d) => failedIds.has(d));
+        if (!blockedBy) continue;
+        this.repo.updateNode(node.id, {
+          status: "cancelled",
+          failedReason: `upstream node ${blockedBy} failed`,
+          completedAt: new Date().toISOString(),
+        });
+        passChanged = true;
+        this.log.info("dag node cancelled due to upstream failure", {
+          dagId,
+          nodeId: node.id,
+          upstream: blockedBy,
+        });
+      }
+      if (!passChanged) break;
+      anyChanged = true;
+    }
+    if (anyChanged) this.recomputeDagStatus(dagId);
   }
 
   private async spawnNodeSession(dagId: string, node: DAGNode): Promise<void> {
