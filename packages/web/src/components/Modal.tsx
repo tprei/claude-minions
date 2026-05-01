@@ -23,6 +23,8 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
     return () => document.removeEventListener("keydown", handler);
   }, [open, onClose, isMobile]);
 
+  if (!open) return null;
+
   if (isMobile) {
     return (
       <Sheet open={open} onClose={onClose} side="bottom" title={title} className={className}>
@@ -30,8 +32,6 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
       </Sheet>
     );
   }
-
-  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
