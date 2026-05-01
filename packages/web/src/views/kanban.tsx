@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { Session, SessionStatus, SessionMode } from "@minions/shared";
 import { formatCostUsd, formatTokens } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
@@ -9,6 +9,9 @@ import { parseUrl } from "../routing/parseUrl.js";
 import { relTime } from "../util/time.js";
 import { cx } from "../util/classnames.js";
 import { SessionActionsMenu } from "../chat/SessionActionsMenu.js";
+import { usePullToRefresh } from "../pwa/gestures.js";
+import { getSessions } from "../transport/rest.js";
+import { Spinner } from "../components/Spinner.js";
 
 const COLUMNS: { status: SessionStatus; label: string; limit?: number }[] = [
   { status: "pending", label: "Pending" },
@@ -115,43 +118,64 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
     setUrlState({ connectionId: activeId, view: "list", sessionSlug: parentSlug, query });
   };
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    if (!conn) return;
+    setRefreshing(true);
+    try {
+      const env = await getSessions(conn);
+      useSessionStore.getState().replaceAll(conn.id, env.items);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [conn]);
+  usePullToRefresh(containerRef, onRefresh);
+
   return (
-    <div className="flex h-full gap-3 p-3 overflow-x-auto snap-x snap-mandatory">
-      {COLUMNS.map((col) => {
-        const items = byStatus.get(col.status) ?? [];
-        const limited = col.limit ? items.slice(0, col.limit) : items;
-        const headerClass = COL_HEADER_BG[col.status] ?? "bg-bg-soft/40 border-border/40";
-        return (
-          <div key={col.status} className="flex flex-col w-[calc(100vw-2rem)] sm:w-72 shrink-0 snap-start">
-            <div className={cx("flex items-center gap-2 rounded-t-lg px-3 py-2 border mb-1", headerClass)}>
-              <span className={cx("w-2 h-2 rounded-full", STATUS_DOT[col.status])} />
-              <span className="text-sm font-medium text-fg-muted">{col.label}</span>
-              <span className="ml-auto text-xs text-fg-subtle">{items.length}</span>
+    <div className="relative h-full">
+      {refreshing && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+          <Spinner size="sm" />
+        </div>
+      )}
+      <div ref={containerRef} className="flex h-full gap-3 p-3 overflow-x-auto snap-x snap-mandatory">
+        {COLUMNS.map((col) => {
+          const items = byStatus.get(col.status) ?? [];
+          const limited = col.limit ? items.slice(0, col.limit) : items;
+          const headerClass = COL_HEADER_BG[col.status] ?? "bg-bg-soft/40 border-border/40";
+          return (
+            <div key={col.status} className="flex flex-col w-[calc(100vw-2rem)] sm:w-72 shrink-0 snap-start">
+              <div className={cx("flex items-center gap-2 rounded-t-lg px-3 py-2 border mb-1", headerClass)}>
+                <span className={cx("w-2 h-2 rounded-full", STATUS_DOT[col.status])} />
+                <span className="text-sm font-medium text-fg-muted">{col.label}</span>
+                <span className="ml-auto text-xs text-fg-subtle">{items.length}</span>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-2">
+                {limited.map((s) => (
+                  <KanbanCard
+                    key={s.slug}
+                    session={s}
+                    conn={conn}
+                    childSlugs={childrenBySlug.get(s.slug) ?? []}
+                    onClick={() => navigate(s.slug)}
+                    onOpenDag={navigateToDag}
+                    onOpenParent={navigateToParent}
+                  />
+                ))}
+                {col.limit && items.length > col.limit && (
+                  <div className="text-xs text-fg-subtle text-center py-1">
+                    +{items.length - col.limit} more
+                  </div>
+                )}
+                {limited.length === 0 && (
+                  <div className="text-xs text-fg-subtle text-center py-4">empty</div>
+                )}
+              </div>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2">
-              {limited.map((s) => (
-                <KanbanCard
-                  key={s.slug}
-                  session={s}
-                  conn={conn}
-                  childSlugs={childrenBySlug.get(s.slug) ?? []}
-                  onClick={() => navigate(s.slug)}
-                  onOpenDag={navigateToDag}
-                  onOpenParent={navigateToParent}
-                />
-              ))}
-              {col.limit && items.length > col.limit && (
-                <div className="text-xs text-fg-subtle text-center py-1">
-                  +{items.length - col.limit} more
-                </div>
-              )}
-              {limited.length === 0 && (
-                <div className="text-xs text-fg-subtle text-center py-4">empty</div>
-              )}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
