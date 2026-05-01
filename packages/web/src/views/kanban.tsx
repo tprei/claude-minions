@@ -185,7 +185,7 @@ function KanbanCard({ session, conn, childSlugs, onClick, onOpenDag, onOpenParen
         <span className="text-xs text-fg leading-snug line-clamp-2">{session.title}</span>
         <div className="flex items-center gap-1 shrink-0">
           {session.attention.length > 0 && (
-            <span className="pill bg-red-900 text-red-300 text-[10px]">
+            <span className="pill bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300 text-[10px]">
               {session.attention.length}
             </span>
           )}
@@ -203,7 +203,7 @@ function KanbanCard({ session, conn, childSlugs, onClick, onOpenDag, onOpenParen
         )}
         {session.stats.costUsd > 0 && (
           <span
-            className="pill bg-emerald-900/40 text-emerald-300 text-[10px] font-mono"
+            className="pill bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 text-[10px] font-mono"
             title={`${formatTokens(session.stats.inputTokens)} in / ${formatTokens(session.stats.outputTokens)} out`}
           >
             {formatCostUsd(session.stats.costUsd)}
@@ -213,7 +213,7 @@ function KanbanCard({ session, conn, childSlugs, onClick, onOpenDag, onOpenParen
       {hasOps && (
         <div className="flex items-center gap-1 flex-wrap text-[10px]">
           {session.shipStage && (
-            <span className="pill bg-purple-900/40 text-purple-300">stage:{session.shipStage}</span>
+            <span className="pill bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300">stage:{session.shipStage}</span>
           )}
           {session.pr && (
             <a
@@ -235,7 +235,7 @@ function KanbanCard({ session, conn, childSlugs, onClick, onOpenDag, onOpenParen
                 if (session.dagId) onOpenDag(session.dagId);
               }}
               title={`DAG ${session.dagId}`}
-              className="pill bg-indigo-900/40 text-indigo-300 hover:underline font-mono cursor-pointer"
+              className="pill bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300 hover:underline font-mono cursor-pointer"
             >
               DAG
             </button>

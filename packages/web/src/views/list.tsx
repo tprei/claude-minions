@@ -305,7 +305,7 @@ function DagPill({ dagId, onOpen }: { dagId: string; onOpen: (dagId: string) => 
         onOpen(dagId);
       }}
       title={`Open DAG ${dagId}`}
-      className="pill bg-indigo-900/40 text-indigo-300 text-[10px] cursor-pointer hover:bg-indigo-900/60 transition-colors"
+      className="pill bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300 text-[10px] cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-900/60 transition-colors"
     >
       DAG
     </button>
@@ -382,7 +382,7 @@ function SessionCard({ session, childSlugs, conn, onClick, onOpenDag, onOpenPare
         <span className="text-sm text-fg leading-snug line-clamp-2">{session.title}</span>
         <div className="flex items-center gap-1.5 shrink-0">
           {session.attention.length > 0 && (
-            <span className="pill bg-red-900 text-red-300 text-[10px]">
+            <span className="pill bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300 text-[10px]">
               {session.attention.length}
             </span>
           )}
@@ -447,7 +447,7 @@ function SessionRow({ session, childSlugs, conn, onClick, onOpenDag, onOpenParen
       </td>
       <td className="px-4 py-2 hidden sm:table-cell">
         {session.attention.length > 0 && (
-          <span className="pill bg-red-900 text-red-300 text-[10px]">
+          <span className="pill bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300 text-[10px]">
             {session.attention.length}
           </span>
         )}
