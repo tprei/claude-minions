@@ -1,14 +1,17 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import type { Session, SessionStatus, SessionMode, SessionBucket } from "@minions/shared";
 import { formatCostUsd } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
 import { useConnectionStore, type Connection } from "../connections/store.js";
 import { useRootStore } from "../store/root.js";
+import { refetchConnection } from "../store/connectionState.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { relTime } from "../util/time.js";
 import { cx } from "../util/classnames.js";
 import { SessionActionsMenu } from "../chat/SessionActionsMenu.js";
+import { usePullToRefresh } from "../pwa/gestures.js";
+import { Spinner } from "../components/Spinner.js";
 
 const STATUS_DOT: Record<SessionStatus, string> = {
   pending: "bg-zinc-500",
@@ -66,6 +69,20 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"updatedAt" | "cost">("updatedAt");
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+  const [refreshing, setRefreshing] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const onRefresh = useCallback(async () => {
+    if (!conn) return;
+    setRefreshing(true);
+    try {
+      await refetchConnection(conn);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [conn]);
+
+  usePullToRefresh(scrollRef, onRefresh);
 
   const handleSort = (key: "updatedAt" | "cost") => {
     if (sortBy === key) {
@@ -188,7 +205,18 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto relative">
+        <div
+          aria-hidden={!refreshing}
+          className={cx(
+            "absolute top-0 left-0 right-0 flex justify-center pointer-events-none transition-transform duration-200 z-10",
+            refreshing ? "translate-y-2" : "-translate-y-full",
+          )}
+        >
+          <span className="rounded-full bg-bg-soft border border-border shadow p-1.5">
+            <Spinner size="sm" />
+          </span>
+        </div>
         {filtered.length === 0 ? (
           <EmptyState filterMode={filterMode} filterStatus={filterStatus} />
         ) : (

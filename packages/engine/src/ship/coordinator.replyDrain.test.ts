@@ -133,6 +133,16 @@ function insertShipSession(db: Database.Database, slug: string, stage: string, w
   `).run(slug, REPLY_DRAIN_PROVIDER_NAME, `ext-${slug}`, now);
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitFor timeout after ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 function insertAssistantTextEvent(db: Database.Database, slug: string, text: string): void {
   const seq = ((db
     .prepare(`SELECT COALESCE(MAX(seq), -1) AS s FROM transcript_events WHERE session_slug = ?`)
@@ -242,7 +252,7 @@ describe("ShipCoordinator + replyQueue drain integration", () => {
     assert.ok(firstExit);
     firstExit(0);
 
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => captured.resumes.length >= 2);
 
     assert.ok(captured.resumes.length >= 2, "drain hook should resume with queued items");
     const lastResume = captured.resumes[captured.resumes.length - 1];
