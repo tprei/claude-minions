@@ -9,7 +9,7 @@ export function UpdateBanner(): ReactElement | null {
       <div
         role="alert"
         data-testid="sw-error-banner"
-        className="fixed top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-2 px-4 bg-red-900/90 text-red-100 text-sm backdrop-blur border-b border-red-700"
+        className="fixed top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-2 px-4 bg-tone-err-bg text-tone-err-fg text-sm backdrop-blur border-b border-tone-err-border"
       >
         <span>Service worker registration failed: {registrationError}</span>
       </div>
