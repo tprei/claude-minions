@@ -52,8 +52,14 @@ COPY --from=builder /app/packages/web/dist            packages/web/dist
 
 RUN pnpm install --prod --frozen-lockfile
 
+# Non-root user: claude-code refuses --dangerously-skip-permissions when running as root.
+RUN useradd -u 10001 -m -s /bin/bash minion \
+ && mkdir -p /data/workspace /data/home \
+ && chown -R minion:minion /app /data
+USER minion
+ENV HOME=/data/home
+
 EXPOSE 8787
-VOLUME ["/data/workspace", "/secrets"]
 
 ENV MINIONS_PORT=8787 \
     MINIONS_HOST=0.0.0.0 \

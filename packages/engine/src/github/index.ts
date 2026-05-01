@@ -27,6 +27,7 @@ export interface GithubSubsystem {
   fetchPR: (repoId: string, prNumber: number) => Promise<PullRequestPreview>;
   postPRComment: (repoId: string, prNumber: number, body: string) => Promise<void>;
   getToken: () => Promise<string>;
+  getAppJwt: () => string | null;
   findPRByHead: (repoId: string, head: string, base: string) => Promise<FindPRResult | null>;
   createPR: (repoId: string, payload: { title: string; body: string; head: string; base: string; draft?: boolean }) => Promise<{ number: number; url: string }>;
   editPRBase: (repoId: string, prNumber: number, newBase: string) => Promise<void>;
@@ -190,6 +191,10 @@ export function createGithubSubsystem(deps: GithubSubsystemDeps): GithubSubsyste
     },
 
     getToken,
+
+    getAppJwt() {
+      return appAuth ? appAuth.mintJwt() : null;
+    },
 
     async fetchPR(repoId, prNumber) {
       const token = await getToken();
