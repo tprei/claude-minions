@@ -167,7 +167,7 @@ describe("ciPoll handler", () => {
     }
   });
 
-  it("does not poll or re-enqueue when ciSelfHealConcluded is exhausted", async () => {
+  it("keeps polling and re-enqueueing exhausted sessions so a late fix push still flips them green", async () => {
     const env = setup();
     try {
       const session = makeSession({ slug: "s-exhausted", status: "running", pr: pr(3, "open") });
@@ -185,10 +185,10 @@ describe("ciPoll handler", () => {
 
       await handler(env.repo.get(job.id)!, ctx);
 
-      assert.deepEqual(pollCalls, [], "should not call ctx.ci.poll on exhausted sessions");
+      assert.deepEqual(pollCalls, ["s-exhausted"], "exhausted sessions still get polled");
       const queued = env.repo.findByTarget("session", "s-exhausted");
       const followUps = queued.filter((j) => j.id !== job.id && j.kind === "ci-poll");
-      assert.equal(followUps.length, 0, "no follow-up enqueued for exhausted session");
+      assert.equal(followUps.length, 1, "follow-up enqueued for exhausted session too");
     } finally {
       env.cleanup();
     }

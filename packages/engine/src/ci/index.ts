@@ -288,7 +288,16 @@ export function applyCiPassedAttention(
   current: AttentionFlag[],
   raisedAt: string,
 ): AttentionFlag[] | null {
-  const filtered = current.filter((a) => a.kind !== "ci_pending" && a.kind !== "ci_failed");
+  // Also strip ci_self_heal_exhausted: a previously-exhausted session whose
+  // CI now goes green (e.g. via a late fix push) is no longer "stuck" — the
+  // exhausted flag would otherwise pin readiness to blocked even after the
+  // PR is mergeable.
+  const filtered = current.filter(
+    (a) =>
+      a.kind !== "ci_pending" &&
+      a.kind !== "ci_failed" &&
+      a.kind !== "ci_self_heal_exhausted",
+  );
   const hasPassed = filtered.some((a) => a.kind === "ci_passed");
   if (hasPassed && filtered.length === current.length) return null;
   if (hasPassed) return filtered;

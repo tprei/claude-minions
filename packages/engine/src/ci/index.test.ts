@@ -348,6 +348,22 @@ describe("applyCiPassedAttention", () => {
     assert.equal(next[0]?.kind, "ci_passed");
     assert.equal(next[0]?.raisedAt, PRIOR, "preserves the original raisedAt when ci_passed already exists");
   });
+
+  test("clears ci_self_heal_exhausted so a late green CI lifts a previously-stuck PR", () => {
+    const current: AttentionFlag[] = [
+      { kind: "ci_self_heal_exhausted", message: "tried 3 times", raisedAt: PRIOR },
+      { kind: "ci_failed", message: "old", raisedAt: PRIOR },
+    ];
+    const next = applyCiPassedAttention(current, RAISED);
+    assert.ok(next);
+    assert.equal(next.length, 1);
+    assert.equal(next[0]?.kind, "ci_passed");
+    assert.equal(
+      next.some((a) => a.kind === "ci_self_heal_exhausted"),
+      false,
+      "exhausted attention is cleared once CI goes green",
+    );
+  });
 });
 
 describe("bucketChecks", () => {

@@ -41,7 +41,12 @@ export function createCiPollHandler(deps: CiPollHandlerDeps): JobHandler {
     if (!session || !session.pr) return;
     if (session.pr.state !== "open") return;
     if (session.status === "failed" || session.status === "cancelled") return;
-    if (session.metadata["ciSelfHealConcluded"] === "exhausted") return;
+
+    // Exhausted self-heal sessions still keep polling. A late-arriving fix
+    // commit (manual push, slow CI run that finally passes, or a different
+    // child session pushing to the same branch) should still flip the PR
+    // to ready. The session's selfHealCi metadata is already false at this
+    // point, so ctx.ci.poll falls through to the non-self-heal branch.
 
     await ctx.ci.poll(slug);
 
@@ -49,7 +54,6 @@ export function createCiPollHandler(deps: CiPollHandlerDeps): JobHandler {
     if (!refreshed || !refreshed.pr) return;
     if (refreshed.pr.state !== "open") return;
     if (refreshed.status === "failed" || refreshed.status === "cancelled") return;
-    if (refreshed.metadata["ciSelfHealConcluded"] === "exhausted") return;
 
     enqueueCiPoll(deps.repo, slug, POLL_INTERVAL_MS, now);
   };
