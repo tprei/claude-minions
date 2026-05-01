@@ -46,6 +46,7 @@ import { createCiFetchLogsHandler } from "./automation/handlers/ciFetchLogs.js";
 import { createStackLandHandler } from "./automation/handlers/stackLand.js";
 import { createRestackDescendantsHandler } from "./automation/handlers/restackDescendants.js";
 import { createSessionSpawnRetryHandler } from "./automation/handlers/sessionSpawnRetry.js";
+import { createDagTickHandler } from "./automation/handlers/dagTick.js";
 
 export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineContext> {
   const engineLog = log ?? createLogger(env.logLevel, { service: "engine" });
@@ -116,7 +117,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
   ctx.readiness = wire(createReadinessSubsystem(deps));
   ctx.intake = wire(createIntakeSubsystem(deps));
   ctx.sessions = wire(createSessionsSubsystem({ ...deps, automationRepo }));
-  ctx.dags = wire(createDagSubsystem(deps));
+  ctx.dags = wire(createDagSubsystem({ ...deps, automationRepo }));
   ctx.ship = wire(createShipSubsystem({ ...deps, automationRepo }));
   ctx.landing = wire(createLandingSubsystem({ ...deps, dagRepo: new DagRepo(db, bus), automationRepo }));
   ctx.loops = wire(createLoopsSubsystem(deps));
@@ -160,6 +161,7 @@ export async function createEngine(env: EngineEnv, log: Logger): Promise<EngineC
     "session-spawn-retry",
     createSessionSpawnRetryHandler({ repo: automationRepo }),
   );
+  automationHandlers.set("dag-tick", createDagTickHandler());
   const automationRunner = createAutomationRunner({
     repo: automationRepo,
     ctx,

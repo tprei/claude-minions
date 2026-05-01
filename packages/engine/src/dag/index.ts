@@ -3,6 +3,7 @@ import type { DAG, DAGNodeStatus, DAGSplitRequest, StatusEvent } from "@minions/
 import type { EngineContext } from "../context.js";
 import type { Logger } from "../logger.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
+import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { DagRepo } from "./model.js";
 import { DagScheduler, SUCCESS_NODE_STATUSES } from "./scheduler.js";
 import { DagTerminalHandler } from "./onTerminal.js";
@@ -66,7 +67,7 @@ function reconcileStaleRunningNodes(
   return dagIds;
 }
 
-async function dispatchAfterBootReconcile(
+export async function dispatchAfterBootReconcile(
   scheduler: DagScheduler,
   dagIds: string[],
   ctx: EngineContext,
@@ -87,11 +88,18 @@ async function dispatchAfterBootReconcile(
   }
 }
 
-export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineContext["dags"]> {
-  const { ctx, db, bus, log } = deps;
+export function createDagSubsystem(
+  deps: SubsystemDeps & { automationRepo?: AutomationJobRepo },
+): SubsystemResult<EngineContext["dags"]> {
+  const { ctx, db, bus, log, automationRepo } = deps;
 
   const repo = new DagRepo(db, bus);
-  const scheduler = new DagScheduler(repo, ctx, log.child({ subsystem: "dag-scheduler" }));
+  const scheduler = new DagScheduler(
+    repo,
+    ctx,
+    log.child({ subsystem: "dag-scheduler" }),
+    automationRepo ?? null,
+  );
   const terminalHandler = new DagTerminalHandler(
     repo,
     scheduler,
@@ -105,10 +113,11 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
     log.child({ subsystem: "dag-merged" }),
   );
 
-  reconcileStaleRunningNodes(db, repo, ctx, log);
-  // T25 watchdog now owns re-dispatch; the prior fire-and-forget dispatch raced
-  // with operator commands like cancel/forceLand. Operator triggers via
-  // dags.retry / dags.cancel.
+  const reconciledIds = reconcileStaleRunningNodes(db, repo, ctx, log);
+  // Tick every active DAG after stale-node reconciliation so pending nodes
+  // resume promptly after a restart. Operator triggers (retry/cancel) still
+  // call tick() directly.
+  void dispatchAfterBootReconcile(scheduler, reconciledIds, ctx, log);
 
   const subLog = log.child({ subsystem: "dag-parser-sub" });
   const warnedBlocksBySlug = new Map<string, Set<string>>();
@@ -499,6 +508,10 @@ export function createDagSubsystem(deps: SubsystemDeps): SubsystemResult<EngineC
         { kind: "dag", id: dagId },
         { nodeId, from, to: "landed" },
       );
+      await scheduler.tick(dagId);
+    },
+
+    async tick(dagId: string): Promise<void> {
       await scheduler.tick(dagId);
     },
 

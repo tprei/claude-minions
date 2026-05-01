@@ -2,6 +2,8 @@ import type { DAG, DAGNode, SessionStatus } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { DagRepo } from "./model.js";
 import type { Logger } from "../logger.js";
+import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
+import { enqueueDagTick } from "../automation/handlers/dagTick.js";
 import { isEngineError } from "../errors.js";
 
 const DEFAULT_MAX_CONCURRENT = 3;
@@ -45,6 +47,7 @@ export class DagScheduler {
     private readonly repo: DagRepo,
     private readonly ctx: EngineContext,
     private readonly log: Logger,
+    private readonly automationRepo: AutomationJobRepo | null = null,
   ) {}
 
   async tick(dagId?: string): Promise<void> {
@@ -193,16 +196,14 @@ export class DagScheduler {
       reason: message,
     });
 
-    const handle = setTimeout(() => {
-      this.tick(dagId).catch((e) => {
-        this.log.error("dag admission retry tick failed", {
-          dagId,
-          nodeId: node.id,
-          err: (e as Error).message,
-        });
+    if (!this.automationRepo) {
+      this.log.error("dag scheduler has no automation repo; admission retry will not fire", {
+        dagId,
+        nodeId: node.id,
       });
-    }, ADMISSION_RETRY_DELAY_MS);
-    handle.unref?.();
+      return;
+    }
+    enqueueDagTick(this.automationRepo, dagId, ADMISSION_RETRY_DELAY_MS);
   }
 
   private resolveNodeBaseBranch(dag: DAG, node: DAGNode): string | undefined {

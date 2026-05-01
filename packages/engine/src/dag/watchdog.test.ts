@@ -672,6 +672,7 @@ describe("Dag api operator commands", () => {
     const db = makeTempDb();
     const bus = new EventBus();
     const sessions = new Map<string, Session>();
+    sessions.set("sess-B", makeSession("sess-B", "running"));
     const audit: AuditCall[] = [];
     const ctx = makeMockCtx(sessions, audit);
     ctx.bus = bus;
