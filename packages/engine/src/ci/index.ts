@@ -61,6 +61,7 @@ interface GhPrView {
 }
 
 const FAIL_CONCLUSIONS = new Set(["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]);
+const PASS_CONCLUSIONS = new Set(["SUCCESS", "SKIPPED", "NEUTRAL"]);
 const FAIL_STATES = new Set(["FAILURE", "ERROR"]);
 
 function isCheckRun(entry: GhRollupEntry): entry is GhCheckRunRollup {
@@ -77,7 +78,7 @@ export function rollupToChecks(rollup: GhRollupEntry[] | null | undefined): GhCh
       const status = (entry.status ?? "").toUpperCase();
       const bucket = FAIL_CONCLUSIONS.has(conclusion)
         ? "fail"
-        : conclusion === "SUCCESS"
+        : PASS_CONCLUSIONS.has(conclusion)
           ? "pass"
           : "pending";
       return {
@@ -268,6 +269,17 @@ export function computeCiAttentionUpdate(
     return { kind: "clear", attention, previousMessage: previous.message };
   }
   return { kind: "noop" };
+}
+
+export function applyCiPassedAttention(
+  current: AttentionFlag[],
+  raisedAt: string,
+): AttentionFlag[] | null {
+  const filtered = current.filter((a) => a.kind !== "ci_pending" && a.kind !== "ci_failed");
+  const hasPassed = filtered.some((a) => a.kind === "ci_passed");
+  if (hasPassed && filtered.length === current.length) return null;
+  if (hasPassed) return filtered;
+  return [...filtered, { kind: "ci_passed", message: "All checks passed", raisedAt }];
 }
 
 function mapPrState(state: string): PRSummary["state"] {
@@ -464,10 +476,11 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
         await applySelfHealExhausted(slug, fresh.attention, decision.failedNames, decision.attempts);
       }
     } else {
+      const raisedAt = new Date().toISOString();
       const update = computeCiAttentionUpdate(
         fresh.attention,
         buckets.failed,
-        new Date().toISOString(),
+        raisedAt,
       );
 
       if (update.kind !== "noop") {
@@ -481,6 +494,17 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
           { kind: "session", id: slug },
           { previousMessage: update.previousMessage },
         );
+      }
+
+      const afterFailedUpdate = ctx.sessions.get(slug);
+      if (afterFailedUpdate) {
+        if (summary.state === "passing") {
+          const next = applyCiPassedAttention(afterFailedUpdate.attention, raisedAt);
+          if (next !== null) sessionRepo.setAttention(slug, next);
+        } else if (afterFailedUpdate.attention.some((a) => a.kind === "ci_passed")) {
+          const next = afterFailedUpdate.attention.filter((a) => a.kind !== "ci_passed");
+          sessionRepo.setAttention(slug, next);
+        }
       }
 
       const flagEnabled = ctx.runtime.effective()["autoMergeOnGreen"] === true;
@@ -543,6 +567,11 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
 
   async function applySelfHealSuccess(slug: string): Promise<void> {
     ctx.sessions.dismissAttention(slug, "ci_pending");
+    const fresh = ctx.sessions.get(slug);
+    if (fresh) {
+      const next = applyCiPassedAttention(fresh.attention, new Date().toISOString());
+      if (next !== null) sessionRepo.setAttention(slug, next);
+    }
     ctx.sessions.setMetadata(slug, {
       selfHealCi: false,
       ciSelfHealConcluded: "success",
