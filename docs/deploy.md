@@ -2,6 +2,8 @@
 
 One container, one port, one volume. Engine serves `/api/*` and the built PWA on `/`.
 
+For unattended overnight runs and supervisor setup, see [docs/deploy/supervisor.md](deploy/supervisor.md).
+
 ## Prereqs on the host
 
 - Docker + Compose (Docker Desktop or `docker.io` / `docker-ce`).
