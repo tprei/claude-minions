@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { AttentionFlag, AttentionInboxItem, Session } from "@minions/shared";
 import { useConnectionStore } from "../connections/store.js";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
+import { refetchConnection } from "../store/connectionState.js";
 import { getAttentionItems, dismissAttention } from "../transport/rest.js";
 import { setUrlState } from "../routing/urlState.js";
 import { relTime } from "../util/time.js";
+import { cx } from "../util/classnames.js";
 import { Button } from "../components/Button.js";
+import { Spinner } from "../components/Spinner.js";
+import { usePullToRefresh } from "../pwa/gestures.js";
 
 interface ApiClient {
   get: (path: string) => Promise<unknown>;
@@ -77,6 +81,26 @@ export function InboxView(_props: Props): ReactElement {
   const [seed, setSeed] = useState<AttentionInboxItem[] | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const onRefresh = useCallback(async () => {
+    if (!conn) return;
+    setRefreshing(true);
+    try {
+      const [, env] = await Promise.all([
+        refetchConnection(conn),
+        getAttentionItems(conn),
+      ]);
+      setSeed(env.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh inbox");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [conn]);
+
+  usePullToRefresh(scrollRef, onRefresh);
 
   useEffect(() => {
     if (!conn) return;
@@ -147,7 +171,23 @@ export function InboxView(_props: Props): ReactElement {
   );
 
   return (
-    <div className="h-full overflow-y-auto" data-testid="inbox-view">
+    <div
+      ref={scrollRef}
+      className="h-full overflow-y-auto relative"
+      data-testid="inbox-view"
+    >
+      <div
+        aria-hidden={!refreshing}
+        className={cx(
+          "absolute top-0 left-0 right-0 flex justify-center pointer-events-none transition-transform duration-200 z-10",
+          refreshing ? "translate-y-2" : "-translate-y-full",
+        )}
+        data-testid="inbox-refresh-indicator"
+      >
+        <span className="rounded-full bg-bg-soft border border-border shadow p-1.5">
+          <Spinner size="sm" />
+        </span>
+      </div>
       <div className="p-4 flex flex-col gap-4">
         <h1 className="text-lg font-semibold text-fg">Inbox</h1>
         {error && (
