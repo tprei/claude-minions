@@ -14,10 +14,10 @@ interface BadgeMeta {
 }
 
 const STATUS_BADGE: Record<DiffStat["status"], BadgeMeta> = {
-  added: { label: "A", className: "text-green-400" },
-  modified: { label: "M", className: "text-yellow-400" },
-  deleted: { label: "D", className: "text-red-400" },
-  renamed: { label: "R", className: "text-blue-400" },
+  added: { label: "A", className: "text-green-700 dark:text-green-400" },
+  modified: { label: "M", className: "text-yellow-700 dark:text-yellow-400" },
+  deleted: { label: "D", className: "text-red-700 dark:text-red-400" },
+  renamed: { label: "R", className: "text-blue-700 dark:text-blue-400" },
   untracked: { label: "U", className: "text-fg-subtle" },
 };
 
@@ -38,9 +38,9 @@ export function FileList({ files, selectedPath, onSelect }: Props): ReactElement
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
         <span>
-          <span className="text-green-400">+{totalAdds}</span>
+          <span className="text-green-700 dark:text-green-400">+{totalAdds}</span>
           <span className="mx-1 text-fg-subtle">/</span>
-          <span className="text-red-400">-{totalDels}</span>
+          <span className="text-red-700 dark:text-red-400">-{totalDels}</span>
         </span>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -69,8 +69,8 @@ export function FileList({ files, selectedPath, onSelect }: Props): ReactElement
               <span className="flex-1 truncate text-fg" title={display}>
                 {display}
               </span>
-              <span className="shrink-0 text-green-400">+{file.additions}</span>
-              <span className="shrink-0 text-red-400">-{file.deletions}</span>
+              <span className="shrink-0 text-green-700 dark:text-green-400">+{file.additions}</span>
+              <span className="shrink-0 text-red-700 dark:text-red-400">-{file.deletions}</span>
             </button>
           );
         })}
