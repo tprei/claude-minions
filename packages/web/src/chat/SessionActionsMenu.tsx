@@ -136,7 +136,7 @@ export function SessionActionsMenu({
           </MenuItem>
         </div>
       )}
-      {isMobile && (
+      {isMobile && open && (
         <Sheet open={open} onClose={close} title={session.title}>
           <div
             id={menuId}
