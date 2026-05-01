@@ -34,6 +34,8 @@ function makeMockCtx(audit: AuditCall[], runtime: EngineContext["runtime"]): Eng
       setDagId: () => {},
       setMetadata: () => {},
       markCompleted: () => {},
+      markFailed: () => {},
+      spawnPending: async () => ({ spawned: false }),
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },

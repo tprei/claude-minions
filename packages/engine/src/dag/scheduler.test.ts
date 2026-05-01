@@ -165,6 +165,8 @@ function makeMockCtx(spawnedSessions: Session[]): EngineContext {
       },
       setMetadata: () => {},
       markCompleted: () => {},
+      markFailed: () => {},
+      spawnPending: async () => ({ spawned: false }),
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },

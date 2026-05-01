@@ -37,7 +37,9 @@ export interface EngineContext {
     setDagId: (slug: string, dagId: string) => void;
     setMetadata: (slug: string, patch: Record<string, unknown>) => void;
     markCompleted: (slug: string) => void;
+    markFailed: (slug: string) => void;
     markWaitingInput: (slug: string, reason?: string) => void;
+    spawnPending: (slug: string) => Promise<{ spawned: boolean; reason?: string }>;
     appendAttention: (slug: string, flag: import("@minions/shared").AttentionFlag) => void;
     dismissAttention: (slug: string, kind: import("@minions/shared").AttentionFlag["kind"]) => import("@minions/shared").Session;
     kickReplyQueue: (slug: string) => Promise<boolean>;

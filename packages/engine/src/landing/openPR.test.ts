@@ -124,6 +124,8 @@ function makeHarness(opts: { session: Session; repo?: RepoBinding | null }): Ens
       setDagId: () => {},
       setMetadata: () => {},
       markCompleted: () => {},
+      markFailed: () => {},
+      spawnPending: async () => ({ spawned: false }),
       markWaitingInput: () => {},
       appendAttention: () => {},
       dismissAttention: () => { throw new Error("not implemented"); },

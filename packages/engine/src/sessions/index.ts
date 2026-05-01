@@ -1,16 +1,20 @@
 import type { FastifyInstance } from "fastify";
 import type { EngineContext } from "../context.js";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
+import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { SessionRegistry } from "./registry.js";
 import { registerSessionsRoutes } from "./routes.js";
 
-export function createSessionsSubsystem(deps: SubsystemDeps): SubsystemResult<EngineContext["sessions"]> {
+export function createSessionsSubsystem(
+  deps: SubsystemDeps & { automationRepo?: AutomationJobRepo },
+): SubsystemResult<EngineContext["sessions"]> {
   const registry = new SessionRegistry({
     db: deps.db,
     bus: deps.bus,
     log: deps.log,
     workspaceDir: deps.workspaceDir,
     ctx: deps.ctx,
+    automationRepo: deps.automationRepo,
   });
 
   const api: EngineContext["sessions"] = {
@@ -27,7 +31,9 @@ export function createSessionsSubsystem(deps: SubsystemDeps): SubsystemResult<En
     setDagId: (slug, dagId) => registry.setDagId(slug, dagId),
     setMetadata: (slug, patch) => registry.setMetadata(slug, patch),
     markCompleted: (slug) => registry.markCompleted(slug),
+    markFailed: (slug) => registry.markFailed(slug),
     markWaitingInput: (slug, reason) => registry.markWaitingInput(slug, reason),
+    spawnPending: (slug) => registry.spawnPending(slug),
     appendAttention: (slug, flag) => registry.appendAttention(slug, flag),
     dismissAttention: (slug, kind) => registry.dismissAttention(slug, kind),
     kickReplyQueue: (slug) => registry.kickReplyQueue(slug),

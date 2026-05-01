@@ -185,6 +185,8 @@ function makeMockCtx(db: Database.Database, opts: MockCtxOpts = {}): MockCtxHand
         waitingInputCalls.push({ slug, reason });
       },
       markCompleted: () => {},
+      markFailed: () => {},
+      spawnPending: async () => ({ spawned: false }),
       resumeAllActive: async () => {},
       diff: async (slug: string) => ({
         sessionSlug: slug,
