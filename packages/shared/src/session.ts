@@ -44,7 +44,7 @@ export interface QuickAction {
 }
 
 export interface AttentionFlag {
-  kind: "needs_input" | "ci_failed" | "ci_pending" | "ci_passed" | "rebase_conflict" | "quota_exhausted" | "judge_review" | "manual_intervention" | "budget_exceeded";
+  kind: "needs_input" | "ci_failed" | "ci_pending" | "ci_passed" | "ci_self_heal_exhausted" | "rebase_conflict" | "quota_exhausted" | "judge_review" | "manual_intervention" | "budget_exceeded";
   message: string;
   raisedAt: string;
 }

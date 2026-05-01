@@ -272,6 +272,40 @@ export function computeCiAttentionUpdate(
   return { kind: "noop" };
 }
 
+export interface SelfHealExhaustedPlan {
+  attention: AttentionFlag[];
+  flag: AttentionFlag;
+  metadataPatch: { selfHealCi: false; ciSelfHealConcluded: "exhausted"; ciSelfHealAttempts: number };
+}
+
+export function buildSelfHealExhaustedPlan(args: {
+  current: AttentionFlag[];
+  failedNames: string[];
+  attempts: number;
+  raisedAt: string;
+}): SelfHealExhaustedPlan {
+  const failedList = args.failedNames.join(", ");
+  const flag: AttentionFlag = {
+    kind: "ci_self_heal_exhausted",
+    message: `CI self-heal failed ${args.attempts} times: ${failedList}`,
+    raisedAt: args.raisedAt,
+  };
+  const cleared = args.current.filter(
+    (a) => a.kind !== "ci_pending" && a.kind !== "ci_self_heal_exhausted",
+  );
+  const update = computeCiAttentionUpdate(cleared, args.failedNames, args.raisedAt);
+  const baseline = update.kind === "noop" ? cleared : update.attention;
+  return {
+    attention: [...baseline, flag],
+    flag,
+    metadataPatch: {
+      selfHealCi: false,
+      ciSelfHealConcluded: "exhausted",
+      ciSelfHealAttempts: args.attempts,
+    },
+  };
+}
+
 export function applyCiPassedAttention(
   current: AttentionFlag[],
   raisedAt: string,
@@ -671,18 +705,16 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     failedNames: string[],
     attempts: number,
   ): Promise<void> {
-    ctx.sessions.setMetadata(slug, {
-      selfHealCi: false,
-      ciSelfHealConcluded: "exhausted",
-    });
-    const withoutPending = currentAttention.filter((a) => a.kind !== "ci_pending");
-    const update = computeCiAttentionUpdate(
-      withoutPending,
+    const plan = buildSelfHealExhaustedPlan({
+      current: currentAttention,
       failedNames,
-      new Date().toISOString(),
-    );
-    const next = update.kind === "noop" ? withoutPending : update.attention;
-    sessionRepo.setAttention(slug, next);
+      attempts,
+      raisedAt: new Date().toISOString(),
+    });
+    ctx.sessions.setMetadata(slug, plan.metadataPatch);
+    const baseline = plan.attention.filter((a) => a !== plan.flag);
+    sessionRepo.setAttention(slug, baseline);
+    ctx.sessions.appendAttention(slug, plan.flag);
     ctx.audit.record(
       "system",
       "ci.self-heal.exhausted",
