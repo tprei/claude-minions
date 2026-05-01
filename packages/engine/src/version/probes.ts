@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -357,29 +357,47 @@ export const DOCTOR_CHECKS: Record<DoctorCheckName, DoctorCheckProbe> = {
     }
     const pidFile = path.join(workspace, ".sidecar.pid");
     if (!existsSync(pidFile)) {
-      return {
-        status: "degraded",
-        detail: "sidecar not detected — start with pnpm --filter @minions/sidecar dev",
-      };
+      return { status: "error", detail: "sidecar not running (no pidfile)" };
     }
+    let pid: number;
     try {
       const raw = readFileSync(pidFile, "utf8").trim();
-      const pid = Number.parseInt(raw, 10);
+      pid = Number.parseInt(raw, 10);
       if (!Number.isFinite(pid) || pid <= 0) {
-        return { status: "degraded", detail: `sidecar pidfile invalid: ${raw}` };
+        return { status: "error", detail: `sidecar pidfile invalid: ${raw}` };
       }
-      try {
-        process.kill(pid, 0);
-      } catch {
-        return { status: "degraded", detail: `sidecar pid ${pid} not alive` };
-      }
-      const stat = statSync(pidFile);
-      const ageMs = Date.now() - stat.mtimeMs;
-      const ageMin = Math.round(ageMs / 60000);
-      return { status: "ok", detail: `sidecar pid ${pid} (pidfile ${ageMin}m old)` };
     } catch (err) {
-      return { status: "degraded", detail: `sidecar pidfile unreadable: ${(err as Error).message}` };
+      return { status: "error", detail: `sidecar pidfile unreadable: ${(err as Error).message}` };
     }
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return { status: "error", detail: `sidecar pid ${pid} not alive` };
+    }
+    const heartbeatFile = path.join(workspace, ".sidecar.heartbeat");
+    if (!existsSync(heartbeatFile)) {
+      return { status: "degraded", detail: "sidecar stale (last heartbeat: none)" };
+    }
+    let lastHeartbeat: string;
+    let heartbeatMs: number;
+    try {
+      lastHeartbeat = readFileSync(heartbeatFile, "utf8").trim();
+      heartbeatMs = Date.parse(lastHeartbeat);
+      if (!Number.isFinite(heartbeatMs)) {
+        return {
+          status: "degraded",
+          detail: `sidecar stale (last heartbeat: ${lastHeartbeat})`,
+        };
+      }
+    } catch (err) {
+      return { status: "degraded", detail: `sidecar heartbeat unreadable: ${(err as Error).message}` };
+    }
+    const ageMs = Date.now() - heartbeatMs;
+    if (ageMs > 90_000) {
+      return { status: "degraded", detail: `sidecar stale (last heartbeat: ${lastHeartbeat})` };
+    }
+    const ageSec = Math.max(0, Math.round(ageMs / 1000));
+    return { status: "ok", detail: `sidecar pid=${pid}, last heartbeat ${ageSec}s ago` };
   },
 };
 
