@@ -13,17 +13,17 @@ export interface BannerProps {
 }
 
 const toneClass: Record<BannerTone, string> = {
-  error: "border-red-500/50 bg-red-900/20 text-red-200",
-  warning: "border-amber-500/40 bg-amber-900/20 text-amber-200",
+  error: "border-tone-err-border bg-tone-err-bg text-tone-err-fg",
+  warning: "border-tone-warn-border bg-tone-warn-bg text-tone-warn-fg",
   info: "border-accent/40 bg-accent/10 text-fg-muted",
-  success: "border-emerald-500/40 bg-emerald-900/20 text-emerald-200",
+  success: "border-tone-ok-border bg-tone-ok-bg text-tone-ok-fg",
 };
 
 const dismissTone: Record<BannerTone, string> = {
-  error: "text-red-300/70 hover:text-red-200",
-  warning: "text-amber-300/70 hover:text-amber-200",
+  error: "text-tone-err-fg/70 hover:text-tone-err-fg",
+  warning: "text-tone-warn-fg/70 hover:text-tone-warn-fg",
   info: "text-fg-subtle hover:text-fg-muted",
-  success: "text-emerald-300/70 hover:text-emerald-200",
+  success: "text-tone-ok-fg/70 hover:text-tone-ok-fg",
 };
 
 export function Banner({

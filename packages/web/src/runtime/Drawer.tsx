@@ -103,11 +103,11 @@ export function RuntimeDrawer({ api, onClose }: Props) {
 
       <div className="flex-1 overflow-y-auto">
         {restartPending && (
-          <div className="mx-4 mt-3 px-3 py-2 rounded border border-amber-500/40 bg-amber-900/20 text-amber-200 text-xs flex items-center gap-2">
+          <div className="mx-4 mt-3 px-3 py-2 rounded border border-tone-warn-border bg-tone-warn-bg text-tone-warn-fg text-xs flex items-center gap-2">
             <span className="flex-1">Restart engine to apply</span>
             <button
               type="button"
-              className="text-amber-300/70 hover:text-amber-200"
+              className="text-tone-warn-fg/70 hover:text-tone-warn-fg"
               onClick={() => setRestartPending(false)}
               aria-label="Dismiss"
             >
@@ -118,7 +118,7 @@ export function RuntimeDrawer({ api, onClose }: Props) {
 
         {draftAdmissionUnlimited && (
           <div
-            className="mx-4 mt-3 px-3 py-2 rounded border border-red-500/50 bg-red-900/25 text-red-200 text-xs"
+            className="mx-4 mt-3 px-3 py-2 rounded border border-tone-err-border bg-tone-err-bg text-tone-err-fg text-xs"
             role="alert"
             data-testid="admission-unlimited-drawer-warning"
           >
