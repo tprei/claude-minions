@@ -384,22 +384,22 @@ export const DOCTOR_CHECKS: Record<DoctorCheckName, DoctorCheckProbe> = {
     }
     const pidFile = path.join(workspace, ".sidecar.pid");
     if (!existsSync(pidFile)) {
-      return { status: "error", detail: "sidecar not running (no pidfile)" };
+      return { status: "degraded", detail: "sidecar not running (no pidfile) — expected in unattended Docker" };
     }
     let pid: number;
     try {
       const raw = readFileSync(pidFile, "utf8").trim();
       pid = Number.parseInt(raw, 10);
       if (!Number.isFinite(pid) || pid <= 0) {
-        return { status: "error", detail: `sidecar pidfile invalid: ${raw}` };
+        return { status: "degraded", detail: `sidecar pidfile invalid: ${raw}` };
       }
     } catch (err) {
-      return { status: "error", detail: `sidecar pidfile unreadable: ${(err as Error).message}` };
+      return { status: "degraded", detail: `sidecar pidfile unreadable: ${(err as Error).message}` };
     }
     try {
       process.kill(pid, 0);
     } catch {
-      return { status: "error", detail: `sidecar pid ${pid} not alive` };
+      return { status: "degraded", detail: `sidecar pid ${pid} not alive` };
     }
     const heartbeatFile = path.join(workspace, ".sidecar.heartbeat");
     if (!existsSync(heartbeatFile)) {
@@ -472,10 +472,16 @@ export const DOCTOR_CHECKS: Record<DoctorCheckName, DoctorCheckProbe> = {
     }
     const { owner, repo } = parsed;
     try {
-      const token = await ctx.github.getToken();
+      const jwt = typeof ctx.github.getAppJwt === "function" ? ctx.github.getAppJwt() : null;
+      if (!jwt) {
+        return {
+          status: "degraded",
+          detail: "rest-pr-create-permission requires GitHub App auth (MINIONS_GH_APP_*); skipping",
+        };
+      }
       const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/installation`, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${jwt}`,
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
         },

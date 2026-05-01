@@ -327,12 +327,12 @@ describe("runDoctorChecks", () => {
     assert.equal(out.status, "ok");
   });
 
-  it("sidecar-status is error when no pidfile exists", async () => {
+  it("sidecar-status is degraded when no pidfile exists", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-sc-"));
     try {
       const ctx = makeStubCtx({ env: { workspace } as EngineContext["env"] });
       const out = await DOCTOR_CHECKS["sidecar-status"](ctx, {} as NodeJS.ProcessEnv);
-      assert.equal(out.status, "error");
+      assert.equal(out.status, "degraded");
       assert.match(out.detail ?? "", /no pidfile/i);
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
@@ -433,6 +433,7 @@ describe("runDoctorChecks", () => {
         github: {
           enabled: () => true,
           getToken: async () => "ghs_test_token",
+          getAppJwt: () => "fake.jwt.value",
           fetchPR: async () => { throw new Error("not used"); },
         } as unknown as EngineContext["github"],
       });
@@ -454,6 +455,7 @@ describe("runDoctorChecks", () => {
         github: {
           enabled: () => true,
           getToken: async () => "ghs_test_token",
+          getAppJwt: () => "fake.jwt.value",
           fetchPR: async () => { throw new Error("not used"); },
         } as unknown as EngineContext["github"],
       });

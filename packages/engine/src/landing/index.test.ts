@@ -1099,6 +1099,7 @@ function makeLandHarness(opts: {
       fetchPR: opts.fetchPRMock ?? (async () => { throw new Error("fetchPR: not implemented"); }),
       postPRComment: async () => {},
       getToken: async () => "test-token",
+      getAppJwt: () => null,
       findPRByHead: async () => null,
       createPR: async () => ({ number: 0, url: "" }),
       editPRBase: async () => {},
