@@ -25,6 +25,7 @@ import { SessionRepo } from "../store/repos/sessionRepo.js";
 import type { SessionStateUpdater } from "./sessionStateUpdater.js";
 import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { enqueueRestackDescendants } from "../automation/handlers/restackDescendants.js";
+import { enqueueCiPoll } from "../automation/handlers/ciPoll.js";
 
 export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
 export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
@@ -362,6 +363,20 @@ export class LandingManager {
       { kind: "session", id: slug },
       { branch: session.branch },
     );
+
+    this.seedCiPoll(slug);
+  }
+
+  private seedCiPoll(slug: string): void {
+    if (!this.automationRepo) return;
+    const fresh = this.ctx.sessions.get(slug);
+    if (!fresh?.pr || fresh.pr.state !== "open") return;
+    const existing = this.automationRepo.findByTarget("session", slug);
+    const hasPending = existing.some(
+      (j) => j.kind === "ci-poll" && (j.status === "pending" || j.status === "running"),
+    );
+    if (hasPending) return;
+    enqueueCiPoll(this.automationRepo, slug, 0);
   }
 
   async onUpstreamMerged(parentSlug: string): Promise<void> {
