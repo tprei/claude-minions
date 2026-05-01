@@ -1,12 +1,17 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import readline from "node:readline";
 import type { DoctorCheck, DoctorCheckName, FeatureFlag } from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import { findClaudeBinary } from "../providers/claudeCode.js";
 import { assertBridgeEntry } from "../memory/mcpServer.js";
+import { gitAuthEnv } from "../ci/askpass.js";
+import { parseGithubRemote } from "../github/parseRemote.js";
+
+const execFileAsync = promisify(execFile);
 
 export type ProbeResult = { ready: true } | { ready: false; reason: string };
 export type FeatureProbe = (ctx: EngineContext) => ProbeResult | Promise<ProbeResult>;
@@ -237,22 +242,44 @@ export const DOCTOR_CHECKS: Record<DoctorCheckName, DoctorCheckProbe> = {
     };
   },
 
-  "github-auth": (ctx, env) => {
-    if (ctx.github && typeof ctx.github.enabled === "function" && ctx.github.enabled()) {
-      const via = ctx.env?.githubApp ? "GitHub App" : "GITHUB_TOKEN";
-      return { status: "ok", detail: `authenticated via ${via}` };
-    }
-    const hasToken = Boolean(env.GITHUB_TOKEN || env.GH_TOKEN);
-    if (hasToken) {
+  "github-auth": async (ctx, env) => {
+    if (!ctx.github || typeof ctx.github.enabled !== "function" || !ctx.github.enabled()) {
+      const hasToken = Boolean(env.GITHUB_TOKEN || env.GH_TOKEN);
+      if (hasToken) {
+        return {
+          status: "degraded",
+          detail: "GITHUB_TOKEN/GH_TOKEN present in env but github subsystem reports disabled",
+        };
+      }
       return {
         status: "degraded",
-        detail: "GITHUB_TOKEN/GH_TOKEN present in env but github subsystem reports disabled",
+        detail: "no GitHub credentials — set MINIONS_GH_APP_* or GITHUB_TOKEN",
       };
     }
-    return {
-      status: "degraded",
-      detail: "no GitHub credentials — set MINIONS_GH_APP_* or GITHUB_TOKEN",
-    };
+
+    try {
+      const token = await ctx.github.getToken();
+      const res = await fetch("https://api.github.com/installation/repositories?per_page=1", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      });
+      if (res.ok) {
+        const via = ctx.env?.githubApp ? "GitHub App" : "GITHUB_TOKEN";
+        return { status: "ok", detail: `authenticated via ${via}` };
+      }
+      return {
+        status: "degraded",
+        detail: `GitHub API returned ${res.status}: ${await res.text().then((t) => t.slice(0, 200))}`,
+      };
+    } catch (err) {
+      return {
+        status: "degraded",
+        detail: `GitHub auth check failed: ${(err as Error).message}`,
+      };
+    }
   },
 
   "repo-state": (ctx) => {
@@ -399,6 +426,117 @@ export const DOCTOR_CHECKS: Record<DoctorCheckName, DoctorCheckProbe> = {
     const ageSec = Math.max(0, Math.round(ageMs / 1000));
     return { status: "ok", detail: `sidecar pid=${pid}, last heartbeat ${ageSec}s ago` };
   },
+
+  "git-push-auth": async (ctx, env) => {
+    const repos = typeof ctx.repos === "function" ? ctx.repos() : [];
+    if (repos.length === 0) {
+      return { status: "degraded", detail: "no repos bound; skipping git-push-auth probe" };
+    }
+    const httpsRepo = repos.find((r) => r.remote?.startsWith("https://"));
+    if (!httpsRepo) {
+      return { status: "ok" };
+    }
+    if (!ctx.github || typeof ctx.github.enabled !== "function" || !ctx.github.enabled()) {
+      const hasToken = Boolean(env.GITHUB_TOKEN || env.GH_TOKEN);
+      if (!hasToken) {
+        return { status: "degraded", detail: "no GitHub credentials — set MINIONS_GH_APP_* or GITHUB_TOKEN" };
+      }
+    }
+    try {
+      await execFileAsync("git", ["ls-remote", "--exit-code", httpsRepo.remote!, "HEAD"], {
+        env: gitAuthEnv(env),
+        timeout: 10_000,
+      });
+      return { status: "ok" };
+    } catch (err) {
+      const msg = (err as NodeJS.ErrnoException & { stderr?: string }).stderr ?? (err as Error).message;
+      return { status: "degraded", detail: msg.slice(0, 200) };
+    }
+  },
+
+  "rest-pr-create-permission": async (ctx, env) => {
+    const repos = typeof ctx.repos === "function" ? ctx.repos() : [];
+    const httpsRepo = repos.find((r) => r.remote?.startsWith("https://"));
+    if (!httpsRepo) {
+      return { status: "degraded", detail: "no HTTPS remote bound; skipping rest-pr-create-permission probe" };
+    }
+    const parsed = parseGithubRemote(httpsRepo.remote!);
+    if (!parsed) {
+      return { status: "degraded", detail: `cannot parse GitHub remote: ${httpsRepo.remote}` };
+    }
+    if (!ctx.github || typeof ctx.github.enabled !== "function" || !ctx.github.enabled()) {
+      const hasToken = Boolean(env.GITHUB_TOKEN || env.GH_TOKEN);
+      if (!hasToken) {
+        return { status: "degraded", detail: "no GitHub credentials — set MINIONS_GH_APP_* or GITHUB_TOKEN" };
+      }
+    }
+    const { owner, repo } = parsed;
+    try {
+      const token = await ctx.github.getToken();
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/installation`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      });
+      if (!res.ok) {
+        return { status: "degraded", detail: `GitHub API returned ${res.status} for ${owner}/${repo}` };
+      }
+      const data = (await res.json()) as { permissions?: { pull_requests?: string } };
+      const perm = data.permissions?.pull_requests;
+      if (perm === "write") {
+        return { status: "ok", detail: `App has pull_requests:write on ${owner}/${repo}` };
+      }
+      return {
+        status: "degraded",
+        detail: `pull_requests permission is "${perm ?? "missing"}" on ${owner}/${repo}`,
+      };
+    } catch (err) {
+      return { status: "degraded", detail: `rest-pr-create-permission probe failed: ${(err as Error).message}` };
+    }
+  },
+
+  "rest-checks-read": async (ctx, env) => {
+    const repos = typeof ctx.repos === "function" ? ctx.repos() : [];
+    const httpsRepo = repos.find((r) => r.remote?.startsWith("https://"));
+    if (!httpsRepo) {
+      return { status: "degraded", detail: "no HTTPS remote bound; skipping rest-checks-read probe" };
+    }
+    const parsed = parseGithubRemote(httpsRepo.remote!);
+    if (!parsed) {
+      return { status: "degraded", detail: `cannot parse GitHub remote: ${httpsRepo.remote}` };
+    }
+    if (!ctx.github || typeof ctx.github.enabled !== "function" || !ctx.github.enabled()) {
+      const hasToken = Boolean(env.GITHUB_TOKEN || env.GH_TOKEN);
+      if (!hasToken) {
+        return { status: "degraded", detail: "no GitHub credentials — set MINIONS_GH_APP_* or GITHUB_TOKEN" };
+      }
+    }
+    const { owner, repo } = parsed;
+    try {
+      const token = await ctx.github.getToken();
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/commits/HEAD/check-runs?per_page=1`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+          },
+        },
+      );
+      if (res.status === 404) {
+        return { status: "degraded", detail: "no commits visible" };
+      }
+      if (!res.ok) {
+        return { status: "degraded", detail: `GitHub API returned ${res.status} for ${owner}/${repo}` };
+      }
+      return { status: "ok", detail: `check-runs readable on ${owner}/${repo}` };
+    } catch (err) {
+      return { status: "degraded", detail: `rest-checks-read probe failed: ${(err as Error).message}` };
+    }
+  },
 };
 
 export const DOCTOR_CHECK_NAMES: DoctorCheckName[] = [
@@ -410,6 +548,9 @@ export const DOCTOR_CHECK_NAMES: DoctorCheckName[] = [
   "mcp-availability",
   "push-config",
   "sidecar-status",
+  "git-push-auth",
+  "rest-pr-create-permission",
+  "rest-checks-read",
 ];
 
 export async function runDoctorChecks(

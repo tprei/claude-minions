@@ -1,3 +1,8 @@
+# Sidecar is intentionally absent for unattended Docker.
+# - landReady, failedCiNoFix, dagStaleReady rules are absorbed into the engine's automation runner.
+# - stuckWaitingInput and uncommittedCompleted remain sidecar-only and are local-dev observers.
+# - The doctor `sidecar-status` check returning `degraded` (no pidfile) is intentional in unattended mode.
+#
 # For the unattended overnight checklist see docs/deploy/supervisor.md.
 # Single-container deploy: engine serves /api + the built PWA on /.
 #

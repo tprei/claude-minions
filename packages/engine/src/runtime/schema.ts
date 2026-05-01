@@ -220,6 +220,26 @@ const fields: RuntimeField[] = [
     applies: "live",
   },
   {
+    key: "autoLandReadyOnGreen",
+    label: "Auto-land session when CI passes and readiness is ready",
+    description:
+      "When CI polling detects a session whose readiness flips to 'ready', automatically squash-merge it via the engine landing path. Requires autoMergeOnGreen to be disabled to avoid double-merge; designed for unattended Docker.",
+    type: "boolean",
+    default: false,
+    group: "autonomy",
+    applies: "live",
+  },
+  {
+    key: "autoFixCiOnFailure",
+    label: "Auto-spawn fix-CI sub-session on CI failure",
+    description:
+      "When CI fails on a session with an open PR, automatically spawn a child task session to investigate and fix the failure. Skips sessions already of kind 'fix-ci' to avoid recursion.",
+    type: "boolean",
+    default: false,
+    group: "autonomy",
+    applies: "live",
+  },
+  {
     key: "admissionUnlimited",
     label: "Admission unlimited (disable caps)",
     description:

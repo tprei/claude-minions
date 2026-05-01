@@ -155,10 +155,7 @@ export interface EngineContext {
     summarize: (slug: string) => Promise<string>;
   };
 
-  github: {
-    enabled: () => boolean;
-    fetchPR: (repoId: string, prNumber: number) => Promise<import("@minions/shared").PullRequestPreview>;
-  };
+  github: import("./github/index.js").GithubSubsystem;
 
   stats: {
     global: () => import("@minions/shared").GlobalStats;

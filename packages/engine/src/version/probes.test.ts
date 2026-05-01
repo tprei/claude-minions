@@ -137,10 +137,13 @@ describe("runDoctorChecks", () => {
     "mcp-availability",
     "push-config",
     "sidecar-status",
+    "git-push-auth",
+    "rest-pr-create-permission",
+    "rest-checks-read",
   ];
 
-  it("exports DOCTOR_CHECK_NAMES covering all 8 named checks", () => {
-    assert.equal(DOCTOR_CHECK_NAMES.length, 8);
+  it("exports DOCTOR_CHECK_NAMES covering all 11 named checks", () => {
+    assert.equal(DOCTOR_CHECK_NAMES.length, 11);
     for (const name of ALL_CHECK_NAMES) {
       assert.ok(DOCTOR_CHECK_NAMES.includes(name), `missing ${name}`);
     }
@@ -149,7 +152,7 @@ describe("runDoctorChecks", () => {
   it("returns one DoctorCheck per named probe with valid status + ISO checkedAt", async () => {
     const ctx = makeStubCtx();
     const checks = await runDoctorChecks(ctx, {} as NodeJS.ProcessEnv);
-    assert.equal(checks.length, 8);
+    assert.equal(checks.length, 11);
 
     const seen = new Set<string>();
     for (const check of checks) {
@@ -198,17 +201,52 @@ describe("runDoctorChecks", () => {
     assert.match(out.detail ?? "", /GITHUB_TOKEN|GH_TOKEN|GH_APP/);
   });
 
-  it("github-auth is ok when github subsystem reports enabled", async () => {
-    const ctx = makeStubCtx({
-      github: {
-        enabled: () => true,
-        fetchPR: async () => {
-          throw new Error("not used");
-        },
-      } as unknown as EngineContext["github"],
-    });
-    const out = await DOCTOR_CHECKS["github-auth"](ctx, {} as NodeJS.ProcessEnv);
-    assert.equal(out.status, "ok");
+  it("github-auth is ok when github subsystem reports enabled and the API probe succeeds", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/installation/repositories")) {
+        return new Response(JSON.stringify({ repositories: [] }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof globalThis.fetch;
+    try {
+      const ctx = makeStubCtx({
+        github: {
+          enabled: () => true,
+          getToken: async () => "ghs_test_token",
+          fetchPR: async () => {
+            throw new Error("not used");
+          },
+        } as unknown as EngineContext["github"],
+      });
+      const out = await DOCTOR_CHECKS["github-auth"](ctx, {} as NodeJS.ProcessEnv);
+      assert.equal(out.status, "ok");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("github-auth is degraded when the API probe returns non-2xx", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("Bad credentials", { status: 401 })) as typeof globalThis.fetch;
+    try {
+      const ctx = makeStubCtx({
+        github: {
+          enabled: () => true,
+          getToken: async () => "ghs_invalid",
+          fetchPR: async () => {
+            throw new Error("not used");
+          },
+        } as unknown as EngineContext["github"],
+      });
+      const out = await DOCTOR_CHECKS["github-auth"](ctx, {} as NodeJS.ProcessEnv);
+      assert.equal(out.status, "degraded");
+      assert.match(out.detail ?? "", /401/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   it("repo-state is degraded when no repos are bound", async () => {
@@ -333,6 +371,151 @@ describe("runDoctorChecks", () => {
       assert.match(out.detail ?? "", /heartbeat \d+s ago/);
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("git-push-auth is degraded when no repos are bound", async () => {
+    const ctx = makeStubCtx({ repos: () => [] } as unknown as Partial<EngineContext>);
+    const out = await DOCTOR_CHECKS["git-push-auth"](ctx, {} as NodeJS.ProcessEnv);
+    assert.equal(out.status, "degraded");
+    assert.match(out.detail ?? "", /no repos bound/);
+  });
+
+  it("git-push-auth is ok when no HTTPS remote is bound", async () => {
+    const ctx = makeStubCtx({
+      repos: () => [{ id: "r1", label: "r1", remote: "git@github.com:o/r.git" }],
+    } as unknown as Partial<EngineContext>);
+    const out = await DOCTOR_CHECKS["git-push-auth"](ctx, {} as NodeJS.ProcessEnv);
+    assert.equal(out.status, "ok");
+  });
+
+  it("git-push-auth is degraded when no GitHub credentials and HTTPS remote bound", async () => {
+    const ctx = makeStubCtx({
+      repos: () => [{ id: "r1", label: "r1", remote: "https://github.com/o/r.git" }],
+    } as unknown as Partial<EngineContext>);
+    const out = await DOCTOR_CHECKS["git-push-auth"](ctx, {} as NodeJS.ProcessEnv);
+    assert.equal(out.status, "degraded");
+    assert.match(out.detail ?? "", /no GitHub credentials/);
+  });
+
+  it("git-push-auth is degraded when git ls-remote fails", async () => {
+    const ctx = makeStubCtx({
+      repos: () => [{ id: "r1", label: "r1", remote: "https://github.com/o/nonexistent-repo-probe-test.git" }],
+      github: {
+        enabled: () => true,
+        getToken: async () => "ghs_test_token",
+        fetchPR: async () => { throw new Error("not used"); },
+      } as unknown as EngineContext["github"],
+    });
+    const out = await DOCTOR_CHECKS["git-push-auth"](ctx, {} as NodeJS.ProcessEnv);
+    assert.equal(out.status, "degraded");
+  });
+
+  it("rest-pr-create-permission is degraded when no repos bound", async () => {
+    const ctx = makeStubCtx({ repos: () => [] } as unknown as Partial<EngineContext>);
+    const out = await DOCTOR_CHECKS["rest-pr-create-permission"](ctx, {} as NodeJS.ProcessEnv);
+    assert.equal(out.status, "degraded");
+    assert.match(out.detail ?? "", /no HTTPS remote bound/);
+  });
+
+  it("rest-pr-create-permission is ok when installation reports pull_requests:write", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/installation")) {
+        return new Response(JSON.stringify({ permissions: { pull_requests: "write" } }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof globalThis.fetch;
+    try {
+      const ctx = makeStubCtx({
+        repos: () => [{ id: "r1", label: "r1", remote: "https://github.com/owner/repo.git" }],
+        github: {
+          enabled: () => true,
+          getToken: async () => "ghs_test_token",
+          fetchPR: async () => { throw new Error("not used"); },
+        } as unknown as EngineContext["github"],
+      });
+      const out = await DOCTOR_CHECKS["rest-pr-create-permission"](ctx, {} as NodeJS.ProcessEnv);
+      assert.equal(out.status, "ok");
+      assert.match(out.detail ?? "", /pull_requests:write/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("rest-pr-create-permission is degraded when API returns non-2xx", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("Forbidden", { status: 403 })) as typeof globalThis.fetch;
+    try {
+      const ctx = makeStubCtx({
+        repos: () => [{ id: "r1", label: "r1", remote: "https://github.com/owner/repo.git" }],
+        github: {
+          enabled: () => true,
+          getToken: async () => "ghs_test_token",
+          fetchPR: async () => { throw new Error("not used"); },
+        } as unknown as EngineContext["github"],
+      });
+      const out = await DOCTOR_CHECKS["rest-pr-create-permission"](ctx, {} as NodeJS.ProcessEnv);
+      assert.equal(out.status, "degraded");
+      assert.match(out.detail ?? "", /403/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("rest-checks-read is degraded when no repos bound", async () => {
+    const ctx = makeStubCtx({ repos: () => [] } as unknown as Partial<EngineContext>);
+    const out = await DOCTOR_CHECKS["rest-checks-read"](ctx, {} as NodeJS.ProcessEnv);
+    assert.equal(out.status, "degraded");
+    assert.match(out.detail ?? "", /no HTTPS remote bound/);
+  });
+
+  it("rest-checks-read is ok when API returns 200", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/check-runs")) {
+        return new Response(JSON.stringify({ check_runs: [] }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof globalThis.fetch;
+    try {
+      const ctx = makeStubCtx({
+        repos: () => [{ id: "r1", label: "r1", remote: "https://github.com/owner/repo.git" }],
+        github: {
+          enabled: () => true,
+          getToken: async () => "ghs_test_token",
+          fetchPR: async () => { throw new Error("not used"); },
+        } as unknown as EngineContext["github"],
+      });
+      const out = await DOCTOR_CHECKS["rest-checks-read"](ctx, {} as NodeJS.ProcessEnv);
+      assert.equal(out.status, "ok");
+      assert.match(out.detail ?? "", /check-runs readable/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("rest-checks-read is degraded when API returns non-2xx", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("Forbidden", { status: 403 })) as typeof globalThis.fetch;
+    try {
+      const ctx = makeStubCtx({
+        repos: () => [{ id: "r1", label: "r1", remote: "https://github.com/owner/repo.git" }],
+        github: {
+          enabled: () => true,
+          getToken: async () => "ghs_test_token",
+          fetchPR: async () => { throw new Error("not used"); },
+        } as unknown as EngineContext["github"],
+      });
+      const out = await DOCTOR_CHECKS["rest-checks-read"](ctx, {} as NodeJS.ProcessEnv);
+      assert.equal(out.status, "degraded");
+      assert.match(out.detail ?? "", /403/);
+    } finally {
+      globalThis.fetch = realFetch;
     }
   });
 });

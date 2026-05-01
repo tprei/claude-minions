@@ -1,26 +1,19 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { AttentionFlag, DagNodeCiSummary, PRSummary } from "@minions/shared";
 import type { SubsystemDeps, SubsystemResult } from "../wiring.js";
-import { parseGithubRemote } from "../github/parseRemote.js";
 import { onPrUpdated as handlePrUpdated } from "./prLifecycle.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
 import { DagRepo } from "../dag/model.js";
 import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { enqueueCiFetchLogs } from "../automation/handlers/ciFetchLogs.js";
-
-const execFileAsync = promisify(execFile);
-
-const GH_TIMEOUT_MS = 30_000;
-const GH_MAX_BUFFER = 10 * 1024 * 1024;
-const LOG_TAIL_BYTES = 4096;
+import { enqueueLandReady } from "../automation/handlers/landReadyTrigger.js";
+import { enqueueCiFailureFix } from "../automation/handlers/ciFailureFix.js";
 
 export interface CiSubsystem {
   poll: (slug: string) => Promise<void>;
   onPrUpdated: (slug: string) => Promise<void>;
 }
 
-interface GhCheck {
+export interface GhCheck {
   name: string;
   state: string;
   bucket: string;
@@ -45,21 +38,6 @@ interface GhStatusContextRollup {
 }
 
 type GhRollupEntry = GhCheckRunRollup | GhStatusContextRollup;
-
-interface GhPrView {
-  number: number;
-  url: string;
-  state: string;
-  isDraft: boolean;
-  baseRefName: string;
-  headRefName: string;
-  headRefOid: string;
-  title: string;
-  statusCheckRollup: GhRollupEntry[] | null;
-  mergeable: string | null;
-  mergeStateStatus: string | null;
-  reviewDecision: string | null;
-}
 
 const FAIL_CONCLUSIONS = new Set(["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]);
 const PASS_CONCLUSIONS = new Set(["SUCCESS", "SKIPPED", "NEUTRAL"]);
@@ -324,12 +302,6 @@ function mapPrState(state: string): PRSummary["state"] {
   return "open";
 }
 
-function tailUtf8(s: string, maxBytes: number): string {
-  const buf = Buffer.from(s, "utf8");
-  if (buf.length <= maxBytes) return s;
-  return buf.subarray(buf.length - maxBytes).toString("utf8");
-}
-
 export function readAttempts(metadata: Record<string, unknown>): number {
   const raw = metadata["ciSelfHealAttempts"];
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return 0;
@@ -346,84 +318,11 @@ export function buildSelfHealPrompt(args: {
   return `CI failed on PR #${args.prNumber}. Failed checks: ${failedList}.${logsBlock}\nFix the failing CI checks and push to the same branch (do NOT open a new PR).`;
 }
 
-async function runGh(args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("gh", args, {
-    maxBuffer: GH_MAX_BUFFER,
-    timeout: GH_TIMEOUT_MS,
-  });
-  return stdout;
-}
-
 export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsystem> {
   const { ctx, log, db, bus } = deps;
   const sessionRepo = new SessionRepo(db);
   const dagRepo = new DagRepo(db, bus);
   const automationRepo = new AutomationJobRepo(db);
-
-  async function fetchPrAndChecks(
-    owner: string,
-    repo: string,
-    prNumber: number,
-  ): Promise<{ pr: GhPrView; checks: GhCheck[] }> {
-    const repoSlug = `${owner}/${repo}`;
-    const prJson = await runGh([
-      "pr", "view", String(prNumber),
-      "--repo", repoSlug,
-      "--json", "number,url,state,isDraft,baseRefName,headRefName,headRefOid,title,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision",
-    ]);
-
-    const pr = JSON.parse(prJson) as GhPrView;
-    const checks = rollupToChecks(pr.statusCheckRollup);
-    return { pr, checks };
-  }
-
-  async function findLatestFailedRunId(
-    owner: string,
-    repo: string,
-    head: string,
-  ): Promise<string | null> {
-    try {
-      const listJson = await runGh([
-        "run", "list",
-        "--repo", `${owner}/${repo}`,
-        "--branch", head,
-        "--status", "failure",
-        "--limit", "1",
-        "--json", "databaseId",
-      ]);
-      const runs = JSON.parse(listJson) as { databaseId: number }[];
-      const runId = runs[0]?.databaseId;
-      return runId ? String(runId) : null;
-    } catch (err) {
-      log.warn("ci runId lookup failed", { head, err: (err as Error).message });
-      return null;
-    }
-  }
-
-  async function fetchFailedLogs(owner: string, repo: string, head: string): Promise<string> {
-    try {
-      const listJson = await runGh([
-        "run", "list",
-        "--repo", `${owner}/${repo}`,
-        "--branch", head,
-        "--status", "failure",
-        "--limit", "1",
-        "--json", "databaseId",
-      ]);
-      const runs = JSON.parse(listJson) as { databaseId: number }[];
-      const runId = runs[0]?.databaseId;
-      if (!runId) return "";
-      const logs = await runGh([
-        "run", "view", String(runId),
-        "--repo", `${owner}/${repo}`,
-        "--log-failed",
-      ]).catch(() => "");
-      return tailUtf8(logs, LOG_TAIL_BYTES);
-    } catch (err) {
-      log.warn("ci log fetch failed", { head, err: (err as Error).message });
-      return "";
-    }
-  }
 
   function readSelfHealMaxAttempts(): number {
     const raw = ctx.runtime.effective()["ciSelfHealMaxAttempts"];
@@ -437,38 +336,30 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     const session = ctx.sessions.get(slug);
     if (!session || !session.pr || !session.repoId) return;
 
-    const repos = ctx.repos();
-    const repo = repos.find((r) => r.id === session.repoId);
-    if (!repo?.remote) return;
-
-    const parsed = parseGithubRemote(repo.remote);
-    if (!parsed) {
-      log.warn("ci poll: cannot parse remote", { slug, remote: repo.remote });
-      return;
-    }
-
-    const { owner, repo: repoName } = parsed;
+    const repoId = session.repoId;
     const prNumber = session.pr.number;
+    const headRef = session.pr.head;
 
-    let prData: GhPrView;
-    let checks: GhCheck[];
+    let rollup: import("../github/index.js").CheckRollupResult;
     try {
-      const result = await fetchPrAndChecks(owner, repoName, prNumber);
-      prData = result.pr;
-      checks = result.checks;
+      rollup = await ctx.github.getCheckRollup(repoId, headRef);
     } catch (err) {
       log.warn("ci poll error", { slug, err: (err as Error).message });
       return;
     }
 
+    if (!rollup.pr) {
+      return;
+    }
+
     const refreshedPr: PRSummary = {
-      number: prData.number,
-      url: prData.url,
-      state: mapPrState(prData.state),
-      draft: prData.isDraft,
-      base: prData.baseRefName,
-      head: prData.headRefName,
-      title: prData.title,
+      number: rollup.pr.number,
+      url: rollup.pr.url,
+      state: rollup.pr.state,
+      draft: rollup.pr.draft,
+      base: rollup.pr.baseRef,
+      head: rollup.pr.headRef,
+      title: rollup.pr.title,
     };
     const previousPrState = session.pr?.state ?? null;
     sessionRepo.setPr(slug, refreshedPr);
@@ -482,6 +373,13 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     const fresh = ctx.sessions.get(slug);
     if (!fresh) return;
 
+    const checks: GhCheck[] = rollup.checks.map((c) => ({
+      name: c.name,
+      state: c.state,
+      bucket: c.bucket,
+      workflow: c.workflow,
+      link: c.link,
+    }));
     const summary = summarizeChecks(checks);
 
     const dagNode = dagRepo.getNodeBySession(slug);
@@ -521,7 +419,10 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
       if (decision.kind === "success") {
         await applySelfHealSuccess(slug);
       } else if (decision.kind === "retry" || decision.kind === "exhausted") {
-        const runId = await findLatestFailedRunId(owner, repoName, prData.headRefName);
+        const runId = await ctx.github.fetchActionsRunIdForBranch(repoId, headRef).catch((err) => {
+          log.warn("ci poll: runId lookup failed", { slug, err: (err as Error).message });
+          return null;
+        });
         if (runId) {
           try {
             enqueueCiFetchLogs(automationRepo, {
@@ -541,9 +442,8 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
             slug,
             decision.nextAttempts,
             decision.failedNames,
-            owner,
-            repoName,
-            prData.headRefName,
+            repoId,
+            headRef,
             prNumber,
           );
         } else {
@@ -560,6 +460,11 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
 
       if (update.kind !== "noop") {
         sessionRepo.setAttention(slug, update.attention);
+      }
+
+      if ((update.kind === "add" || update.kind === "update") &&
+          fresh.metadata["kind"] !== "fix-ci") {
+        enqueueCiFailureFix(automationRepo, slug);
       }
 
       if (update.kind === "clear") {
@@ -590,14 +495,14 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
         prDraft: refreshedPr.draft,
         ciState: summary.state,
         failedCount: summary.counts.failed,
-        mergeable: prData.mergeable,
-        mergeStateStatus: prData.mergeStateStatus,
-        reviewDecision: prData.reviewDecision,
+        mergeable: rollup.mergeable,
+        mergeStateStatus: rollup.mergeStateStatus,
+        reviewDecision: rollup.reviewDecision,
         sessionKind: typeof sessionKindRaw === "string" ? sessionKindRaw : undefined,
         sessionMode: fresh.mode,
       });
       if (decision.kind === "merge") {
-        await applyAutoMerge(slug, owner, repoName, prNumber);
+        await applyAutoMerge(slug, repoId, prNumber);
       }
     }
 
@@ -606,22 +511,25 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
       ctx.bus.emit({ kind: "session_updated", session: updated });
     }
 
+    try {
+      const readiness = await ctx.readiness.compute(slug);
+      if (readiness.status === "ready") {
+        enqueueLandReady(automationRepo, slug);
+      }
+    } catch (err) {
+      log.warn("ci poll: readiness probe failed", { slug, err: (err as Error).message });
+    }
+
     await handlePrUpdated(slug, ctx, log);
   }
 
   async function applyAutoMerge(
     slug: string,
-    owner: string,
-    repoName: string,
+    repoId: string,
     prNumber: number,
   ): Promise<void> {
     try {
-      await runGh([
-        "api",
-        "-X", "PUT",
-        `repos/${owner}/${repoName}/pulls/${prNumber}/merge`,
-        "-f", "merge_method=squash",
-      ]);
+      await ctx.github.mergePR(repoId, prNumber, { strategy: "squash" });
     } catch (err) {
       log.warn("auto-merge failed", { slug, prNumber, err: (err as Error).message });
       ctx.audit.record(
@@ -668,13 +576,23 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
     slug: string,
     nextAttempts: number,
     failedNames: string[],
-    owner: string,
-    repoName: string,
+    repoId: string,
     head: string,
     prNumber: number,
   ): Promise<void> {
     ctx.sessions.setMetadata(slug, { ciSelfHealAttempts: nextAttempts });
-    const logs = await fetchFailedLogs(owner, repoName, head);
+
+    let logs = "";
+    try {
+      const runId = await ctx.github.fetchActionsRunIdForBranch(repoId, head);
+      if (runId) {
+        const result = await ctx.github.fetchFailedLogs(repoId, runId);
+        logs = Object.values(result.logsByJob).join("\n\n");
+      }
+    } catch (err) {
+      log.warn("ci self-heal: failed to fetch logs for retry prompt", { slug, err: (err as Error).message });
+    }
+
     const prompt = buildSelfHealPrompt({ prNumber, failedNames, logs });
 
     try {

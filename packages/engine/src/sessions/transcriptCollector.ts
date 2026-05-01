@@ -22,6 +22,7 @@ export class TranscriptCollector {
   private readonly updateStatusStmt: Database.Statement;
   private readonly getSessionStmt: Database.Statement;
   private readonly getSessionForBusStmt: Database.Statement;
+  private readonly updateProviderStateStmt: Database.Statement;
 
   constructor(private readonly deps: TranscriptCollectorDeps) {
     const { db } = deps;
@@ -60,6 +61,10 @@ export class TranscriptCollector {
 
     this.getSessionForBusStmt = db.prepare(
       `SELECT * FROM sessions WHERE slug = ?`,
+    );
+
+    this.updateProviderStateStmt = db.prepare(
+      `UPDATE provider_state SET last_seq = ?, last_turn = ?, updated_at = ? WHERE session_slug = ?`,
     );
   }
 
@@ -146,7 +151,10 @@ export class TranscriptCollector {
 
       if (!row) continue;
 
-      this.insertStmt.run(row.id, row.session_slug, row.seq, row.turn, row.kind, row.body, row.timestamp);
+      this.deps.db.transaction(() => {
+        this.insertStmt.run(row.id, row.session_slug, row.seq, row.turn, row.kind, row.body, row.timestamp);
+        this.updateProviderStateStmt.run(row.seq, row.turn, row.timestamp, slug);
+      })();
 
       const transcriptEv = rowToTranscriptEvent(row);
       bus.emit({ kind: "transcript_event", sessionSlug: slug, event: transcriptEv });

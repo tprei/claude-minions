@@ -828,11 +828,16 @@ export class SessionRegistry {
   ): void {
     const { log, ctx } = this.deps;
 
+    const durableState = this.getProviderState.get(slug) as ProviderStateRow | undefined;
+    const effectiveTurn = startTurn === 0 && (durableState?.last_turn ?? 0) > 0
+      ? durableState!.last_turn
+      : startTurn;
+
     const onExternalId = (externalId: string) => {
       this.upsertProviderState.run(slug, providerName, externalId, 0, 0, "{}", nowIso());
     };
 
-    this.collector.collect(slug, handle, onExternalId, startTurn).catch((err) => {
+    this.collector.collect(slug, handle, onExternalId, effectiveTurn).catch((err) => {
       log.error("transcript collector error", { slug, err: String(err) });
     });
 
@@ -1081,7 +1086,7 @@ export class SessionRegistry {
           this.upsertProviderState.run(slug, providerName, handle.externalId, 0, 0, "{}", nowIso());
         }
 
-        this.pipeHandle(slug, handle, providerName);
+        this.pipeHandle(slug, handle, providerName, providerState?.last_turn ?? 0);
 
         ctx.audit.record("system", "session.resume", { kind: "session", id: slug }, {
           provider: providerName,

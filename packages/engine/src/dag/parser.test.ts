@@ -15,6 +15,7 @@ import { KeyedMutex } from "../util/mutex.js";
 import { createDagSubsystem } from "./index.js";
 import { parseDagFromTranscript } from "./parser.js";
 import type { SubsystemDeps } from "../wiring.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 
 const SHIP_SLUG = "ship-sess-1";
 
@@ -123,7 +124,7 @@ function makeMockCtx(opts: {
   return ctx as EngineContext;
 }
 
-function makeDeps(ctx: EngineContext, db: Database.Database, bus: EventBus): SubsystemDeps {
+function makeDeps(ctx: EngineContext, db: Database.Database, bus: EventBus): SubsystemDeps & { automationRepo: AutomationJobRepo } {
   return {
     ctx,
     log: createLogger("error"),
@@ -132,6 +133,7 @@ function makeDeps(ctx: EngineContext, db: Database.Database, bus: EventBus): Sub
     bus,
     mutex: new KeyedMutex(),
     workspaceDir: "/tmp",
+    automationRepo: new AutomationJobRepo(db),
   };
 }
 

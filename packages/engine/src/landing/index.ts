@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import simpleGit from "simple-git";
 import type { PRSummary, Session } from "@minions/shared";
 import type { EngineContext } from "../context.js";
@@ -11,8 +10,7 @@ import { pushBranch as defaultPushBranch } from "./push.js";
 import { commitsAhead as defaultCommitsAhead, type CommitsAheadFn } from "./commitsAhead.js";
 import { ensurePullRequest as defaultEnsurePullRequest, type EnsurePullRequestArgs } from "./openPR.js";
 import {
-  createEditPullRequestBase,
-  defaultRunGh,
+  editPullRequestBase as defaultEditPullRequestBase,
   type EditPullRequestBaseFn,
 } from "./editPRBase.js";
 import {
@@ -30,7 +28,6 @@ import { enqueueRestackDescendants } from "../automation/handlers/restackDescend
 
 export type PushBranchFn = (worktreePath: string, branch: string, log: Logger) => Promise<void>;
 export type EnsurePullRequestFn = (args: EnsurePullRequestArgs) => Promise<PRSummary | null>;
-export type RunGhInWorktreeFn = (args: string[], opts: { cwd: string; log: Logger }) => Promise<string>;
 export type { EditPullRequestBaseFn } from "./editPRBase.js";
 export type { CommitsAheadFn } from "./commitsAhead.js";
 
@@ -44,33 +41,12 @@ export interface LandingManagerDeps {
   rebaseOnto?: RebaseOntoFn;
   commitsAhead?: CommitsAheadFn;
   sessionRepo?: SessionStateUpdater | null;
-  runGh?: RunGhInWorktreeFn;
   automationRepo?: AutomationJobRepo | null;
 }
 
 function isOnlineRemote(remote: string): boolean {
   return /^(https?:\/\/|ssh:\/\/|git:\/\/|git@)/.test(remote);
 }
-
-const defaultRunGhInWorktree: RunGhInWorktreeFn = (args, opts) =>
-  new Promise<string>((resolve, reject) => {
-    const child = spawn("gh", args, { cwd: opts.cwd, env: process.env });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c: Buffer) => (stdout += c.toString("utf8")));
-    child.stderr.on("data", (c: Buffer) => (stderr += c.toString("utf8")));
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        opts.log.info("gh ok", { args: args.join(" ") });
-        resolve(stdout.trim());
-      } else {
-        reject(new Error(`gh ${args.join(" ")} exited ${code}: ${stderr.trim() || stdout.trim()}`));
-      }
-    });
-  });
-
-const defaultEditPullRequestBase: EditPullRequestBaseFn = createEditPullRequestBase(defaultRunGh);
 
 export class LandingManager {
   private readonly pushBranch: PushBranchFn;
@@ -80,7 +56,6 @@ export class LandingManager {
   private readonly rebaseOnto: RebaseOntoFn;
   private readonly commitsAhead: CommitsAheadFn;
   private readonly sessionRepo: SessionStateUpdater | null;
-  private readonly runGh: RunGhInWorktreeFn;
   private readonly automationRepo: AutomationJobRepo | null;
 
   constructor(
@@ -97,7 +72,6 @@ export class LandingManager {
     this.rebaseOnto = deps.rebaseOnto ?? defaultRebaseOnto;
     this.commitsAhead = deps.commitsAhead ?? defaultCommitsAhead;
     this.sessionRepo = deps.sessionRepo ?? null;
-    this.runGh = deps.runGh ?? defaultRunGhInWorktree;
     this.automationRepo = deps.automationRepo ?? null;
   }
 
@@ -135,7 +109,7 @@ export class LandingManager {
 
     if (onlineFlow && refreshedAfterPush.pr) {
       const prNumber = refreshedAfterPush.pr.number;
-      const preMerge = await this.inspectPrBeforeMerge(prNumber, session.worktreePath, slug);
+      const preMerge = await this.inspectPrBeforeMerge(prNumber, session.repoId ?? "", slug);
       if (preMerge.action === "skip") {
         this.log.info("merge skipped: PR no longer in mergeable state", {
           slug,
@@ -158,10 +132,9 @@ export class LandingManager {
         );
         return;
       }
-      const flag = strategy === "squash" ? "--squash" : strategy === "rebase" ? "--rebase" : "--merge";
-      const args = ["pr", "merge", String(prNumber), flag, "--delete-branch=false"];
+      const repoId = session.repoId ?? "";
       try {
-        await this.runGh(args, { cwd: session.worktreePath, log: this.log });
+        await this.ctx.github.mergePR(repoId, prNumber, { strategy });
       } catch (err) {
         throw new EngineError(
           "upstream",
@@ -452,13 +425,13 @@ export class LandingManager {
       !!child.pr &&
       child.pr.state === "open";
 
-    if (onlineFlow && child.pr && child.worktreePath && repo?.remote) {
+    if (onlineFlow && child.pr && child.repoId) {
       try {
         await this.editPullRequestBase({
-          cwd: child.worktreePath,
+          ctx: this.ctx,
+          repoId: child.repoId,
           prNumber: child.pr.number,
           newBase,
-          remote: repo.remote,
           log: this.log,
         });
         if (this.sessionRepo) {
@@ -525,16 +498,11 @@ export class LandingManager {
       throw new EngineError("bad_request", `session ${slug} has no worktree`);
     }
 
-    const repo = session.repoId ? this.ctx.repos().find((r) => r.id === session.repoId) : undefined;
-    if (!repo?.remote) {
-      throw new EngineError("bad_request", `session ${slug} has no remote`);
-    }
-
     await this.editPullRequestBase({
-      cwd: session.worktreePath,
+      ctx: this.ctx,
+      repoId: session.repoId ?? "",
       prNumber: session.pr.number,
       newBase,
-      remote: repo.remote,
       log: this.log,
     });
 
@@ -546,17 +514,14 @@ export class LandingManager {
 
   private async inspectPrBeforeMerge(
     prNumber: number,
-    cwd: string,
+    repoId: string,
     slug: string,
   ): Promise<{ action: "merge" } | { action: "skip"; reason: string } | { action: "conflict" }> {
-    let raw: string;
+    let pr: import("@minions/shared").PullRequestPreview;
     try {
-      raw = await this.runGh(
-        ["pr", "view", String(prNumber), "--json", "state,mergeable"],
-        { cwd, log: this.log },
-      );
+      pr = await this.ctx.github.fetchPR(repoId, prNumber);
     } catch (err) {
-      this.log.warn("gh pr view failed before merge; proceeding optimistically", {
+      this.log.warn("fetchPR failed before merge; proceeding optimistically", {
         slug,
         prNumber,
         err: (err as Error).message,
@@ -564,32 +529,18 @@ export class LandingManager {
       return { action: "merge" };
     }
 
-    let parsed: { state?: string; mergeable?: string };
-    try {
-      parsed = JSON.parse(raw) as { state?: string; mergeable?: string };
-    } catch (err) {
-      this.log.warn("could not parse gh pr view output before merge; proceeding optimistically", {
-        slug,
-        prNumber,
-        err: (err as Error).message,
-      });
-      return { action: "merge" };
-    }
-
-    const state = (parsed.state ?? "").toUpperCase();
-    if (state && state !== "OPEN") {
-      const reason = state === "MERGED" ? "already-merged" : state === "CLOSED" ? "closed" : state.toLowerCase();
+    if (pr.state !== "open") {
+      const reason = pr.state === "merged" ? "already-merged" : pr.state === "closed" ? "closed" : pr.state;
       this.ctx.audit.record(
         "system",
         "landing.merge.skipped",
         { kind: "session", id: slug },
-        { prNumber, reason, state },
+        { prNumber, reason, state: pr.state },
       );
       return { action: "skip", reason };
     }
 
-    const mergeable = (parsed.mergeable ?? "").toUpperCase();
-    if (mergeable === "CONFLICTING") {
+    if (pr.mergeableState === "dirty") {
       return { action: "conflict" };
     }
 
@@ -622,9 +573,7 @@ export class LandingManager {
 
   private async postPRComment(repoId: string, prNumber: number, body: string): Promise<void> {
     if (!repoId || !prNumber) return;
-    const pr = await this.ctx.github.fetchPR(repoId, prNumber);
-    void pr;
-    this.log.info("would post PR comment", { repoId, prNumber, bodyLength: body.length });
+    await this.ctx.github.postPRComment(repoId, prNumber, body);
   }
 }
 

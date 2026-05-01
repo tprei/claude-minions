@@ -15,6 +15,7 @@ import type { SubsystemDeps } from "../wiring.js";
 import { AuditRepo } from "../store/repos/auditRepo.js";
 import { SessionRegistry } from "./registry.js";
 import { createDagSubsystem } from "../dag/index.js";
+import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { createShipSubsystem } from "../ship/index.js";
 import { createLoopsSubsystem } from "../loops/index.js";
 import { newSlug } from "../util/ids.js";
@@ -234,7 +235,7 @@ function makeCtx(args: {
   return ctx as EngineContext;
 }
 
-function makeDeps(ctx: EngineContext): SubsystemDeps {
+function makeDeps(ctx: EngineContext): SubsystemDeps & { automationRepo: AutomationJobRepo } {
   return {
     ctx,
     log: ctx.log,
@@ -243,6 +244,7 @@ function makeDeps(ctx: EngineContext): SubsystemDeps {
     bus: ctx.bus,
     mutex: ctx.mutex,
     workspaceDir: ctx.workspaceDir,
+    automationRepo: new AutomationJobRepo(ctx.db),
   };
 }
 

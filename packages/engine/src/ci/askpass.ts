@@ -7,6 +7,8 @@ const PAT_SHIM = "gh-pat.sh";
 const APP_SHIM = "gh-app.sh";
 const TOKEN_FILE = "token";
 
+let installedShimPath: string | null = null;
+
 function patShim(): string {
   const token = process.env["GITHUB_TOKEN"] ?? "";
   return `#!/bin/sh\nprintf '%s' '${token.replace(/'/g, "'\\''")}'\n`;
@@ -17,7 +19,7 @@ function appShim(tokenPath: string): string {
   return `#!/bin/sh\ncat '${safe}'\n`;
 }
 
-export async function installAskpass(workspaceDir: string): Promise<void> {
+export async function installAskpass(workspaceDir: string): Promise<string> {
   const dir = path.join(workspaceDir, SHIM_DIR);
   await mkdir(dir, { recursive: true });
 
@@ -31,12 +33,22 @@ export async function installAskpass(workspaceDir: string): Promise<void> {
     const scriptPath = path.join(dir, APP_SHIM);
     await writeFile(scriptPath, appShim(tokenPath), { encoding: "utf-8" });
     await chmod(scriptPath, 0o700);
-    process.env["GIT_ASKPASS"] = scriptPath;
-    return;
+    installedShimPath = scriptPath;
+    return scriptPath;
   }
 
   const scriptPath = path.join(dir, PAT_SHIM);
   await writeFile(scriptPath, patShim(), { encoding: "utf-8" });
   await chmod(scriptPath, 0o700);
-  process.env["GIT_ASKPASS"] = scriptPath;
+  installedShimPath = scriptPath;
+  return scriptPath;
+}
+
+export function getAskpassPath(): string | null {
+  return installedShimPath;
+}
+
+export function gitAuthEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (!installedShimPath) return { ...base };
+  return { ...base, GIT_ASKPASS: installedShimPath };
 }
