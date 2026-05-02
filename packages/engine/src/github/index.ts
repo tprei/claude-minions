@@ -143,17 +143,72 @@ function clipTailBytes(text: string, maxBytes: number): string {
   return buf.subarray(buf.length - maxBytes).toString("utf8");
 }
 
+const RATE_LIMIT_MAX_INLINE_WAIT_MS = 12_000;
+
 async function githubFetch(url: string, token: string, opts?: RequestInit): Promise<Response> {
-  const res = await fetch(url, {
-    ...opts,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(opts?.headers ?? {}),
-    },
-  });
-  return res;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    ...(opts?.headers as Record<string, string> | undefined ?? {}),
+  };
+  let res = await fetch(url, { ...opts, headers });
+  if (!isRateLimited(res)) return res;
+
+  // Rate limited (primary install-token limit or secondary abuse limit).
+  // Honor Retry-After / X-RateLimit-Reset when within a short bound; longer
+  // waits escalate to `transient_github_error` so callers' retry policy
+  // (re-enqueued automation job) handles the backoff instead of blocking
+  // this fetch for tens of minutes.
+  const waitMs = computeRateLimitWaitMs(res);
+  if (waitMs <= RATE_LIMIT_MAX_INLINE_WAIT_MS) {
+    await sleep(waitMs);
+    res = await fetch(url, { ...opts, headers });
+    if (!isRateLimited(res)) return res;
+  }
+
+  const body = await res.text().catch(() => "");
+  throw new EngineError(
+    "transient_github_error",
+    `GitHub API rate limited (status ${res.status}); retry after ~${Math.ceil(waitMs / 1000)}s: ${body.slice(0, 200)}`,
+    { url, status: res.status, retryAfterMs: waitMs },
+  );
+}
+
+export function isRateLimited(res: Response): boolean {
+  if (res.status !== 403 && res.status !== 429) return false;
+  const remaining = res.headers.get("x-ratelimit-remaining");
+  if (remaining === "0") return true;
+  const retryAfter = res.headers.get("retry-after");
+  if (retryAfter !== null) return true;
+  // Best effort: a 403 without rate-limit headers might be a real permission
+  // error. Treat 403 as rate-limited only when it carries the typical
+  // signals; otherwise let the caller see the original 403 and surface it.
+  return false;
+}
+
+export function computeRateLimitWaitMs(res: Response): number {
+  const retryAfter = res.headers.get("retry-after");
+  if (retryAfter !== null) {
+    const seconds = Number.parseInt(retryAfter, 10);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, 60 * 60 * 1000);
+    }
+  }
+  const reset = res.headers.get("x-ratelimit-reset");
+  if (reset !== null) {
+    const epochSeconds = Number.parseInt(reset, 10);
+    if (Number.isFinite(epochSeconds)) {
+      const delta = epochSeconds * 1000 - Date.now();
+      if (delta > 0) return Math.min(delta, 60 * 60 * 1000);
+    }
+  }
+  // Secondary rate limits (no headers) typically clear within a minute.
+  return 5_000;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function createGithubSubsystem(deps: GithubSubsystemDeps): GithubSubsystem {

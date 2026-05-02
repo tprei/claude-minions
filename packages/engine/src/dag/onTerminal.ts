@@ -10,6 +10,7 @@ import { isEngineError } from "../errors.js";
 
 const DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS = 3;
 const TRANSIENT_PUSH_RETRY_DELAY_MS = 60_000;
+const QUALITY_SELF_HEAL_MAX_ATTEMPTS = 2;
 
 function readSelfHealMaxAttempts(ctx: EngineContext): number {
   const raw = ctx.runtime.effective()["ciSelfHealMaxAttempts"];
@@ -17,6 +18,42 @@ function readSelfHealMaxAttempts(ctx: EngineContext): number {
     return DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS;
   }
   return Math.floor(raw);
+}
+
+function readQualitySelfHealAttempts(metadata: Record<string, unknown>): number {
+  const raw = metadata["qualitySelfHealAttempts"];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return 0;
+  return Math.floor(raw);
+}
+
+function formatQualityFailureForAgent(
+  report: import("@minions/shared").QualityReport,
+): string {
+  const failed = report.checks.filter((c) => c.status === "failed");
+  if (failed.length === 0) {
+    return `The local quality gate reported status \`${report.status}\` but no specific checks failed. Re-run \`pnpm run check\` (or whatever the workspace's quality runner is) and address what it reports.`;
+  }
+  const lines: string[] = [
+    "Your local quality gate failed before the engine could open a PR. Fix the underlying issues and push another commit. Do not bypass hooks or skip checks.",
+    "",
+  ];
+  for (const c of failed) {
+    lines.push(`### Check failed: \`${c.name}\` (\`${c.command}\`, exit ${c.exitCode ?? "?"})`);
+    if (c.stdoutTail) {
+      lines.push("stdout (tail):");
+      lines.push("```");
+      lines.push(c.stdoutTail.slice(-1500));
+      lines.push("```");
+    }
+    if (c.stderrTail) {
+      lines.push("stderr (tail):");
+      lines.push("```");
+      lines.push(c.stderrTail.slice(-1500));
+      lines.push("```");
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
 }
 
 export class DagTerminalHandler {
@@ -73,12 +110,76 @@ export class DagTerminalHandler {
       qualityReport.status === "passed" || qualityReport.status === "partial";
 
     if (!qualityPassed) {
-      this.repo.updateNode(node.id, {
-        status: "ci-failed",
-        failedReason: `quality gate ${qualityReport.status}`,
-        completedAt: new Date().toISOString(),
+      const attempts = readQualitySelfHealAttempts(session.metadata);
+      if (attempts >= QUALITY_SELF_HEAL_MAX_ATTEMPTS) {
+        this.repo.updateNode(node.id, {
+          status: "ci-failed",
+          failedReason: `quality gate ${qualityReport.status} after ${attempts} self-heal attempts`,
+          completedAt: new Date().toISOString(),
+        });
+        this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
+        this.log.warn("dag node quality self-heal exhausted", {
+          dagId: dag.id,
+          nodeId: node.id,
+          sessionSlug: session.slug,
+          attempts,
+        });
+        await this.scheduler.tick(dag.id);
+        return;
+      }
+
+      // Self-heal: ask the same agent to fix the local quality failure and
+      // push another commit. Mirrors how CI failures on an open PR get
+      // auto-fixed; the difference is that quality runs BEFORE the PR is
+      // opened, so we keep the node in "running" and re-queue the agent
+      // instead of routing through the post-PR ciFailureFix flow.
+      const nextAttempt = attempts + 1;
+      this.ctx.sessions.setMetadata(session.slug, {
+        qualitySelfHealAttempts: nextAttempt,
       });
-      this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
+      try {
+        await this.ctx.sessions.reply(
+          session.slug,
+          formatQualityFailureForAgent(qualityReport),
+        );
+        await this.ctx.sessions.kickReplyQueue(session.slug);
+      } catch (err) {
+        this.log.warn("quality self-heal reply failed; marking node ci-failed", {
+          dagId: dag.id,
+          nodeId: node.id,
+          err: (err as Error).message,
+        });
+        this.repo.updateNode(node.id, {
+          status: "ci-failed",
+          failedReason: `quality gate ${qualityReport.status}; reply failed: ${(err as Error).message}`,
+          completedAt: new Date().toISOString(),
+        });
+        this.raiseCiFailed(dag.rootSessionSlug ?? session.slug, node.id);
+        await this.scheduler.tick(dag.id);
+        return;
+      }
+
+      this.repo.updateNode(node.id, {
+        status: "running",
+        failedReason: null,
+      });
+      this.ctx.audit.record(
+        "system",
+        "dag.node.quality_self_heal",
+        { kind: "dag", id: dag.id },
+        {
+          nodeId: node.id,
+          sessionSlug: session.slug,
+          attempt: nextAttempt,
+          maxAttempts: QUALITY_SELF_HEAL_MAX_ATTEMPTS,
+        },
+      );
+      this.log.info("dag node quality self-heal: queued reply for agent", {
+        dagId: dag.id,
+        nodeId: node.id,
+        sessionSlug: session.slug,
+        attempt: nextAttempt,
+      });
       await this.scheduler.tick(dag.id);
       return;
     }
@@ -147,20 +248,31 @@ export class DagTerminalHandler {
       await this.scheduler.tick(dag.id);
     } catch (err) {
       const message = (err as Error).message;
-      if (isEngineError(err) && err.code === "transient_push_error") {
-        this.log.warn("dag node landing hit transient push error; will retry", {
+      if (
+        isEngineError(err) &&
+        (err.code === "transient_push_error" || err.code === "transient_github_error")
+      ) {
+        const retryAfterMs =
+          err.code === "transient_github_error" && typeof err.detail?.["retryAfterMs"] === "number"
+            ? Math.max(TRANSIENT_PUSH_RETRY_DELAY_MS, err.detail["retryAfterMs"] as number)
+            : TRANSIENT_PUSH_RETRY_DELAY_MS;
+        this.log.warn("dag node landing hit transient error; will retry", {
           dagId: dag.id,
           nodeId: node.id,
+          code: err.code,
+          retryAfterMs,
           err: message,
         });
         this.ctx.audit.record(
           "system",
-          "dag.node.transient_push_retry",
+          err.code === "transient_github_error"
+            ? "dag.node.transient_github_retry"
+            : "dag.node.transient_push_retry",
           { kind: "dag", id: dag.id },
           { nodeId: node.id, sessionSlug: session.slug, error: message },
         );
         if (this.automationRepo) {
-          enqueueDagTick(this.automationRepo, dag.id, TRANSIENT_PUSH_RETRY_DELAY_MS);
+          enqueueDagTick(this.automationRepo, dag.id, retryAfterMs);
         } else {
           await this.scheduler.tick(dag.id);
         }
