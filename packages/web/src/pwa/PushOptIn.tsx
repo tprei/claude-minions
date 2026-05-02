@@ -5,7 +5,7 @@ interface Props {
   api: {
     get: (path: string) => Promise<unknown>;
     post: (path: string, body: unknown) => Promise<unknown>;
-    del: (path: string) => Promise<unknown>;
+    del: (path: string, body?: unknown) => Promise<unknown>;
   };
 }
 

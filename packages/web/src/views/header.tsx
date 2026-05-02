@@ -12,13 +12,27 @@ import { ThemeToggle } from "../pwa/ThemeToggle.js";
 interface PushApi {
   get: (path: string) => Promise<unknown>;
   post: (path: string, body: unknown) => Promise<unknown>;
-  del: (path: string) => Promise<unknown>;
+  del: (path: string, body?: unknown) => Promise<unknown>;
 }
 
 function PushToggle({ api }: { api: PushApi }): ReactElement | null {
   const permission = usePushPermission();
   const [subscribed, setSubscribed] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
+  const [serverSupported, setServerSupported] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/api/push/vapid-public-key")
+      .then((res) => {
+        if (cancelled) return;
+        const key = (res as { publicKey?: string } | null)?.publicKey;
+        setServerSupported(typeof key === "string" && key.length > 0);
+      })
+      .catch(() => { if (!cancelled) setServerSupported(false); });
+    return () => { cancelled = true; };
+  }, [api]);
 
   useEffect(() => {
     if (permission !== "granted") {
@@ -34,10 +48,12 @@ function PushToggle({ api }: { api: PushApi }): ReactElement | null {
   }, [permission]);
 
   if (permission === "unsupported") return null;
+  if (serverSupported === false) return null;
   const isSubscribed = permission === "granted" && subscribed;
 
   async function toggle(): Promise<void> {
     setBusy(true);
+    setError(null);
     try {
       if (isSubscribed) {
         await unregisterPush(api);
@@ -45,26 +61,32 @@ function PushToggle({ api }: { api: PushApi }): ReactElement | null {
       } else {
         const ok = await registerPush(api);
         setSubscribed(ok);
+        if (!ok) {
+          setError("Notifications were blocked. Update your browser settings to allow them.");
+        }
       }
     } catch (err) {
-      console.error("push toggle failed", err);
+      setError(err instanceof Error ? err.message : "Failed to toggle notifications");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => void toggle()}
-      disabled={busy}
-      className="w-8 h-8 flex items-center justify-center rounded-lg text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors disabled:opacity-50"
-      aria-label={isSubscribed ? "Disable push notifications" : "Enable push notifications"}
-      aria-pressed={isSubscribed}
-      title={isSubscribed ? "Push notifications on" : "Push notifications off"}
-    >
-      {isSubscribed ? "🔔" : "🔕"}
-    </button>
+    <div className="flex flex-col items-center gap-1">
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        disabled={busy}
+        className="w-8 h-8 flex items-center justify-center rounded-lg text-fg-muted hover:text-fg hover:bg-bg-elev transition-colors disabled:opacity-50"
+        aria-label={isSubscribed ? "Disable push notifications" : "Enable push notifications"}
+        aria-pressed={isSubscribed}
+        title={isSubscribed ? "Push notifications on" : "Push notifications off"}
+      >
+        {isSubscribed ? "🔔" : "🔕"}
+      </button>
+      {error && <p className="text-red-400 text-[10px] max-w-[180px] text-center">{error}</p>}
+    </div>
   );
 }
 
