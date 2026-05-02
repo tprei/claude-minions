@@ -139,4 +139,143 @@ describe("rebase_conflict attention persists across restart (baseResolver)", () 
 
     db.close();
   });
+
+  test("applyLiveBase walks past a non-conflict rebase failure and lands on a working ancestor", async () => {
+    const db = makeDb();
+    const slug = "fallback-walk";
+    insertSessionRow(db, slug, "/tmp/fake-worktree");
+    const sessionRepo = new SessionRepo(db);
+    let currentSession = sessionRepo.get(slug)!;
+
+    // Two ancestors and main exist on origin; only one rebase target works.
+    const branchOnOrigin = new Set(["minions/ancestor-a", "minions/ancestor-b", "main"]);
+    const rebaseAttempts: string[] = [];
+
+    const ctx: EngineContext = {
+      sessions: {
+        get: (s: string) => (s === slug ? currentSession : null),
+        list: () => [currentSession],
+        create: async () => { throw new Error("not implemented"); },
+        listPaged: () => ({ items: [] }),
+        listWithTranscript: () => [],
+        transcript: () => [],
+        stop: async () => {},
+        close: async () => {},
+        delete: async () => {},
+        reply: async () => {},
+        setDagId: () => {},
+        setMetadata: () => {},
+        markCompleted: () => {},
+        markFailed: () => {},
+        spawnPending: async () => ({ spawned: false }),
+        markWaitingInput: () => {},
+        appendAttention: (s: string, flag: import("@minions/shared").AttentionFlag) => {
+          const current = sessionRepo.get(s);
+          if (!current) return;
+          sessionRepo.setAttention(s, [...current.attention, flag]);
+          currentSession = sessionRepo.get(s)!;
+        },
+        dismissAttention: () => { throw new Error("not implemented"); },
+        kickReplyQueue: async () => false,
+        resumeAllActive: async () => {},
+        diff: async (s: string) => ({ sessionSlug: s, patch: "", stats: [], truncated: false, byteSize: 0, generatedAt: new Date().toISOString() }),
+        screenshots: async () => [],
+        screenshotPath: () => "",
+        checkpoints: () => [],
+        restoreCheckpoint: async () => {},
+        updateBucket: () => {},
+      },
+      bus: { emit: () => {}, subscribe: () => () => {} } as unknown as EventBus,
+      audit: { record: () => {}, list: () => [] },
+      lifecycle: {} as EngineContext["lifecycle"],
+      mutex: {} as EngineContext["mutex"],
+      runtime: { schema: () => ({ groups: [], fields: [] }), values: () => ({}), effective: () => ({}), update: async () => {} },
+      dags: {} as EngineContext["dags"],
+      ship: {} as EngineContext["ship"],
+      loops: {} as EngineContext["loops"],
+      variants: {} as EngineContext["variants"],
+      ci: {} as EngineContext["ci"],
+      quality: {} as EngineContext["quality"],
+      readiness: {} as EngineContext["readiness"],
+      intake: {} as EngineContext["intake"],
+      memory: {} as EngineContext["memory"],
+      resource: {} as EngineContext["resource"],
+      push: {} as EngineContext["push"],
+      digest: {} as EngineContext["digest"],
+      github: {} as EngineContext["github"],
+      stats: {} as EngineContext["stats"],
+      cleanup: {} as EngineContext["cleanup"],
+      env: {} as EngineContext["env"],
+      log: createLogger("error"),
+      db: {} as EngineContext["db"],
+      workspaceDir: "/tmp",
+      previousMarker: null,
+      features: () => [],
+      featuresPending: () => [],
+      repos: () => [],
+      getRepo: () => null,
+      shutdown: async () => {},
+    } as unknown as EngineContext;
+
+    // Mock dagRepo: session has 2 deps. Resolver picks ancestor-a first (which
+    // exists on origin per branchExists), but its rebase will fail with
+    // "fatal: invalid upstream" — the live failure pattern. Fallback should
+    // try ancestor-b next, succeed there.
+    const dagRepo = {
+      list: () => [],
+      getNodeBySession: () => ({
+        id: "n-target",
+        title: "target",
+        prompt: "p",
+        status: "running",
+        dependsOn: ["n-a", "n-b"],
+        sessionSlug: slug,
+        branch: "minions/target",
+      }),
+      byNodeSession: () => ({
+        id: "dag-1",
+        title: "t",
+        goal: "g",
+        nodes: [],
+        baseBranch: "main",
+        rootSessionSlug: null,
+        status: "active",
+        repoId: "playground",
+        metadata: {},
+        createdAt: "",
+        updatedAt: "",
+      }),
+      getNode: (id: string) => {
+        if (id === "n-a") return { id, title: "a", prompt: "p", status: "pr-open", dependsOn: [], sessionSlug: "sess-a", branch: "minions/ancestor-a" };
+        if (id === "n-b") return { id, title: "b", prompt: "p", status: "pr-open", dependsOn: [], sessionSlug: "sess-b", branch: "minions/ancestor-b" };
+        return null;
+      },
+      updateNode: () => {},
+    } as unknown as DagRepo;
+
+    const branchExists = async ({ branch }: { worktreePath: string; branch: string }) => branchOnOrigin.has(branch);
+    const rebaseOnto = async ({ branch }: { worktreePath: string; branch: string }) => {
+      rebaseAttempts.push(branch);
+      if (branch === "minions/ancestor-a") {
+        throw new Error("fatal: invalid upstream 'origin/minions/ancestor-a'");
+      }
+      // ancestor-b succeeds
+    };
+
+    const result = await applyLiveBase(slug, {
+      ctx,
+      dagRepo,
+      log: createLogger("error"),
+      sessionRepo,
+      branchExists,
+      rebaseOnto,
+    });
+
+    assert.deepEqual(rebaseAttempts, ["minions/ancestor-a", "minions/ancestor-b"]);
+    assert.equal(result.newBase, "minions/ancestor-b");
+    assert.equal(result.changed, true);
+    assert.equal(result.reason, "ancestor-fallback");
+
+    db.close();
+  });
 });
