@@ -80,10 +80,37 @@ describe("classifyPushError", () => {
     );
   });
 
-  test("classifies non-fast-forward without conflict as fatal", () => {
+  test("classifies '[rejected] (stale info)' as transient (force-with-lease race)", () => {
+    // This is the live failure mode that wiped 4 nodes from dag-zi9hewrqej:
+    // descendant worktree-add ran a `fetch origin <branch>:<branch>` which
+    // bumped the local origin/<branch> view, leaving the lease stale relative
+    // to GitHub's actual HEAD. Recoverable with a fresh fetch + retry.
+    assert.equal(
+      classifyPushError(
+        "To https://github.com/tprei/pwa-playground.git\n!\trefs/heads/minions/x:refs/heads/minions/x\t[rejected] (stale info)",
+      ),
+      "transient",
+    );
+  });
+
+  test("classifies non-fast-forward without conflict as transient (race-recoverable)", () => {
     assert.equal(
       classifyPushError("Updates were rejected because the remote contains work that you do not have locally"),
-      "fatal",
+      "transient",
+    );
+  });
+
+  test("classifies 'fetch first' as transient", () => {
+    assert.equal(
+      classifyPushError("error: failed to push some refs ... hint: Updates were rejected because the tip of your current branch is behind. Hint: ... fetch first"),
+      "transient",
+    );
+  });
+
+  test("still classifies 'rejected' that mentions an actual conflict as conflict", () => {
+    assert.equal(
+      classifyPushError("error: failed to push some refs ... [rejected] - rebase conflict in foo.ts"),
+      "conflict",
     );
   });
 });
