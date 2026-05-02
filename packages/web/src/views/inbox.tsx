@@ -81,12 +81,10 @@ export function InboxView(_props: Props): ReactElement {
   const [seed, setSeed] = useState<AttentionInboxItem[] | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const onRefresh = useCallback(async () => {
     if (!conn) return;
-    setRefreshing(true);
     try {
       const [, env] = await Promise.all([
         refetchConnection(conn),
@@ -95,12 +93,10 @@ export function InboxView(_props: Props): ReactElement {
       setSeed(env.items);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh inbox");
-    } finally {
-      setRefreshing(false);
     }
   }, [conn]);
 
-  usePullToRefresh(scrollRef, onRefresh);
+  const pull = usePullToRefresh(scrollRef, onRefresh);
 
   useEffect(() => {
     if (!conn) return;
@@ -177,14 +173,22 @@ export function InboxView(_props: Props): ReactElement {
       data-testid="inbox-view"
     >
       <div
-        aria-hidden={!refreshing}
+        aria-hidden={!pull.dragging && !pull.refreshing}
         className={cx(
-          "absolute top-0 left-0 right-0 flex justify-center pointer-events-none transition-transform duration-200 z-10",
-          refreshing ? "translate-y-2" : "-translate-y-full",
+          "absolute top-0 left-0 right-0 flex justify-center pointer-events-none z-10",
+          !pull.dragging && "transition-transform duration-200",
         )}
+        style={{
+          transform: `translateY(${pull.dragging ? pull.offset - 32 : pull.refreshing ? 8 : -32}px)`,
+        }}
         data-testid="inbox-refresh-indicator"
       >
-        <span className="rounded-full bg-bg-soft border border-border shadow p-1.5">
+        <span
+          className={cx(
+            "rounded-full bg-bg-soft border shadow p-1.5",
+            pull.progress >= 1 ? "border-accent text-accent" : "border-border",
+          )}
+        >
           <Spinner size="sm" />
         </span>
       </div>
