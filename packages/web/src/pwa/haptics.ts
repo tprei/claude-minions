@@ -1,9 +1,6 @@
-const HAPTICS_OPT_OUT_KEY = "haptics_disabled";
+import { isReducedMotion } from "./motion.js";
 
-function isReducedMotion(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
+const HAPTICS_OPT_OUT_KEY = "haptics_disabled";
 
 function isOptedOut(): boolean {
   try {
