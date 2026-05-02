@@ -1,10 +1,12 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { CreateSessionRequest, Session, SessionMode } from "@minions/shared";
 import { useConnectionStore } from "../connections/store.js";
 import { useSessionStore } from "../store/sessionStore.js";
 import { useVersionStore } from "../store/version.js";
 import { setUrlState } from "../routing/urlState.js";
 import { AttachmentBar, useAttachments } from "../chat/attachments.js";
+import { startListening, stopListening, isVoiceSupported, type VoiceSession } from "../chat/voice.js";
+import { useFeature } from "../hooks/useFeature.js";
 import { cx } from "../util/classnames.js";
 
 interface ApiClient {
@@ -52,6 +54,47 @@ export function NewSessionView({ api, filterRepo = null }: Props) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const voiceEnabled = useFeature("voice-input");
+  const voiceSupported = useMemo(() => voiceEnabled && isVoiceSupported(), [voiceEnabled]);
+  const voiceRef = useRef<VoiceSession | null>(null);
+  const [listening, setListening] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (voiceRef.current) {
+        stopListening(voiceRef.current);
+        voiceRef.current = null;
+      }
+    };
+  }, []);
+
+  function toggleVoice(): void {
+    if (listening) {
+      if (voiceRef.current) stopListening(voiceRef.current);
+      voiceRef.current = null;
+      setListening(false);
+      return;
+    }
+    setVoiceError(null);
+    voiceRef.current = startListening(
+      (text, final) => {
+        if (final) {
+          setPrompt(v => (v.length > 0 && !/\s$/.test(v) ? `${v} ${text} ` : `${v}${text} `));
+        }
+      },
+      (err) => {
+        setVoiceError(err);
+        if (voiceRef.current) {
+          stopListening(voiceRef.current);
+          voiceRef.current = null;
+        }
+        setListening(false);
+      },
+    );
+    setListening(true);
+  }
 
   const trimmedPrompt = prompt.trim();
   const promptValid = trimmedPrompt.length >= 5;
@@ -131,17 +174,39 @@ export function NewSessionView({ api, filterRepo = null }: Props) {
 
         <div className="flex flex-col gap-1.5">
           <label className="text-xs text-fg-muted">Prompt</label>
-          <textarea
-            className="input resize-none min-h-[140px]"
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            placeholder="Describe the task…"
-            required
-          />
+          <div className="relative">
+            <textarea
+              className={cx("input resize-none min-h-[140px] w-full", voiceSupported && "pr-12")}
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              placeholder="Describe the task…"
+              required
+            />
+            {voiceSupported && (
+              <button
+                type="button"
+                onClick={toggleVoice}
+                aria-label={listening ? "Stop voice input" : "Start voice input"}
+                title={listening ? "Stop recording" : "Dictate prompt"}
+                className={cx(
+                  "absolute top-2 right-2 p-1.5 rounded-lg transition-colors",
+                  listening
+                    ? "text-red-400 bg-red-900/30 hover:bg-red-900/50"
+                    : "text-fg-subtle hover:text-fg-muted hover:bg-bg-elev",
+                )}
+              >
+                <span aria-hidden="true">🎤</span>
+              </button>
+            )}
+          </div>
           <p className="text-xs text-fg-subtle">
-            {trimmedPrompt.length < 5
-              ? `Need at least 5 characters (${trimmedPrompt.length}/5).`
-              : `${trimmedPrompt.length} characters.`}
+            {voiceError
+              ? voiceError
+              : listening
+                ? "Listening… tap the mic again to stop."
+                : trimmedPrompt.length < 5
+                  ? `Need at least 5 characters (${trimmedPrompt.length}/5).`
+                  : `${trimmedPrompt.length} characters.`}
           </p>
         </div>
 
