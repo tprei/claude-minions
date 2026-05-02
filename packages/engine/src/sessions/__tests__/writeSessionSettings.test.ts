@@ -232,7 +232,7 @@ describe("writeSessionSettings", () => {
     }
   });
 
-  test("permissionTier='read' restricts allow list to read-only tools", async () => {
+  test("permissionTier='read' restricts allow list to read-only tools plus web research", async () => {
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "session-settings-read-"));
     const worktreePath = path.join(tmpRoot, "wt");
     const homeDir = path.join(tmpRoot, "home");
@@ -256,8 +256,8 @@ describe("writeSessionSettings", () => {
 
       assert.deepEqual(
         allow,
-        ["Read(*)", "Glob(*)", "Grep(*)"],
-        "read tier must only allow Read/Glob/Grep wildcards",
+        ["Read(*)", "Glob(*)", "Grep(*)", "WebFetch(*)", "WebSearch(*)"],
+        "read tier must allow Read/Glob/Grep plus WebFetch/WebSearch wildcards",
       );
       assert.ok(!allow.includes("Bash(*)"), "read tier must not allow Bash");
       assert.ok(!allow.includes("Write(*)"), "read tier must not allow Write");

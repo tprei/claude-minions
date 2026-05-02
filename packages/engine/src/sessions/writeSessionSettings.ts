@@ -7,7 +7,13 @@ import { ensureDir } from "../util/fs.js";
 
 const SHARED_AUTH_FILES = ["credentials.json", ".credentials.json"];
 
-const READ_TOOLS_ALLOW = ["Read(*)", "Glob(*)", "Grep(*)"];
+const READ_TOOLS_ALLOW = [
+  "Read(*)",
+  "Glob(*)",
+  "Grep(*)",
+  "WebFetch(*)",
+  "WebSearch(*)",
+];
 const WRITE_TOOLS_ALLOW = [
   "Bash(*)",
   "Read(*)",
@@ -23,7 +29,7 @@ const WRITE_TOOLS_ALLOW = [
 // with `gh` + git + curl + a pre-authenticated GH_TOKEN, so they have a
 // cheaper path to GitHub and don't need either tool. The `read` tier exists
 // for research (think mode, ship think/plan stages) where browsing is the
-// whole point — keep both tools available there.
+// whole point — auto-approve both tools there.
 const WRITE_TIER_DENY = ["WebFetch", "WebSearch"];
 
 export function permissionsAllowFor(tier: PermissionTier): string[] {
