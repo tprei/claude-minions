@@ -10,7 +10,7 @@ import { DagScheduler, SUCCESS_NODE_STATUSES } from "./scheduler.js";
 import { DagTerminalHandler } from "./onTerminal.js";
 import { DagMergedHandler } from "./onMerged.js";
 import { registerDagRoutes } from "./routes.js";
-import { parseDagFromTranscript, extractDagBlocks } from "./parser.js";
+import { parseDagFromTranscript, extractDagBlocks, parseDagFromTranscriptDetailed } from "./parser.js";
 import { newSlug, newEventId } from "../util/ids.js";
 import { nowIso } from "../util/time.js";
 import { EngineError } from "../errors.js";
@@ -226,13 +226,18 @@ export function createDagSubsystem(
       warned = new Set();
       warnedBlocksBySlug.set(slug, warned);
     }
+    const detailed = parseDagFromTranscriptDetailed(transcript);
+    const reason =
+      detailed.kind === "error"
+        ? detailed.reason
+        : "block detected but failed to parse";
     for (const block of blocks) {
       if (warned.has(block)) continue;
       warned.add(block);
       emitStatus(
         slug,
         "warn",
-        `DAG block detected but failed to parse; please re-emit a valid JSON shape: {title, goal, nodes: [{title, prompt, dependsOn?}]}`,
+        `DAG block rejected by parser: ${reason}. Re-emit a corrected \`\`\`dag block — shape is {title, goal, nodes: [{title, prompt, dependsOn?}]}.`,
       );
       break;
     }
