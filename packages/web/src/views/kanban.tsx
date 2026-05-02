@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { Session, SessionStatus, SessionMode } from "@minions/shared";
 import { formatCostUsd, formatTokens } from "@minions/shared";
 import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
@@ -120,26 +120,32 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
   };
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const onRefresh = useCallback(async () => {
     if (!conn) return;
-    setRefreshing(true);
-    try {
-      const env = await getSessions(conn);
-      useSessionStore.getState().replaceAll(conn.id, env.items);
-    } finally {
-      setRefreshing(false);
-    }
+    const env = await getSessions(conn);
+    useSessionStore.getState().replaceAll(conn.id, env.items);
   }, [conn]);
-  usePullToRefresh(containerRef, onRefresh);
+  const pull = usePullToRefresh(containerRef, onRefresh);
 
   return (
     <div className="relative h-full">
-      {refreshing && (
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+      <div
+        aria-hidden={!pull.dragging && !pull.refreshing}
+        style={{ transform: `translateY(${pull.offset - 32}px)` }}
+        className={cx(
+          "absolute top-0 left-0 right-0 flex justify-center pointer-events-none z-10",
+          pull.dragging ? "" : "transition-transform duration-200",
+        )}
+      >
+        <span
+          className={cx(
+            "rounded-full bg-bg-soft border shadow p-1.5 transition-colors",
+            pull.progress >= 1 ? "border-accent" : "border-border",
+          )}
+        >
           <Spinner size="sm" />
-        </div>
-      )}
+        </span>
+      </div>
       <div ref={containerRef} className="flex h-full gap-3 p-3 overflow-x-auto snap-x snap-mandatory">
         {COLUMNS.map((col) => {
           const items = byStatus.get(col.status) ?? [];
