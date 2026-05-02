@@ -12,6 +12,7 @@ import { SessionActionsMenu } from "../chat/SessionActionsMenu.js";
 import { usePullToRefresh } from "../pwa/gestures.js";
 import { getSessions } from "../transport/rest.js";
 import { Spinner } from "../components/Spinner.js";
+import { RepoTabs } from "./RepoTabs.js";
 
 const COLUMNS: { status: SessionStatus; label: string; limit?: number }[] = [
   { status: "pending", label: "Pending" },
@@ -60,9 +61,11 @@ type FilterMode = "all" | "task" | "ship" | "dag-task" | "loop";
 interface Props {
   filterStatus?: FilterStatus;
   filterMode?: FilterMode;
+  filterRepo: string | null;
+  onFilterRepo: (repoId: string | null) => void;
 }
 
-export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) {
+export function KanbanView({ filterStatus = "all", filterMode = "all", filterRepo, onFilterRepo }: Props) {
   const activeId = useConnectionStore((s) => s.activeId);
   const conn = useRootStore((s) => s.getActiveConnection());
   const sessionsMap = useSessionStore(
@@ -74,8 +77,9 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
     if (filterStatus === "attention") arr = arr.filter((s) => s.attention && s.attention.length > 0);
     else if (filterStatus !== "all") arr = arr.filter((s) => s.status === filterStatus);
     if (filterMode !== "all") arr = arr.filter((s) => s.mode === filterMode);
+    if (filterRepo !== null) arr = arr.filter((s) => s.repoId === filterRepo);
     return arr;
-  }, [sessionsMap, filterStatus, filterMode]);
+  }, [sessionsMap, filterStatus, filterMode, filterRepo]);
 
   const byStatus = useMemo(() => {
     const map = new Map<SessionStatus, Session[]>();
@@ -128,7 +132,9 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
   const pull = usePullToRefresh(containerRef, onRefresh);
 
   return (
-    <div className="relative h-full">
+    <div className="flex flex-col h-full">
+      <RepoTabs filterRepo={filterRepo} onFilterRepo={onFilterRepo} />
+      <div className="relative flex-1 min-h-0">
       <div
         aria-hidden={!pull.dragging && !pull.refreshing}
         style={{ transform: `translateY(${pull.offset - 32}px)` }}
@@ -182,6 +188,7 @@ export function KanbanView({ filterStatus = "all", filterMode = "all" }: Props) 
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );

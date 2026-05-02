@@ -16,6 +16,7 @@ interface ApiClient {
 
 interface Props {
   api: ApiClient;
+  filterRepo?: string | null;
 }
 
 const MODE_OPTIONS: { value: SessionMode; label: string }[] = [
@@ -28,11 +29,17 @@ const MODE_OPTIONS: { value: SessionMode; label: string }[] = [
 
 const NONE_REPO = "__none__";
 
-export function NewSessionView({ api }: Props) {
+export function NewSessionView({ api, filterRepo = null }: Props) {
   const activeId = useConnectionStore(s => s.activeId);
   const repos = useVersionStore(s => (activeId ? s.byConnection.get(activeId)?.repos : undefined));
 
-  const defaultRepoId = repos && repos.length > 0 ? repos[0]!.id : NONE_REPO;
+  const repoIds = repos?.map(r => r.id) ?? [];
+  const defaultRepoId =
+    filterRepo && repoIds.includes(filterRepo)
+      ? filterRepo
+      : repos && repos.length > 0
+        ? repos[0]!.id
+        : NONE_REPO;
 
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");

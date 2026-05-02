@@ -12,6 +12,7 @@ import { cx } from "../util/classnames.js";
 import { SessionActionsMenu } from "../chat/SessionActionsMenu.js";
 import { usePullToRefresh } from "../pwa/gestures.js";
 import { Spinner } from "../components/Spinner.js";
+import { RepoTabs } from "./RepoTabs.js";
 
 const STATUS_DOT: Record<SessionStatus, string> = {
   pending: "bg-zinc-500",
@@ -56,9 +57,11 @@ interface Props {
   filterStatus?: FilterStatus;
   filterMode?: FilterMode;
   filterBucket?: FilterBucket;
+  filterRepo: string | null;
+  onFilterRepo: (repoId: string | null) => void;
 }
 
-export function ListView({ filterStatus = "all", filterMode = "all", filterBucket = "all" }: Props) {
+export function ListView({ filterStatus = "all", filterMode = "all", filterBucket = "all", filterRepo, onFilterRepo }: Props) {
   const activeId = useConnectionStore((s) => s.activeId);
   const conn = useRootStore((s) => s.getActiveConnection());
   const sessionsMap = useSessionStore(
@@ -117,6 +120,9 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
     if (filterBucket !== "all") {
       list = list.filter((s) => s.bucket === filterBucket);
     }
+    if (filterRepo !== null) {
+      list = list.filter((s) => s.repoId === filterRepo);
+    }
     if (statusFilter.size > 0) {
       list = list.filter((s) => statusFilter.has(s.status));
     }
@@ -133,7 +139,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
       );
     }
     return list;
-  }, [sessions, filterStatus, filterMode, filterBucket, statusFilter, modeFilter, search, sortBy, sortDir]);
+  }, [sessions, filterStatus, filterMode, filterBucket, filterRepo, statusFilter, modeFilter, search, sortBy, sortDir]);
 
   const navigate = (slug: string) => {
     const { query } = parseUrl();
@@ -155,6 +161,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
 
   return (
     <div className="flex flex-col h-full">
+      <RepoTabs filterRepo={filterRepo} onFilterRepo={onFilterRepo} />
       <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border bg-bg-soft">
         <input
           type="search"

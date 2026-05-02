@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type ReactElement } from "react";
+import { useState, useEffect, useMemo, useCallback, type ReactElement } from "react";
 import { AppLayout } from "./views/layout.js";
 import { Header } from "./views/header.js";
 import { Sidebar } from "./views/sidebar.js";
@@ -120,6 +120,19 @@ export function App(): ReactElement {
   }), [activeId, paletteSessions]);
 
   const { view, sessionSlug } = urlState;
+  const filterRepo = urlState.query["repo"] ?? null;
+
+  const setFilterRepo = useCallback((repoId: string | null) => {
+    const nextQuery = { ...urlState.query };
+    if (repoId === null) delete nextQuery["repo"];
+    else nextQuery["repo"] = repoId;
+    setUrlState({
+      connectionId: urlState.connectionId,
+      view: urlState.view,
+      sessionSlug: urlState.sessionSlug ?? null,
+      query: nextQuery,
+    });
+  }, [urlState]);
 
   if (!hydrated) {
     return <LoadingScreen />;
@@ -166,6 +179,8 @@ export function App(): ReactElement {
             filterStatus={filterStatus}
             filterMode={filterMode}
             filterBucket={filterBucket}
+            filterRepo={filterRepo}
+            onFilterRepo={setFilterRepo}
             sessionSlug={sessionSlug ?? null}
             api={api}
           />

@@ -26,32 +26,51 @@ interface Props {
   filterStatus?: FilterStatus;
   filterMode?: FilterMode;
   filterBucket?: FilterBucket;
+  filterRepo: string | null;
+  onFilterRepo: (repoId: string | null) => void;
   sessionSlug?: string | null;
   api?: ApiClient | null;
 }
 
-export function ViewSwitcher({ view, filterStatus, filterMode, filterBucket, sessionSlug, api }: Props) {
+export function ViewSwitcher({ view, filterStatus, filterMode, filterBucket, filterRepo, onFilterRepo, sessionSlug, api }: Props) {
   const { query } = parseUrl();
   const dagId = query["dag"];
 
+  const list = (
+    <ListView
+      filterStatus={filterStatus}
+      filterMode={filterMode}
+      filterBucket={filterBucket}
+      filterRepo={filterRepo}
+      onFilterRepo={onFilterRepo}
+    />
+  );
+
   switch (view) {
     case "list":
-      return <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
+      return list;
     case "kanban":
-      return <KanbanView filterStatus={filterStatus} filterMode={filterMode} />;
+      return (
+        <KanbanView
+          filterStatus={filterStatus}
+          filterMode={filterMode}
+          filterRepo={filterRepo}
+          onFilterRepo={onFilterRepo}
+        />
+      );
     case "dag":
       return <DagCanvasView sessionSlug={sessionSlug} dagId={dagId} />;
     case "ship":
       return <ShipPipelineView sessionSlug={sessionSlug} />;
     case "new":
-      return api ? <NewSessionView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
+      return api ? <NewSessionView api={api} filterRepo={filterRepo} /> : list;
     case "doctor":
-      return api ? <DoctorView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
+      return api ? <DoctorView api={api} /> : list;
     case "loops":
-      return api ? <LoopsView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
+      return api ? <LoopsView api={api} /> : list;
     case "inbox":
-      return api ? <InboxView api={api} /> : <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
+      return api ? <InboxView api={api} /> : list;
     default:
-      return <ListView filterStatus={filterStatus} filterMode={filterMode} filterBucket={filterBucket} />;
+      return list;
   }
 }
