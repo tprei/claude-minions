@@ -64,6 +64,18 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
       useDagStore.getState().replaceAll(conn.id, snapshot.dags);
     }
 
+    // Always force a fresh REST fetch on attach. The snapshot may be empty
+    // (first attach for this connection / cache cleared) or stale (engine
+    // produced new sessions/dags while the tab was closed). Without this,
+    // fresh data only arrives via SSE's onReconnect callback, which races
+    // the user's first navigation — they can land on a DAG view and see
+    // "No DAGs available" before SSE has finished opening.
+    try {
+      await refetch(conn, isDisposed);
+    } catch {
+      // non-fatal — SSE onReconnect will retry on first connect
+    }
+
     await fetchVersion(conn, isDisposed);
     await fetchRuntime(conn, isDisposed);
 
