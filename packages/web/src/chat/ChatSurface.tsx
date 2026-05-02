@@ -19,7 +19,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
 import { Spinner } from "../components/Spinner.js";
-import { useSwipeToDismiss } from "../pwa/gestures.js";
+import { useSwipeToDismiss, hasScrollableAncestor } from "../pwa/gestures.js";
 import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { cx } from "../util/classnames.js";
 import type { SlashCommand, SlashContext, SlashUiResult } from "./slashCommands.js";
@@ -51,19 +51,6 @@ const DEFAULT_WIDTH = 380;
 const CHAT_PANEL = "chat";
 const MOBILE_QUERY = "(max-width: 767px)";
 const SWIPE_THRESHOLD = 60;
-
-function hasHorizontalScrollAncestor(target: EventTarget | null, root: HTMLElement): boolean {
-  let node: Element | null = target instanceof Element ? target : null;
-  while (node && node !== root) {
-    const style = window.getComputedStyle(node);
-    const ox = style.overflowX;
-    if ((ox === "auto" || ox === "scroll") && node.scrollWidth > node.clientWidth) {
-      return true;
-    }
-    node = node.parentElement;
-  }
-  return false;
-}
 
 function clampWidth(n: number): number {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, n));
@@ -641,7 +628,7 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
     let start: { x: number; y: number; ignore: boolean } | null = null;
 
     const onPointerDown = (e: PointerEvent): void => {
-      const ignore = hasHorizontalScrollAncestor(e.target, el);
+      const ignore = hasScrollableAncestor(e.target, el, "x");
       start = { x: e.clientX, y: e.clientY, ignore };
     };
 
