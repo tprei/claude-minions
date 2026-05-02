@@ -4,7 +4,7 @@ import type { VapidPublicKeyResponse } from "@minions/shared";
 interface PushApi {
   get: (path: string) => Promise<unknown>;
   post: (path: string, body: unknown) => Promise<unknown>;
-  del: (path: string) => Promise<unknown>;
+  del: (path: string, body?: unknown) => Promise<unknown>;
 }
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -52,7 +52,7 @@ export async function unregisterPush(api: PushApi): Promise<void> {
   const reg = await navigator.serviceWorker.ready;
   const subscription = await reg.pushManager.getSubscription();
   if (subscription) {
-    await api.del("/api/push-subscribe");
+    await api.del("/api/push-subscribe", { endpoint: subscription.endpoint });
     await subscription.unsubscribe();
   }
 }

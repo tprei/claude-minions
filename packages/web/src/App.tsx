@@ -46,8 +46,11 @@ function makeApi(conn: Connection) {
     async patch(path: string, body: unknown): Promise<unknown> {
       return apiFetch(conn, path, { method: "PATCH", body: JSON.stringify(body) });
     },
-    async del(path: string): Promise<unknown> {
-      return apiFetch(conn, path, { method: "DELETE" });
+    async del(path: string, body?: unknown): Promise<unknown> {
+      return apiFetch(conn, path, {
+        method: "DELETE",
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
     },
   };
 }
