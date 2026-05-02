@@ -337,6 +337,57 @@ describe("DagScheduler.watchdogTick", () => {
     assert.equal(audit.filter((a) => a.action === "dag.watchdog").length, 0);
   });
 
+  test("running node with completed session is LEFT ALONE so onTerminal can advance it", async () => {
+    // Regression: watchdog used to flip running→failed for any TERMINAL session
+    // status (including completed). That raced the normal terminal flow
+    // (qualityGate → onTerminal) and triggered cascadeUpstreamFailures to
+    // cancel every dependent before the node reached pr-open.
+    const node = makeNode("A", "running", { sessionSlug: "sess-A" });
+    const dag = makeDag("dag-completed-race", [node]);
+    const repo = makeMockRepo(dag);
+    const sessions = new Map<string, Session>([
+      ["sess-A", makeSession("sess-A", "completed")],
+    ]);
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    const watchdogDb = makeTempDb();
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"), new AutomationJobRepo(watchdogDb));
+
+    await scheduler.watchdogTick();
+
+    assert.equal(
+      repo.getNode("A")?.status,
+      "running",
+      "completed-session running node must NOT be flipped — terminal handlers will advance it",
+    );
+    assert.equal(
+      audit.filter((a) => a.action === "dag.watchdog").length,
+      0,
+      "no watchdog audit for completed sessions",
+    );
+  });
+
+  test("running node with cancelled session is flipped to failed", async () => {
+    const node = makeNode("A", "running", { sessionSlug: "sess-A" });
+    const dag = makeDag("dag-cancelled", [node]);
+    const repo = makeMockRepo(dag);
+    const sessions = new Map<string, Session>([
+      ["sess-A", makeSession("sess-A", "cancelled")],
+    ]);
+    const audit: AuditCall[] = [];
+    const ctx = makeMockCtx(sessions, audit);
+    const watchdogDb = makeTempDb();
+    const scheduler = new DagScheduler(repo as unknown as DagRepo, ctx, createLogger("error"), new AutomationJobRepo(watchdogDb));
+
+    await scheduler.watchdogTick();
+
+    assert.equal(repo.getNode("A")?.status, "failed");
+    assert.equal(
+      audit.find((a) => a.action === "dag.watchdog")?.detail?.["sessionStatus"],
+      "cancelled",
+    );
+  });
+
   test("ready and pending nodes are no-op for watchdog", async () => {
     const ready = makeNode("R", "ready", { sessionSlug: "sess-R" });
     const pending = makeNode("P", "pending");

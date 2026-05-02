@@ -299,6 +299,16 @@ export class DagScheduler {
           const session = this.ctx.sessions.get(node.sessionSlug);
           if (!session) continue;
           if (!TERMINAL_SESSION_STATUSES.has(session.status)) continue;
+          // Only flip to failed when the session terminated unhappily.
+          // "completed" is the happy-path turn_completed event — the
+          // completion handlers (qualityGate → onTerminal) advance the
+          // node to ci-pending or pr-open within milliseconds. Flipping it
+          // to "failed" here races those handlers and triggers
+          // cascadeUpstreamFailures to nuke every dependent before the
+          // normal flow gets a chance to run.
+          if (session.status !== "failed" && session.status !== "cancelled") {
+            continue;
+          }
           const from = node.status;
           this.repo.updateNode(node.id, {
             status: "failed",
