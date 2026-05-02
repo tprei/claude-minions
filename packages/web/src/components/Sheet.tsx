@@ -1,8 +1,14 @@
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import { cx } from "../util/classnames.js";
-import { useSwipeToDismiss } from "../pwa/gestures.js";
+import { useDragToDismiss } from "../pwa/gestures.js";
 
 type SheetSide = "bottom" | "right" | "left";
+
+const sideDirection: Record<SheetSide, "down" | "right" | "left"> = {
+  bottom: "down",
+  right: "right",
+  left: "left",
+};
 
 interface SheetProps {
   open: boolean;
@@ -43,10 +49,20 @@ export function Sheet({ open, onClose, side = "bottom", title, children, classNa
     return () => document.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
-  useSwipeToDismiss(containerRef, onClose, {
-    direction: "down",
-    enabled: () => side === "bottom" && (containerRef.current?.scrollTop ?? 0) === 0,
+  const { dragging, offset, progress } = useDragToDismiss(containerRef, onClose, {
+    direction: sideDirection[side],
+    enabled:
+      side === "bottom"
+        ? () => (containerRef.current?.scrollTop ?? 0) === 0
+        : undefined,
   });
+
+  const panelTransform =
+    side === "bottom"
+      ? `translateY(${offset}px)`
+      : side === "right"
+        ? `translateX(${offset}px)`
+        : `translateX(${-offset}px)`;
 
   return (
     <div
@@ -57,20 +73,24 @@ export function Sheet({ open, onClose, side = "bottom", title, children, classNa
     >
       <div
         className={cx(
-          "absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300",
-          open ? "opacity-100" : "opacity-0",
+          "absolute inset-0 bg-black/50 backdrop-blur-sm",
+          !dragging && "transition-opacity duration-300",
+          !dragging && (open ? "opacity-100" : "opacity-0"),
         )}
+        style={dragging ? { opacity: open ? Math.max(0.5, 1 - progress * 0.5) : 0 } : undefined}
         onClick={onClose}
         aria-hidden="true"
       />
       <div
         ref={containerRef}
         className={cx(
-          "absolute card shadow-2xl transition-transform duration-300",
+          "absolute card shadow-2xl",
           sideClass[side],
-          open ? slideIn[side] : slideOut[side],
+          !dragging && "transition-transform duration-300",
+          !dragging && (open ? slideIn[side] : slideOut[side]),
           className,
         )}
+        style={dragging ? { transform: panelTransform } : undefined}
       >
         {side === "bottom" && (
           <div className="flex justify-center mt-1 mb-2">
