@@ -69,20 +69,14 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"updatedAt" | "cost">("updatedAt");
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
-  const [refreshing, setRefreshing] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const onRefresh = useCallback(async () => {
     if (!conn) return;
-    setRefreshing(true);
-    try {
-      await refetchConnection(conn);
-    } finally {
-      setRefreshing(false);
-    }
+    await refetchConnection(conn);
   }, [conn]);
 
-  usePullToRefresh(scrollRef, onRefresh);
+  const pull = usePullToRefresh(scrollRef, onRefresh);
 
   const handleSort = (key: "updatedAt" | "cost") => {
     if (sortBy === key) {
@@ -207,13 +201,21 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterBucke
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto relative">
         <div
-          aria-hidden={!refreshing}
+          aria-hidden={!pull.refreshing && !pull.dragging}
           className={cx(
-            "absolute top-0 left-0 right-0 flex justify-center pointer-events-none transition-transform duration-200 z-10",
-            refreshing ? "translate-y-2" : "-translate-y-full",
+            "absolute top-0 left-0 right-0 flex justify-center pointer-events-none z-10",
+            !pull.dragging && "transition-transform duration-200",
           )}
+          style={{
+            transform: `translateY(${pull.dragging ? pull.offset - 32 : pull.refreshing ? 8 : -32}px)`,
+          }}
         >
-          <span className="rounded-full bg-bg-soft border border-border shadow p-1.5">
+          <span
+            className={cx(
+              "rounded-full border shadow p-1.5",
+              pull.progress >= 1 ? "bg-accent text-white border-accent" : "bg-bg-soft border-border",
+            )}
+          >
             <Spinner size="sm" />
           </span>
         </div>
