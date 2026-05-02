@@ -147,11 +147,29 @@ export function createRestackDescendantsHandler(
         await ctx.landing.openForReview(desc.slug);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        let rollbackError: string | null = null;
+        try {
+          await ctx.landing.editPRBase(desc.slug, oldBase);
+        } catch (rollbackErr) {
+          rollbackError =
+            rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+        }
+        ctx.sessions.appendAttention(desc.slug, {
+          kind: "rebase_conflict",
+          message: `descendant push failed during restack; PR base rolled back to ${oldBase}: ${message}`,
+          raisedAt: now().toISOString(),
+        });
         ctx.audit.record(
           "system",
-          "restack-descendants.push-failed",
+          "dag.restack.failed",
           { kind: "session", id: desc.slug },
-          { mergedSessionSlug: mergedSlug, newBase, error: message },
+          {
+            mergedSessionSlug: mergedSlug,
+            newBase,
+            rolledBackTo: oldBase,
+            error: message,
+            rollbackError,
+          },
         );
         continue;
       }

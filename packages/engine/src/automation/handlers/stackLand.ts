@@ -5,6 +5,13 @@ import type { AutomationJobRepo } from "../../store/repos/automationJobRepo.js";
 import type { JobHandler } from "../types.js";
 
 const POLL_DELAY_MS = 60_000;
+const STACK_LAND_MAX_ATTEMPTS = 5;
+
+function readStackLandAttempts(node: DAGNode): number {
+  const raw = node.metadata?.["stackLandAttempts"];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return 0;
+  return Math.floor(raw);
+}
 
 interface StackLandPayload {
   dagId: string;
@@ -72,9 +79,16 @@ export function createStackLandHandler(deps: StackLandHandlerDeps): JobHandler {
     if (dag.status !== "active" && dag.status !== "completed") return;
 
     const sorted = topoSort(dag.nodes);
+    let anyStuck = false;
 
     for (const node of sorted) {
       if (node.status === "merged") continue;
+
+      const attempts = readStackLandAttempts(node);
+      if (attempts >= STACK_LAND_MAX_ATTEMPTS) {
+        anyStuck = true;
+        continue;
+      }
 
       if (node.status !== "pr-open") {
         enqueueStackLand(deps.automationRepo, dagId, POLL_DELAY_MS, now);
@@ -118,6 +132,11 @@ export function createStackLandHandler(deps: StackLandHandlerDeps): JobHandler {
         // permanently blocks the merge.
         await ctx.landing.land(node.sessionSlug, "squash", true);
       } catch (err) {
+        const nextAttempts = attempts + 1;
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        deps.dagRepo.updateNode(node.id, {
+          metadata: { ...node.metadata, stackLandAttempts: nextAttempts },
+        });
         ctx.audit.record(
           "system",
           "dag.stack-land.merge-failed",
@@ -125,9 +144,33 @@ export function createStackLandHandler(deps: StackLandHandlerDeps): JobHandler {
           {
             nodeId: node.id,
             sessionSlug: node.sessionSlug,
-            error: err instanceof Error ? err.message : String(err),
+            attempt: nextAttempts,
+            error: errorMessage,
           },
         );
+        if (nextAttempts >= STACK_LAND_MAX_ATTEMPTS) {
+          const parentSlug = dag.rootSessionSlug;
+          if (parentSlug && ctx.sessions.get(parentSlug)) {
+            ctx.sessions.appendAttention(parentSlug, {
+              kind: "manual_intervention",
+              message: `stack-land for node ${node.id} (${node.sessionSlug}) failed after ${nextAttempts} attempts: ${errorMessage}`,
+              raisedAt: now().toISOString(),
+            });
+          }
+          ctx.audit.record(
+            "system",
+            "dag.stack-land.escalated",
+            { kind: "dag", id: dagId },
+            {
+              nodeId: node.id,
+              sessionSlug: node.sessionSlug,
+              attempts: nextAttempts,
+              error: errorMessage,
+            },
+          );
+          anyStuck = true;
+          continue;
+        }
         enqueueStackLand(deps.automationRepo, dagId, POLL_DELAY_MS, now);
         return;
       }
@@ -139,6 +182,16 @@ export function createStackLandHandler(deps: StackLandHandlerDeps): JobHandler {
         { kind: "dag", id: dagId },
         { nodeId: node.id, sessionSlug: node.sessionSlug },
       );
+    }
+
+    if (anyStuck) {
+      ctx.audit.record(
+        "system",
+        "dag.stack-land.complete-with-stuck",
+        { kind: "dag", id: dagId },
+        { nodeCount: dag.nodes.length },
+      );
+      return;
     }
 
     ctx.audit.record(

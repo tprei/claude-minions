@@ -106,6 +106,7 @@ export function createDagSubsystem(
     scheduler,
     ctx,
     log.child({ subsystem: "dag-terminal" }),
+    automationRepo,
   );
   const mergedHandler = new DagMergedHandler(
     repo,

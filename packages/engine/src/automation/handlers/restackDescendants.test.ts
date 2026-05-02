@@ -341,6 +341,80 @@ describe("restackDescendants handler", () => {
     }
   });
 
+  it("rolls back PR base + raises rebase_conflict + audits restack.failed when openForReview throws", async () => {
+    const env = setup();
+    try {
+      const merged = makeSession({
+        slug: "parent",
+        branch: "feat-parent",
+        baseBranch: "main",
+      });
+      const child = makeSession({
+        slug: "child",
+        branch: "feat-child",
+        baseBranch: "feat-parent",
+        prBase: "feat-parent",
+      });
+
+      const { ctx, editPRBaseCalls, openForReviewCalls, appendedAttention, audits } =
+        makeCtx({
+          sessions: [merged, child],
+          openForReviewFailures: { child: "remote rejected: hook failure" },
+        });
+
+      const handler = createRestackDescendantsHandler({
+        automationRepo: env.automationRepo,
+        dagRepo: env.dagRepo,
+      });
+      const job = enqueueRestackDescendants(env.automationRepo, "parent");
+      await handler(env.automationRepo.get(job.id)!, ctx);
+
+      assert.deepEqual(
+        editPRBaseCalls,
+        [
+          { slug: "child", newBase: "main" },
+          { slug: "child", newBase: "feat-parent" },
+        ],
+        "editPRBase rolled back to original base after openForReview failure",
+      );
+      assert.deepEqual(openForReviewCalls, ["child"]);
+
+      const conflictAttention = appendedAttention.filter(
+        (a) => a.slug === "child" && a.flag.kind === "rebase_conflict",
+      );
+      assert.equal(
+        conflictAttention.length,
+        1,
+        "rebase_conflict attention raised on descendant",
+      );
+      assert.match(
+        conflictAttention[0]!.flag.message,
+        /push failed during restack/,
+      );
+
+      const restackFailed = audits.filter((a) => a.action === "dag.restack.failed");
+      assert.equal(restackFailed.length, 1, "restack.failed audit emitted");
+      assert.equal(restackFailed[0]!.detail["rolledBackTo"], "feat-parent");
+      assert.match(String(restackFailed[0]!.detail["error"]), /hook failure/);
+      assert.equal(
+        restackFailed[0]!.detail["rollbackError"],
+        null,
+        "rollback succeeded so rollbackError is null",
+      );
+
+      const stackLandJobs = env.automationRepo
+        .findByTarget("dag", "dag-child")
+        .filter((j) => j.kind === "stack-land");
+      assert.equal(
+        stackLandJobs.length,
+        0,
+        "no stack-land enqueued after openForReview failure",
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it("persists rebase_conflict attention when descendant rebase fails", async () => {
     const env = setup();
     try {

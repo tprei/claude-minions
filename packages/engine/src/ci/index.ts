@@ -490,6 +490,19 @@ export function createCiSubsystem(deps: SubsystemDeps): SubsystemResult<CiSubsys
         if (summary.state === "passing") {
           const next = applyCiPassedAttention(afterFailedUpdate.attention, raisedAt);
           if (next !== null) sessionRepo.setAttention(slug, next);
+          if (afterFailedUpdate.metadata["ciSelfHealConcluded"] === "exhausted") {
+            ctx.sessions.setMetadata(slug, {
+              selfHealCi: true,
+              ciSelfHealAttempts: 0,
+              ciSelfHealConcluded: undefined,
+            });
+            ctx.audit.record(
+              "system",
+              "ci.self-heal.rearmed",
+              { kind: "session", id: slug },
+              { reason: "ci-passed-after-exhausted" },
+            );
+          }
         } else if (afterFailedUpdate.attention.some((a) => a.kind === "ci_passed")) {
           const next = afterFailedUpdate.attention.filter((a) => a.kind !== "ci_passed");
           sessionRepo.setAttention(slug, next);
