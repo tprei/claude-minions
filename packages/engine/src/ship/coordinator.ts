@@ -11,7 +11,7 @@ import {
   VERIFY_DIRECTIVE,
   DONE_DIRECTIVE,
 } from "./stages.js";
-import { parseDagFromTranscript } from "../dag/parser.js";
+import { parseDagFromTranscriptDetailed } from "../dag/parser.js";
 import { EngineError } from "../errors.js";
 import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { enqueueStackLand } from "../automation/handlers/stackLand.js";
@@ -72,6 +72,7 @@ export class ShipCoordinator {
   private readonly stmtCountTranscript: Database.Statement;
   private readonly stmtMaxSeq: Database.Statement;
   private readonly verifyPollers = new Map<string, VerifyPollState>();
+  private readonly warnedDagBlocks = new Map<string, Set<string>>();
   private readonly busUnsubscribe: () => void;
 
   constructor(
@@ -391,7 +392,35 @@ export class ShipCoordinator {
 
   private hasParseableDagBlock(slug: string): boolean {
     const events = this.ctx.sessions.transcript(slug);
-    return parseDagFromTranscript(events) !== null;
+    const result = parseDagFromTranscriptDetailed(events);
+    if (result.kind === "ok") return true;
+    if (result.kind === "error") this.surfaceParseRejection(slug, result.reason, result.block);
+    return false;
+  }
+
+  /**
+   * When the plan-stage exit gate fails because a dag block exists but was
+   * rejected by the parser, emit an actionable status event so the operator
+   * (and the agent on its next turn) sees *why*. Deduplicates per slug+block
+   * so we don't spam on every transcript event.
+   */
+  private surfaceParseRejection(slug: string, reason: string, block: string): void {
+    let warned = this.warnedDagBlocks.get(slug);
+    if (!warned) {
+      warned = new Set<string>();
+      this.warnedDagBlocks.set(slug, warned);
+    }
+    const key = block.length > 0 ? block : reason;
+    if (warned.has(key)) return;
+    warned.add(key);
+
+    const text =
+      `DAG block rejected by parser: ${reason}. ` +
+      `Re-emit a corrected \`\`\`dag block. Note: \`dependsOn\` may list multiple parents — ` +
+      `the scheduler will base the child branch on dependsOn[0], so put the most foundational ` +
+      `predecessor first.`;
+    this.insertStatusEvent(slug, text, { kind: "dag_parse_rejected", reason });
+    this.log.warn("ship plan stage: dag block rejected", { slug, reason });
   }
 
   private allDagNodesLanded(slug: string): boolean {

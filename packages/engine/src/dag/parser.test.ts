@@ -13,7 +13,7 @@ import { createLogger } from "../logger.js";
 import { EventBus } from "../bus/eventBus.js";
 import { KeyedMutex } from "../util/mutex.js";
 import { createDagSubsystem } from "./index.js";
-import { parseDagFromTranscript } from "./parser.js";
+import { parseDagFromTranscript, parseDagFromTranscriptDetailed } from "./parser.js";
 import type { SubsystemDeps } from "../wiring.js";
 import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 
@@ -277,7 +277,7 @@ describe("dag transcript subscriber", () => {
 
     const warns = statusWarnings(db, SHIP_SLUG);
     assert.equal(warns.length, 1, "exactly one warning emitted");
-    assert.match(warns[0]!.text, /failed to parse/);
+    assert.match(warns[0]!.text, /rejected by parser/);
   });
 
   test("a valid block emitted twice only creates the DAG once", () => {
@@ -486,9 +486,9 @@ describe("parseDagFromTranscript (unit)", () => {
     assert.equal(parseDagFromTranscript([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]), null);
   });
 
-  test("rejects multi-parent nodes until stack base selection supports them", () => {
+  test("accepts multi-parent nodes; scheduler bases the child branch on dependsOn[0]", () => {
     const block = JSON.stringify({
-      title: "Bad",
+      title: "OK",
       goal: "g",
       nodes: [
         { title: "schema", prompt: "do schema", dependsOn: [] },
@@ -497,6 +497,78 @@ describe("parseDagFromTranscript (unit)", () => {
       ],
     });
 
-    assert.equal(parseDagFromTranscript([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]), null);
+    const parsed = parseDagFromTranscript([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]);
+    assert.ok(parsed, "multi-parent dag should parse");
+    const integration = parsed!.nodes.find((n) => n.title === "integration");
+    assert.deepEqual(integration?.dependsOn, ["schema", "ui"]);
+  });
+});
+
+describe("parseDagFromTranscriptDetailed", () => {
+  function ev(seq: number, text: string): TranscriptEvent {
+    return {
+      id: `e-${seq}`,
+      sessionSlug: "test",
+      seq,
+      turn: 0,
+      timestamp: "2026-01-01T00:00:00Z",
+      kind: "assistant_text",
+      text,
+    };
+  }
+
+  test("returns no-blocks when transcript has no dag fences", () => {
+    const result = parseDagFromTranscriptDetailed([ev(0, "no fences here")]);
+    assert.equal(result.kind, "no-blocks");
+  });
+
+  test("returns ok with the parsed dag on a valid block", () => {
+    const block = JSON.stringify({
+      title: "Plan",
+      goal: "g",
+      nodes: [{ title: "n", prompt: "do n", dependsOn: [] }],
+    });
+    const result = parseDagFromTranscriptDetailed([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]);
+    assert.equal(result.kind, "ok");
+    if (result.kind === "ok") assert.equal(result.dag.title, "Plan");
+  });
+
+  test("surfaces a specific reason on cycle", () => {
+    const block = JSON.stringify({
+      title: "Bad",
+      goal: "g",
+      nodes: [
+        { title: "a", prompt: "do a", dependsOn: ["b"] },
+        { title: "b", prompt: "do b", dependsOn: ["a"] },
+      ],
+    });
+    const result = parseDagFromTranscriptDetailed([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]);
+    assert.equal(result.kind, "error");
+    if (result.kind === "error") assert.match(result.reason, /cycle/);
+  });
+
+  test("surfaces a specific reason on duplicate title", () => {
+    const block = JSON.stringify({
+      title: "Bad",
+      goal: "g",
+      nodes: [
+        { title: "same", prompt: "first", dependsOn: [] },
+        { title: "same", prompt: "second", dependsOn: [] },
+      ],
+    });
+    const result = parseDagFromTranscriptDetailed([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]);
+    assert.equal(result.kind, "error");
+    if (result.kind === "error") assert.match(result.reason, /duplicate node title/);
+  });
+
+  test("surfaces a specific reason on unknown dep", () => {
+    const block = JSON.stringify({
+      title: "Bad",
+      goal: "g",
+      nodes: [{ title: "api", prompt: "build api", dependsOn: ["schema"] }],
+    });
+    const result = parseDagFromTranscriptDetailed([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]);
+    assert.equal(result.kind, "error");
+    if (result.kind === "error") assert.match(result.reason, /unknown node `schema`/);
   });
 });
