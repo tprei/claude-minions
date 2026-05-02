@@ -200,7 +200,7 @@ export const FEATURE_PROBES: Record<FeatureFlag, FeatureProbe> = {
 
   split: () => pending("not implemented"),
 
-  "voice-input": () => pending("not implemented"),
+  "voice-input": () => READY,
 };
 
 export interface FeatureSets {
