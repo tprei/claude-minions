@@ -53,13 +53,19 @@ function setup(): Env {
   };
 }
 
-function createDagWithNodes(env: Env, dagId: string, nodes: NodeSpec[]): string[] {
+function createDagWithNodes(
+  env: Env,
+  dagId: string,
+  nodes: NodeSpec[],
+  rootSessionSlug?: string,
+): string[] {
   const now = new Date().toISOString();
   env.dagRepo.insert({
     id: dagId,
     title: "stack-land test",
     goal: "land in order",
     status: "active",
+    rootSessionSlug,
     metadata: {},
     createdAt: now,
     updatedAt: now,
@@ -145,6 +151,7 @@ interface MockCtxOpts {
   sessions: Session[];
   landResult?: "ok" | "throw";
   landError?: string;
+  landFailureBySlug?: Record<string, string | null>;
 }
 
 interface MockCtxResult {
@@ -152,6 +159,7 @@ interface MockCtxResult {
   landCalls: string[];
   landArgs: Array<{ slug: string; strategy?: "merge" | "squash" | "rebase"; force?: boolean }>;
   audits: { action: string; detail: Record<string, unknown> }[];
+  appendedAttention: { slug: string; flag: AttentionFlag }[];
 }
 
 function makeCtx(opts: MockCtxOpts): MockCtxResult {
@@ -159,15 +167,26 @@ function makeCtx(opts: MockCtxOpts): MockCtxResult {
   const landCalls: string[] = [];
   const landArgs: Array<{ slug: string; strategy?: "merge" | "squash" | "rebase"; force?: boolean }> = [];
   const audits: { action: string; detail: Record<string, unknown> }[] = [];
+  const appendedAttention: { slug: string; flag: AttentionFlag }[] = [];
 
   const ctx = {
     sessions: {
       get: (slug: string) => sessions.get(slug) ?? null,
+      appendAttention: (slug: string, flag: AttentionFlag) => {
+        appendedAttention.push({ slug, flag });
+        const s = sessions.get(slug);
+        if (s) sessions.set(slug, { ...s, attention: [...s.attention, flag] });
+      },
     },
     landing: {
       land: async (slug: string, strategy?: "merge" | "squash" | "rebase", force?: boolean) => {
         landCalls.push(slug);
         landArgs.push({ slug, strategy, force });
+        const perSlug = opts.landFailureBySlug?.[slug];
+        if (perSlug !== undefined) {
+          if (perSlug !== null) throw new Error(perSlug);
+          return;
+        }
         if (opts.landResult === "throw") {
           throw new Error(opts.landError ?? "merge conflict");
         }
@@ -185,7 +204,35 @@ function makeCtx(opts: MockCtxOpts): MockCtxResult {
     },
   } as unknown as EngineContext;
 
-  return { ctx, landCalls, landArgs, audits };
+  return { ctx, landCalls, landArgs, audits, appendedAttention };
+}
+
+function makeParentSession(slug: string): Session {
+  const now = new Date().toISOString();
+  return {
+    slug,
+    title: slug,
+    prompt: "ship",
+    mode: "ship",
+    status: "running",
+    attention: [],
+    quickActions: [],
+    stats: {
+      turns: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      costUsd: 0,
+      durationMs: 0,
+      toolCalls: 0,
+    },
+    provider: "mock",
+    createdAt: now,
+    updatedAt: now,
+    childSlugs: [],
+    metadata: {},
+  };
 }
 
 describe("stackLand handler", () => {
@@ -258,6 +305,36 @@ describe("stackLand handler", () => {
     }
   });
 
+  it("lands pr-open nodes after the dag has already been marked completed", async () => {
+    const env = setup();
+    try {
+      const nodeIds = createDagWithNodes(env, "dag-completed-pr-open", [
+        { id: "a", status: "pr-open", sessionSlug: "sess-a" },
+      ]);
+      env.dagRepo.update("dag-completed-pr-open", { status: "completed" });
+      const sessions = [
+        makeSession({ slug: "sess-a", prState: "open", attention: ["ci_passed"] }),
+      ];
+      const { ctx, landCalls, audits } = makeCtx({ sessions });
+
+      const handler = createStackLandHandler({
+        automationRepo: env.automationRepo,
+        dagRepo: env.dagRepo,
+      });
+      const job = enqueueStackLand(env.automationRepo, "dag-completed-pr-open");
+      await handler(env.automationRepo.get(job.id)!, ctx);
+
+      assert.deepEqual(landCalls, ["sess-a"], "completed dag with pr-open node still lands");
+      const updatedA = env.dagRepo.getNode(nodeIds[0]!);
+      assert.equal(updatedA?.status, "merged", "node marked merged");
+
+      const completes = audits.filter((a) => a.action === "dag.stack-land.complete");
+      assert.equal(completes.length, 1);
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it("re-enqueues when the next node is still pending", async () => {
     const env = setup();
     try {
@@ -324,6 +401,82 @@ describe("stackLand handler", () => {
         .findByTarget("dag", "dag-conflict")
         .filter((j) => j.id !== job.id && j.kind === "stack-land");
       assert.equal(followUps.length, 1, "re-enqueued after merge failure");
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it("escalates to manual_intervention after 5 consecutive merge failures and skips stuck node", async () => {
+    const env = setup();
+    try {
+      const parentSlug = "ship-parent";
+      const nodeIds = createDagWithNodes(
+        env,
+        "dag-escalate",
+        [
+          { id: "stuck", status: "pr-open", sessionSlug: "sess-stuck" },
+          { id: "ok", status: "pr-open", sessionSlug: "sess-ok" },
+        ],
+        parentSlug,
+      );
+      const sessions = [
+        makeParentSession(parentSlug),
+        makeSession({ slug: "sess-stuck", prState: "open", attention: ["ci_passed"] }),
+        makeSession({ slug: "sess-ok", prState: "open", attention: ["ci_passed"] }),
+      ];
+      const { ctx, audits, appendedAttention, landCalls } = makeCtx({
+        sessions,
+        landFailureBySlug: {
+          "sess-stuck": "merge conflict on stuck",
+          "sess-ok": null,
+        },
+      });
+
+      const handler = createStackLandHandler({
+        automationRepo: env.automationRepo,
+        dagRepo: env.dagRepo,
+      });
+
+      for (let i = 0; i < 5; i++) {
+        const job = enqueueStackLand(env.automationRepo, "dag-escalate");
+        await handler(env.automationRepo.get(job.id)!, ctx);
+      }
+
+      const stuckNode = env.dagRepo.getNode(nodeIds[0]!);
+      assert.equal(
+        stuckNode?.metadata["stackLandAttempts"],
+        5,
+        "stuck node tracks 5 attempts in metadata",
+      );
+      assert.equal(stuckNode?.status, "pr-open", "stuck node status remains pr-open");
+
+      const escalated = audits.filter((a) => a.action === "dag.stack-land.escalated");
+      assert.equal(escalated.length, 1, "exactly one escalation audit emitted");
+      assert.equal(escalated[0]!.detail["nodeId"], nodeIds[0]);
+      assert.equal(escalated[0]!.detail["attempts"], 5);
+
+      const manualIntervention = appendedAttention.filter(
+        (a) => a.slug === parentSlug && a.flag.kind === "manual_intervention",
+      );
+      assert.equal(
+        manualIntervention.length,
+        1,
+        "manual_intervention attention appended to ship parent",
+      );
+      assert.match(manualIntervention[0]!.flag.message, /stuck/);
+
+      const okNode = env.dagRepo.getNode(nodeIds[1]!);
+      assert.equal(okNode?.status, "merged", "non-stuck node still merged after escalation");
+      assert.ok(landCalls.includes("sess-ok"), "merge attempted on the unblocked node");
+
+      const finalJob = enqueueStackLand(env.automationRepo, "dag-escalate");
+      const beforeLandCount = landCalls.length;
+      await handler(env.automationRepo.get(finalJob.id)!, ctx);
+      const newLandCalls = landCalls.slice(beforeLandCount);
+      assert.ok(
+        !newLandCalls.includes("sess-stuck"),
+        "stuck node not re-attempted on subsequent ticks",
+      );
     } finally {
       env.cleanup();
     }

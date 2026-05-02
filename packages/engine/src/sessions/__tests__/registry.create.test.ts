@@ -17,8 +17,10 @@ import type {
 } from "../../providers/provider.js";
 import { registerProvider } from "../../providers/registry.js";
 import type { EngineContext } from "../../context.js";
+import { THINK_DIRECTIVE } from "../../ship/stages.js";
 
 const REGISTRY_CREATE_TEST_PROVIDER = "registry-create-budget-test";
+const spawnOpts: ProviderSpawnOpts[] = [];
 
 function buildIdleHandle(): ProviderHandle {
   let resolved = false;
@@ -46,7 +48,8 @@ function buildIdleHandle(): ProviderHandle {
 
 const stubProvider: AgentProvider = {
   name: REGISTRY_CREATE_TEST_PROVIDER,
-  async spawn(_opts: ProviderSpawnOpts) {
+  async spawn(opts: ProviderSpawnOpts) {
+    spawnOpts.push(opts);
     return buildIdleHandle();
   },
   async resume(_opts: ProviderResumeOpts) {
@@ -98,6 +101,7 @@ describe("SessionRegistry.create persists costBudgetUsd", () => {
   beforeEach(() => {
     db = makeInMemoryDb();
     bus = new EventBus();
+    spawnOpts.length = 0;
     workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "registry-create-budget-"));
     registry = new SessionRegistry({
       db,
@@ -167,6 +171,7 @@ describe("SessionRegistry.create runtime defaultSessionBudgetUsd fallback", () =
   beforeEach(() => {
     db = makeInMemoryDb();
     bus = new EventBus();
+    spawnOpts.length = 0;
     workspaceDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "registry-create-budget-fallback-"),
     );
@@ -253,6 +258,7 @@ describe("SessionRegistry.create defaultSelfHealCi runtime flag", () => {
   beforeEach(() => {
     db = makeInMemoryDb();
     bus = new EventBus();
+    spawnOpts.length = 0;
     workspaceDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "registry-create-selfheal-"),
     );
@@ -331,6 +337,33 @@ describe("SessionRegistry.create defaultSelfHealCi runtime flag", () => {
 
     assert.equal("selfHealCi" in session.metadata, false);
   });
+
+  test("ship spawn receives the think directive without changing the transcript seed", async () => {
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx(),
+    });
+    const prompt = "ship a vague reliability fix";
+
+    const session = await registry.create({
+      prompt,
+      mode: "ship",
+    });
+
+    assert.equal(spawnOpts.length, 1);
+    assert.match(spawnOpts[0]!.prompt, /^\[Ship stage: think\]/);
+    assert.match(spawnOpts[0]!.prompt, /Original request:\nship a vague reliability fix$/);
+    assert.ok(spawnOpts[0]!.prompt.includes(THINK_DIRECTIVE));
+
+    const first = registry.transcript(session.slug)[0];
+    assert.ok(first);
+    assert.equal(first.kind, "user_message");
+    if (first.kind !== "user_message") throw new Error("unexpected seed event kind");
+    assert.equal(first.text, prompt);
+  });
 });
 
 describe("SessionRegistry.create slug suggestions", () => {
@@ -342,6 +375,7 @@ describe("SessionRegistry.create slug suggestions", () => {
   beforeEach(() => {
     db = makeInMemoryDb();
     bus = new EventBus();
+    spawnOpts.length = 0;
     workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "registry-create-slug-"));
     registry = new SessionRegistry({
       db,

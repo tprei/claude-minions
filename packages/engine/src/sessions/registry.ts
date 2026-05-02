@@ -25,7 +25,7 @@ import { nowIso } from "../util/time.js";
 import { ensureDir } from "../util/fs.js";
 import { getProvider } from "../providers/registry.js";
 import type { ProviderHandle } from "../providers/provider.js";
-import { READ_ONLY_STAGES } from "../ship/stages.js";
+import { READ_ONLY_STAGES, THINK_DIRECTIVE } from "../ship/stages.js";
 import { TranscriptCollector } from "./transcriptCollector.js";
 import { ReplyQueue } from "./replyQueue.js";
 import {
@@ -80,6 +80,11 @@ export function derivePermissionTier(
     return "worktree";
   }
   return "full";
+}
+
+function buildInitialProviderPrompt(mode: SessionMode, prompt: string): string {
+  if (mode !== "ship") return prompt;
+  return `[Ship stage: think]\n\n${THINK_DIRECTIVE}\n\nOriginal request:\n${prompt}`;
 }
 
 function resolveBridgeScript(): string {
@@ -807,7 +812,7 @@ export class SessionRegistry {
       handle = await provider.spawn({
         sessionSlug: slug,
         worktree: worktreePath,
-        prompt: req.prompt,
+        prompt: buildInitialProviderPrompt(mode, req.prompt),
         modelHint: req.modelHint,
         env,
         preamble,
@@ -889,6 +894,14 @@ export class SessionRegistry {
       const now = nowIso();
       this.updateSessionStatus.run(finalStatus, now, now, slug);
       this.emitUpdated(this.buildSession(this.getSessionRow(slug)!));
+
+      if (finalStatus === "completed") {
+        try {
+          await ctx.quality?.runForSession(slug);
+        } catch (err) {
+          log.warn("quality.runForSession error", { slug, err: String(err) });
+        }
+      }
 
       try {
         await ctx.dags.onSessionTerminal(slug);

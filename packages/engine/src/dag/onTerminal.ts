@@ -5,8 +5,11 @@ import type { Logger } from "../logger.js";
 import type { DagScheduler } from "./scheduler.js";
 import { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 import { enqueueVerifyChild } from "../automation/handlers/verifyChild.js";
+import { enqueueDagTick } from "../automation/handlers/dagTick.js";
+import { isEngineError } from "../errors.js";
 
 const DEFAULT_CI_SELF_HEAL_MAX_ATTEMPTS = 3;
+const TRANSIENT_PUSH_RETRY_DELAY_MS = 60_000;
 
 function readSelfHealMaxAttempts(ctx: EngineContext): number {
   const raw = ctx.runtime.effective()["ciSelfHealMaxAttempts"];
@@ -22,6 +25,7 @@ export class DagTerminalHandler {
     private readonly scheduler: DagScheduler,
     private readonly ctx: EngineContext,
     private readonly log: Logger,
+    private readonly automationRepo?: AutomationJobRepo,
   ) {}
 
   async handle(session: Session): Promise<void> {
@@ -143,6 +147,25 @@ export class DagTerminalHandler {
       await this.scheduler.tick(dag.id);
     } catch (err) {
       const message = (err as Error).message;
+      if (isEngineError(err) && err.code === "transient_push_error") {
+        this.log.warn("dag node landing hit transient push error; will retry", {
+          dagId: dag.id,
+          nodeId: node.id,
+          err: message,
+        });
+        this.ctx.audit.record(
+          "system",
+          "dag.node.transient_push_retry",
+          { kind: "dag", id: dag.id },
+          { nodeId: node.id, sessionSlug: session.slug, error: message },
+        );
+        if (this.automationRepo) {
+          enqueueDagTick(this.automationRepo, dag.id, TRANSIENT_PUSH_RETRY_DELAY_MS);
+        } else {
+          await this.scheduler.tick(dag.id);
+        }
+        return;
+      }
       if (message.includes("rebase") || message.includes("conflict")) {
         this.repo.updateNode(node.id, {
           status: "rebase-conflict",

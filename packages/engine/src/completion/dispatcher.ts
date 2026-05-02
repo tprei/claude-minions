@@ -88,18 +88,6 @@ export function buildCompletionHandlers(ctx: EngineContext, log: Logger): Comple
   const quotaRetryDelayMs =
     (ctx.runtime.effective()["quotaRetryDelayMs"] as number | undefined) ?? 60_000;
 
-  const qualityGate: CompletionHandler = async (session) => {
-    if (session.status !== "completed") return;
-    try {
-      await ctx.quality.runForSession(session.slug);
-    } catch (err) {
-      log.warn("quality gate error in completion", {
-        slug: session.slug,
-        err: (err as Error).message,
-      });
-    }
-  };
-
   const quotaRecovery: CompletionHandler = async (session) => {
     const quotaFlag = session.attention.find((f) => f.kind === "quota_exhausted");
     if (!quotaFlag) return;
@@ -118,21 +106,10 @@ export function buildCompletionHandlers(ctx: EngineContext, log: Logger): Comple
     }, delay);
   };
 
-  const shipStageAdvance: CompletionHandler = async (session) => {
-    if (session.mode !== "ship") return;
-    if (session.status !== "completed") return;
-    await ctx.ship.onTurnCompleted(session.slug);
-  };
-
   const modeCompletion: CompletionHandler = async (_session) => {
   };
 
   const loopCompletion: CompletionHandler = async (_session) => {
-  };
-
-  const taskCompletion: CompletionHandler = async (session) => {
-    if (session.mode !== "dag-task") return;
-    await ctx.dags.onSessionTerminal(session.slug);
   };
 
   const digest: CompletionHandler = async (session) => {
@@ -267,15 +244,10 @@ export function buildCompletionHandlers(ctx: EngineContext, log: Logger): Comple
   const pendingFeedback: CompletionHandler = async (_session) => {
   };
 
-  void sleep;
-
   return [
-    qualityGate,
     quotaRecovery,
-    shipStageAdvance,
     modeCompletion,
     loopCompletion,
-    taskCompletion,
     digest,
     restackResolver,
     ciBabysit,

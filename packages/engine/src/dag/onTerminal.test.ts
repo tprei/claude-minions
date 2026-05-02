@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import type {
   AttentionFlag,
+  AutomationJob,
   DAG,
   DAGNode,
   PRSummary,
@@ -18,6 +19,8 @@ import type { DagScheduler } from "./scheduler.js";
 import { createLogger } from "../logger.js";
 import { migrations } from "../store/migrations.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
+import { EngineError } from "../errors.js";
+import type { AutomationJobRepo } from "../store/repos/automationJobRepo.js";
 
 function makeNode(id: string, status: DAGNode["status"], sessionSlug?: string): DAGNode {
   return {
@@ -132,6 +135,7 @@ interface MockCtxResult {
   metadataPatches: { slug: string; patch: Record<string, unknown> }[];
   appendedAttention: { slug: string; flag: AttentionFlag }[];
   waitingInputCalls: { slug: string; reason?: string }[];
+  audits: { action: string; detail: Record<string, unknown> }[];
 }
 
 function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
@@ -140,6 +144,7 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
   const metadataPatches: { slug: string; patch: Record<string, unknown> }[] = [];
   const appendedAttention: { slug: string; flag: AttentionFlag }[] = [];
   const waitingInputCalls: { slug: string; reason?: string }[] = [];
+  const audits: { action: string; detail: Record<string, unknown> }[] = [];
 
   const sessionStore = new Map<string, Session>();
   if (opts.parentSession) sessionStore.set(opts.parentSession.slug, opts.parentSession);
@@ -197,6 +202,16 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
         ciSelfHealMaxAttempts: opts.ciSelfHealMaxAttempts,
       }),
     },
+    audit: {
+      record: (
+        _actor: string,
+        action: string,
+        _target?: { kind: string; id: string },
+        detail?: Record<string, unknown>,
+      ) => {
+        audits.push({ action, detail: detail ?? {} });
+      },
+    },
     bus: {
       emit: (event: ServerEvent) => {
         emitted.push(event);
@@ -204,13 +219,56 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
     } as unknown as EventBus,
   } as unknown as EngineContext;
 
-  return { ctx, emitted, landCalls, metadataPatches, appendedAttention, waitingInputCalls };
+  return { ctx, emitted, landCalls, metadataPatches, appendedAttention, waitingInputCalls, audits };
 }
 
 function makeStubScheduler(): DagScheduler {
   return {
     tick: async () => {},
   } as unknown as DagScheduler;
+}
+
+interface FakeAutomationRepo {
+  repo: AutomationJobRepo;
+  enqueued: { kind: string; targetId: string | undefined; runAt: string; payload: Record<string, unknown> }[];
+}
+
+function makeFakeAutomationRepo(): FakeAutomationRepo {
+  const enqueued: FakeAutomationRepo["enqueued"] = [];
+  let counter = 0;
+  const repo = {
+    enqueue: (input: {
+      kind: string;
+      targetKind?: string;
+      targetId?: string;
+      payload?: Record<string, unknown>;
+      runAt?: string;
+    }): AutomationJob => {
+      const runAt = input.runAt ?? new Date().toISOString();
+      const payload = input.payload ?? {};
+      enqueued.push({
+        kind: input.kind,
+        targetId: input.targetId,
+        runAt,
+        payload,
+      });
+      counter += 1;
+      return {
+        id: `job-${counter}`,
+        kind: input.kind,
+        targetKind: input.targetKind,
+        targetId: input.targetId,
+        payload,
+        status: "pending",
+        attempts: 0,
+        maxAttempts: 5,
+        nextRunAt: runAt,
+        createdAt: runAt,
+        updatedAt: runAt,
+      };
+    },
+  } as unknown as AutomationJobRepo;
+  return { repo, enqueued };
 }
 
 describe("DagTerminalHandler", () => {
@@ -507,6 +565,54 @@ describe("DagTerminalHandler", () => {
       appendedAttention.some((a) => a.slug === "root-1" && a.flag.kind === "ci_failed"),
       "ci_failed flag raised on parent",
     );
+  });
+
+  test("transient push error leaves node running, enqueues delayed dag-tick, no failed cascade", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode, patches } = makeMockRepo(dag);
+    const taskSession = makeSession("sess-1");
+    const transientErr = new EngineError(
+      "transient_push_error",
+      "transient push error for branch: ECONNRESET",
+      { branch: "minions/sess-1" },
+    );
+    const { ctx, audits } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+      taskSession,
+      openForReviewError: transientErr,
+    });
+    const { repo: automationRepo, enqueued } = makeFakeAutomationRepo();
+
+    const handler = new DagTerminalHandler(
+      repo,
+      makeStubScheduler(),
+      ctx,
+      createLogger("error"),
+      automationRepo,
+    );
+    await handler.handle(taskSession);
+
+    const after = getNode("n1");
+    assert.equal(after?.status, "running", "node stays running after transient push error");
+    assert.equal(after?.failedReason, undefined, "no failedReason for transient push error");
+    assert.ok(
+      !patches.some((p) => p.patch.status === "failed"),
+      "node never marked failed for transient push error",
+    );
+
+    const ticks = enqueued.filter((j) => j.kind === "dag-tick" && j.targetId === "dag-1");
+    assert.equal(ticks.length, 1, "dag-tick enqueued for retry");
+    const delayMs = new Date(ticks[0]!.runAt).getTime() - Date.now();
+    assert.ok(delayMs > 55_000 && delayMs < 65_000, `expected ~60s delay, got ${delayMs}ms`);
+
+    const transientAudits = audits.filter((a) => a.action === "dag.node.transient_push_retry");
+    assert.equal(transientAudits.length, 1, "transient retry audit recorded");
   });
 
   test("dag-task with maxAttempts=0 lands directly without wiring self-heal", async () => {

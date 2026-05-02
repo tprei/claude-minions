@@ -115,16 +115,31 @@ interface ObservedTerminal {
 function makeStubCtx(
   registryRef: { current: SessionRegistry | null },
   observed: ObservedTerminal[],
+  orderEvents: string[] = [],
 ): EngineContext {
   return {
     audit: { record: () => {}, list: () => [] },
     dags: {
       onSessionTerminal: async (slug: string) => {
         const session = registryRef.current?.get(slug) ?? null;
+        orderEvents.push(`dag:${session?.status ?? "missing"}`);
         observed.push({ slug, status: session?.status ?? null });
       },
     },
     ship: { onTurnCompleted: async () => {} },
+    quality: {
+      runForSession: async (slug: string) => {
+        const session = registryRef.current?.get(slug) ?? null;
+        orderEvents.push(`quality:${session?.status ?? "missing"}`);
+        return {
+          sessionSlug: slug,
+          status: "passed",
+          checks: [],
+          createdAt: new Date().toISOString(),
+        };
+      },
+      getReport: () => null,
+    },
     env: {
       host: "127.0.0.1",
       port: 8787,
@@ -242,6 +257,39 @@ describe("waitForExit handler commits final status before notifying subsystems",
     );
 
     await waitFor(() => registry.get(slug)?.status === "failed");
+  });
+
+  test("exit code 0: quality runs before dags.onSessionTerminal", async () => {
+    const slug = "sess-dag-quality-first";
+    const worktree = path.join(workspaceDir, slug);
+    fs.mkdirSync(worktree, { recursive: true });
+    insertSession(db, slug, "running", worktree);
+
+    db.prepare(
+      `INSERT INTO provider_state(session_slug, provider, external_id, last_seq, last_turn, data, updated_at)
+       VALUES (?, ?, ?, 0, 0, '{}', datetime('now'))`,
+    ).run(slug, DAG_TERMINAL_TEST_PROVIDER, "ext-quality-first");
+
+    const observed: ObservedTerminal[] = [];
+    const orderEvents: string[] = [];
+    const registry = new SessionRegistry({
+      db,
+      bus,
+      log: createLogger("error"),
+      workspaceDir,
+      ctx: makeStubCtx(registryRef, observed, orderEvents),
+    });
+    registryRef.current = registry;
+
+    await registry.resumeAllActive();
+    assert.equal(captured.controls.length, 1);
+
+    const ctrl = captured.controls[0]!;
+    ctrl.exit(0);
+
+    await waitFor(() => observed.length >= 1);
+
+    assert.deepEqual(orderEvents, ["quality:completed", "dag:completed"]);
   });
 
   test("cancelled session: handler returns early without invoking dags.onSessionTerminal", async () => {

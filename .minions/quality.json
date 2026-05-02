@@ -1,0 +1,14 @@
+[
+  {
+    "name": "workspace typecheck",
+    "command": "pnpm -r run typecheck",
+    "required": true,
+    "timeoutMs": 300000
+  },
+  {
+    "name": "workspace tests",
+    "command": "pnpm -r run test",
+    "required": true,
+    "timeoutMs": 600000
+  }
+]
