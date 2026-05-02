@@ -5,7 +5,7 @@ import { EngineError } from "../errors.js";
 export function registerDagRoutes(app: FastifyInstance, ctx: EngineContext): void {
   app.get("/api/dags", async (_req, reply) => {
     const dags = ctx.dags.list();
-    await reply.send(dags);
+    await reply.send({ items: dags });
   });
 
   app.get<{ Params: { id: string } }>("/api/dags/:id", async (req, reply) => {
