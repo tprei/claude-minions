@@ -427,4 +427,76 @@ describe("parseDagFromTranscript (unit)", () => {
     assert.equal(parsed!.title, "Plain");
     assert.equal(parsed!.nodes[0]!.prompt, "do n");
   });
+
+  test("uses the latest valid dag block in transcript order", () => {
+    const oldBlock = JSON.stringify({
+      title: "Old plan",
+      goal: "old",
+      nodes: [{ title: "old", prompt: "old work", dependsOn: [] }],
+    });
+    const newBlock = JSON.stringify({
+      title: "New plan",
+      goal: "new",
+      nodes: [{ title: "new", prompt: "new work", dependsOn: [] }],
+    });
+
+    const parsed = parseDagFromTranscript([
+      ev(1, `\`\`\`dag\n${oldBlock}\n\`\`\``),
+      ev(2, `\`\`\`dag\n${newBlock}\n\`\`\``),
+    ]);
+
+    assert.ok(parsed);
+    assert.equal(parsed!.title, "New plan");
+    assert.equal(parsed!.nodes[0]!.title, "new");
+  });
+
+  test("rejects duplicate node titles", () => {
+    const block = JSON.stringify({
+      title: "Bad",
+      goal: "g",
+      nodes: [
+        { title: "same", prompt: "first", dependsOn: [] },
+        { title: "same", prompt: "second", dependsOn: [] },
+      ],
+    });
+
+    assert.equal(parseDagFromTranscript([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]), null);
+  });
+
+  test("rejects unknown dependencies instead of dropping them", () => {
+    const block = JSON.stringify({
+      title: "Bad",
+      goal: "g",
+      nodes: [{ title: "api", prompt: "build api", dependsOn: ["schema"] }],
+    });
+
+    assert.equal(parseDagFromTranscript([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]), null);
+  });
+
+  test("rejects cycles", () => {
+    const block = JSON.stringify({
+      title: "Bad",
+      goal: "g",
+      nodes: [
+        { title: "a", prompt: "do a", dependsOn: ["b"] },
+        { title: "b", prompt: "do b", dependsOn: ["a"] },
+      ],
+    });
+
+    assert.equal(parseDagFromTranscript([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]), null);
+  });
+
+  test("rejects multi-parent nodes until stack base selection supports them", () => {
+    const block = JSON.stringify({
+      title: "Bad",
+      goal: "g",
+      nodes: [
+        { title: "schema", prompt: "do schema", dependsOn: [] },
+        { title: "ui", prompt: "do ui", dependsOn: [] },
+        { title: "integration", prompt: "wire both", dependsOn: ["schema", "ui"] },
+      ],
+    });
+
+    assert.equal(parseDagFromTranscript([ev(0, `\`\`\`dag\n${block}\n\`\`\``)]), null);
+  });
 });

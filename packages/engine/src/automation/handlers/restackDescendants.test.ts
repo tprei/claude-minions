@@ -54,12 +54,18 @@ interface MakeSessionOpts {
   baseBranch?: string;
   prState?: PRSummary["state"];
   prBase?: string;
+  attention?: AttentionFlag["kind"][];
 }
 
 function makeSession(opts: MakeSessionOpts): Session {
   const now = new Date().toISOString();
   const branch = opts.branch ?? opts.slug;
   const baseBranch = opts.baseBranch ?? "main";
+  const attention: AttentionFlag[] = (opts.attention ?? []).map((kind) => ({
+    kind,
+    message: kind,
+    raisedAt: now,
+  }));
   const pr: PRSummary = {
     number: 1,
     url: "https://example.test/pr/1",
@@ -78,7 +84,7 @@ function makeSession(opts: MakeSessionOpts): Session {
     branch,
     baseBranch,
     pr,
-    attention: [],
+    attention,
     quickActions: [],
     stats: {
       turns: 0,
@@ -102,7 +108,10 @@ interface CtxRecord {
   ctx: EngineContext;
   editPRBaseCalls: { slug: string; newBase: string }[];
   rebaseCalls: string[];
+  openForReviewCalls: string[];
+  dismissedAttention: { slug: string; kind: AttentionFlag["kind"] }[];
   appendedAttention: { slug: string; flag: AttentionFlag }[];
+  metadataPatches: { slug: string; patch: Record<string, unknown> }[];
   audits: { action: string; detail: Record<string, unknown> }[];
 }
 
@@ -110,13 +119,17 @@ interface MakeCtxOpts {
   sessions: Session[];
   rebaseFailures?: Record<string, string>;
   editPRBaseFailures?: Record<string, string>;
+  openForReviewFailures?: Record<string, string>;
 }
 
 function makeCtx(opts: MakeCtxOpts): CtxRecord {
   const sessionMap = new Map(opts.sessions.map((s) => [s.slug, s] as const));
   const editPRBaseCalls: { slug: string; newBase: string }[] = [];
   const rebaseCalls: string[] = [];
+  const openForReviewCalls: string[] = [];
+  const dismissedAttention: { slug: string; kind: AttentionFlag["kind"] }[] = [];
   const appendedAttention: { slug: string; flag: AttentionFlag }[] = [];
+  const metadataPatches: { slug: string; patch: Record<string, unknown> }[] = [];
   const audits: { action: string; detail: Record<string, unknown> }[] = [];
 
   const ctx = {
@@ -127,6 +140,19 @@ function makeCtx(opts: MakeCtxOpts): CtxRecord {
         appendedAttention.push({ slug, flag });
         const s = sessionMap.get(slug);
         if (s) sessionMap.set(slug, { ...s, attention: [...s.attention, flag] });
+      },
+      dismissAttention: (slug: string, kind: AttentionFlag["kind"]) => {
+        dismissedAttention.push({ slug, kind });
+        const s = sessionMap.get(slug);
+        if (!s) throw new Error(`session not found: ${slug}`);
+        const next = { ...s, attention: s.attention.filter((a) => a.kind !== kind) };
+        sessionMap.set(slug, next);
+        return next;
+      },
+      setMetadata: (slug: string, patch: Record<string, unknown>) => {
+        metadataPatches.push({ slug, patch });
+        const s = sessionMap.get(slug);
+        if (s) sessionMap.set(slug, { ...s, metadata: { ...s.metadata, ...patch } });
       },
     },
     landing: {
@@ -150,6 +176,13 @@ function makeCtx(opts: MakeCtxOpts): CtxRecord {
           throw new Error(opts.rebaseFailures[slug]);
         }
       },
+      openForReview: async (slug: string) => {
+        openForReviewCalls.push(slug);
+        if (opts.openForReviewFailures?.[slug]) {
+          throw new Error(opts.openForReviewFailures[slug]);
+        }
+        return sessionMap.get(slug)?.pr ?? null;
+      },
     },
     audit: {
       record: (
@@ -163,7 +196,16 @@ function makeCtx(opts: MakeCtxOpts): CtxRecord {
     },
   } as unknown as EngineContext;
 
-  return { ctx, editPRBaseCalls, rebaseCalls, appendedAttention, audits };
+  return {
+    ctx,
+    editPRBaseCalls,
+    rebaseCalls,
+    openForReviewCalls,
+    dismissedAttention,
+    appendedAttention,
+    metadataPatches,
+    audits,
+  };
 }
 
 describe("restackDescendants handler", () => {
@@ -207,6 +249,7 @@ describe("restackDescendants handler", () => {
         branch: "feat-child",
         baseBranch: "feat-parent",
         prBase: "feat-parent",
+        attention: ["ci_passed"],
       });
 
       const now = new Date().toISOString();
@@ -232,7 +275,16 @@ describe("restackDescendants handler", () => {
         0,
       );
 
-      const { ctx, editPRBaseCalls, rebaseCalls, appendedAttention, audits } =
+      const {
+        ctx,
+        editPRBaseCalls,
+        rebaseCalls,
+        openForReviewCalls,
+        dismissedAttention,
+        appendedAttention,
+        metadataPatches,
+        audits,
+      } =
         makeCtx({ sessions: [merged, child] });
 
       const handler = createRestackDescendantsHandler({
@@ -244,7 +296,30 @@ describe("restackDescendants handler", () => {
 
       assert.deepEqual(editPRBaseCalls, [{ slug: "child", newBase: "main" }]);
       assert.deepEqual(rebaseCalls, ["child"]);
-      assert.deepEqual(appendedAttention, [], "no attention persisted on clean rebase");
+      assert.deepEqual(openForReviewCalls, ["child"]);
+      assert.deepEqual(dismissedAttention, [{ slug: "child", kind: "ci_passed" }]);
+      assert.equal(appendedAttention.length, 1, "ci_pending attention persisted");
+      assert.equal(appendedAttention[0]!.slug, "child");
+      assert.equal(appendedAttention[0]!.flag.kind, "ci_pending");
+      assert.deepEqual(metadataPatches, [
+        {
+          slug: "child",
+          patch: {
+            selfHealCi: true,
+            ciSelfHealAttempts: 0,
+            ciSelfHealConcluded: undefined,
+          },
+        },
+      ]);
+
+      const updatedNode = env.dagRepo.getNodeBySession("child");
+      assert.equal(updatedNode?.status, "ci-pending", "restacked node waits for fresh CI");
+      assert.equal(updatedNode?.ciSummary, null, "stale CI summary cleared");
+
+      const ciPollJobs = env.automationRepo
+        .findByTarget("session", "child")
+        .filter((j) => j.kind === "ci-poll");
+      assert.equal(ciPollJobs.length, 1, "CI poll enqueued for restacked child");
 
       const stackLandJobs = env.automationRepo
         .findByTarget("dag", "dag-child")

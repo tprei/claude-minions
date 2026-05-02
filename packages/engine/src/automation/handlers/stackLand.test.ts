@@ -258,6 +258,36 @@ describe("stackLand handler", () => {
     }
   });
 
+  it("lands pr-open nodes after the dag has already been marked completed", async () => {
+    const env = setup();
+    try {
+      const nodeIds = createDagWithNodes(env, "dag-completed-pr-open", [
+        { id: "a", status: "pr-open", sessionSlug: "sess-a" },
+      ]);
+      env.dagRepo.update("dag-completed-pr-open", { status: "completed" });
+      const sessions = [
+        makeSession({ slug: "sess-a", prState: "open", attention: ["ci_passed"] }),
+      ];
+      const { ctx, landCalls, audits } = makeCtx({ sessions });
+
+      const handler = createStackLandHandler({
+        automationRepo: env.automationRepo,
+        dagRepo: env.dagRepo,
+      });
+      const job = enqueueStackLand(env.automationRepo, "dag-completed-pr-open");
+      await handler(env.automationRepo.get(job.id)!, ctx);
+
+      assert.deepEqual(landCalls, ["sess-a"], "completed dag with pr-open node still lands");
+      const updatedA = env.dagRepo.getNode(nodeIds[0]!);
+      assert.equal(updatedA?.status, "merged", "node marked merged");
+
+      const completes = audits.filter((a) => a.action === "dag.stack-land.complete");
+      assert.equal(completes.length, 1);
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it("re-enqueues when the next node is still pending", async () => {
     const env = setup();
     try {

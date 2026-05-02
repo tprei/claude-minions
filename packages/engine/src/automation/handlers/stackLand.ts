@@ -69,7 +69,7 @@ export function createStackLandHandler(deps: StackLandHandlerDeps): JobHandler {
 
     const dag = deps.dagRepo.get(dagId);
     if (!dag) return;
-    if (dag.status === "cancelled" || dag.status === "failed") return;
+    if (dag.status !== "active" && dag.status !== "completed") return;
 
     const sorted = topoSort(dag.nodes);
 

@@ -4,6 +4,7 @@ import type { DagRepo } from "../../dag/model.js";
 import type { AutomationJobRepo } from "../../store/repos/automationJobRepo.js";
 import type { JobHandler } from "../types.js";
 import { enqueueStackLand } from "./stackLand.js";
+import { enqueueCiPoll } from "./ciPoll.js";
 
 interface RestackDescendantsPayload {
   mergedSessionSlug: string;
@@ -30,6 +31,35 @@ export function enqueueRestackDescendants(
 function isRebaseConflict(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /rebase conflict|conflict|CONFLICT/.test(message);
+}
+
+function markRestackedSessionCiPending(
+  ctx: EngineContext,
+  sessionSlug: string,
+  raisedAt: string,
+): void {
+  let current = ctx.sessions.get(sessionSlug);
+  if (!current) return;
+
+  if (current.attention.some((a) => a.kind === "ci_passed")) {
+    current = ctx.sessions.dismissAttention(sessionSlug, "ci_passed");
+  }
+  if (current.attention.some((a) => a.kind === "ci_failed")) {
+    current = ctx.sessions.dismissAttention(sessionSlug, "ci_failed");
+  }
+  if (!current.attention.some((a) => a.kind === "ci_pending")) {
+    ctx.sessions.appendAttention(sessionSlug, {
+      kind: "ci_pending",
+      message: "Waiting for CI to complete after descendant restack",
+      raisedAt,
+    });
+  }
+
+  ctx.sessions.setMetadata(sessionSlug, {
+    selfHealCi: true,
+    ciSelfHealAttempts: 0,
+    ciSelfHealConcluded: undefined,
+  });
 }
 
 export function createRestackDescendantsHandler(
@@ -111,6 +141,31 @@ export function createRestackDescendantsHandler(
       }
 
       const dag = deps.dagRepo.byNodeSession(desc.slug);
+      const node = deps.dagRepo.getNodeBySession(desc.slug);
+
+      try {
+        await ctx.landing.openForReview(desc.slug);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.audit.record(
+          "system",
+          "restack-descendants.push-failed",
+          { kind: "session", id: desc.slug },
+          { mergedSessionSlug: mergedSlug, newBase, error: message },
+        );
+        continue;
+      }
+
+      markRestackedSessionCiPending(ctx, desc.slug, now().toISOString());
+      if (node) {
+        deps.dagRepo.updateNode(node.id, {
+          status: "ci-pending",
+          failedReason: null,
+          ciSummary: null,
+        });
+      }
+      enqueueCiPoll(deps.automationRepo, desc.slug, 0, now);
+
       if (dag && !enqueuedDagIds.has(dag.id)) {
         enqueueStackLand(deps.automationRepo, dag.id, 0, now);
         enqueuedDagIds.add(dag.id);

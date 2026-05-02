@@ -368,17 +368,10 @@ export function createDagSubsystem(
           ? ctx.sessions.get(dag.rootSessionSlug)
           : null;
         if (parent) {
-          const flags = [
-            ...parent.attention,
-            {
-              kind: "ci_failed" as const,
-              message: `DAG node ${node.id} failed CI after self-heal retries`,
-              raisedAt: new Date().toISOString(),
-            },
-          ];
-          ctx.bus.emit({
-            kind: "session_updated",
-            session: { ...parent, attention: flags },
+          ctx.sessions.appendAttention(parent.slug, {
+            kind: "ci_failed",
+            message: `DAG node ${node.id} failed CI after self-heal retries`,
+            raisedAt: new Date().toISOString(),
           });
         }
         ctx.audit.record(
