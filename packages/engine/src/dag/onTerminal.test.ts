@@ -136,6 +136,7 @@ interface MockCtxResult {
   appendedAttention: { slug: string; flag: AttentionFlag }[];
   waitingInputCalls: { slug: string; reason?: string }[];
   audits: { action: string; detail: Record<string, unknown> }[];
+  replies: { slug: string; text: string }[];
 }
 
 function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
@@ -145,6 +146,7 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
   const appendedAttention: { slug: string; flag: AttentionFlag }[] = [];
   const waitingInputCalls: { slug: string; reason?: string }[] = [];
   const audits: { action: string; detail: Record<string, unknown> }[] = [];
+  const replies: { slug: string; text: string }[] = [];
 
   const sessionStore = new Map<string, Session>();
   if (opts.parentSession) sessionStore.set(opts.parentSession.slug, opts.parentSession);
@@ -196,6 +198,10 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
         const cur = sessionStore.get(slug);
         if (cur) sessionStore.set(slug, { ...cur, status: "waiting_input" });
       },
+      reply: async (slug: string, text: string) => {
+        replies.push({ slug, text });
+      },
+      kickReplyQueue: async () => false,
     },
     runtime: {
       effective: () => ({
@@ -219,7 +225,7 @@ function makeMockCtx(opts: MockCtxOptions): MockCtxResult {
     } as unknown as EventBus,
   } as unknown as EngineContext;
 
-  return { ctx, emitted, landCalls, metadataPatches, appendedAttention, waitingInputCalls, audits };
+  return { ctx, emitted, landCalls, metadataPatches, appendedAttention, waitingInputCalls, audits, replies };
 }
 
 function makeStubScheduler(): DagScheduler {
@@ -423,12 +429,56 @@ describe("DagTerminalHandler", () => {
     assert.match(patches.at(-1)?.patch.failedReason ?? "", /session terminated with status: failed/);
   });
 
-  test("failed quality report blocks landing", async () => {
+  test("first quality failure self-heals: replies to agent + keeps node running", async () => {
     const node = makeNode("n1", "running", "sess-1");
     const dag = makeDag("dag-1", [node], "root-1");
     const { repo, getNode, patches } = makeMockRepo(dag);
     const parent = makeSession("root-1");
-    const { ctx, landCalls } = makeMockCtx({
+    const taskSession = makeSession("sess-1");
+    const { ctx, landCalls, replies, metadataPatches, audits } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "failed",
+        checks: [
+          {
+            id: "build",
+            name: "build",
+            command: "pnpm run build",
+            status: "failed",
+            exitCode: 2,
+            stdoutTail: "error TS2307: Cannot find module 'foo'",
+          },
+        ],
+        createdAt: new Date().toISOString(),
+      },
+      parentSession: parent,
+      taskSession,
+    });
+
+    const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
+    await handler.handle(taskSession);
+
+    assert.equal(landCalls.length, 0, "PR not opened on quality failure");
+    assert.equal(getNode("n1")?.status, "running", "node stays running on first quality failure (self-heal)");
+    assert.equal(patches.at(-1)?.patch.failedReason, null, "failedReason cleared during self-heal");
+    assert.equal(replies.length, 1, "exactly one reply queued to the agent");
+    assert.equal(replies[0]?.slug, "sess-1");
+    assert.match(replies[0]?.text ?? "", /quality gate failed/i);
+    assert.match(replies[0]?.text ?? "", /Cannot find module/);
+    const meta = metadataPatches.find((p) => "qualitySelfHealAttempts" in p.patch);
+    assert.ok(meta, "metadata patch with qualitySelfHealAttempts exists");
+    assert.equal(meta?.patch["qualitySelfHealAttempts"], 1);
+    assert.ok(audits.find((a) => a.action === "dag.node.quality_self_heal"), "self-heal audit recorded");
+  });
+
+  test("quality self-heal exhaustion (after 2 attempts) flips node ci-failed", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode, patches } = makeMockRepo(dag);
+    const parent = makeSession("root-1");
+    const taskSession = makeSession("sess-1");
+    taskSession.metadata = { qualitySelfHealAttempts: 2 };
+    const { ctx, replies } = makeMockCtx({
       qualityReport: {
         sessionSlug: "sess-1",
         status: "failed",
@@ -436,14 +486,15 @@ describe("DagTerminalHandler", () => {
         createdAt: new Date().toISOString(),
       },
       parentSession: parent,
+      taskSession,
     });
 
     const handler = new DagTerminalHandler(repo, makeStubScheduler(), ctx, createLogger("error"));
-    await handler.handle(makeSession("sess-1"));
+    await handler.handle(taskSession);
 
-    assert.equal(landCalls.length, 0);
-    assert.equal(getNode("n1")?.status, "ci-failed");
-    assert.match(patches.at(-1)?.patch.failedReason ?? "", /quality gate failed/);
+    assert.equal(getNode("n1")?.status, "ci-failed", "node flipped to ci-failed after exhaustion");
+    assert.match(patches.at(-1)?.patch.failedReason ?? "", /quality gate failed.*self-heal attempts/);
+    assert.equal(replies.length, 0, "no further reply on exhausted self-heal");
   });
 
   test("dag-task with passed quality and PR returned enters ci-pending and wires self-heal", async () => {
@@ -613,6 +664,52 @@ describe("DagTerminalHandler", () => {
 
     const transientAudits = audits.filter((a) => a.action === "dag.node.transient_push_retry");
     assert.equal(transientAudits.length, 1, "transient retry audit recorded");
+  });
+
+  test("transient github error (rate limit during PR creation) reschedules with retryAfterMs", async () => {
+    const node = makeNode("n1", "running", "sess-1");
+    const dag = makeDag("dag-1", [node], "root-1");
+    const { repo, getNode } = makeMockRepo(dag);
+    const taskSession = makeSession("sess-1");
+    const ghErr = new EngineError(
+      "transient_github_error",
+      "GitHub API rate limited (status 403); retry after ~120s",
+      { url: "https://api.github.com/repos/x/y/pulls", status: 403, retryAfterMs: 120_000 },
+    );
+    const { ctx, audits } = makeMockCtx({
+      qualityReport: {
+        sessionSlug: "sess-1",
+        status: "passed",
+        checks: [],
+        createdAt: new Date().toISOString(),
+      },
+      taskSession,
+      openForReviewError: ghErr,
+    });
+    const { repo: automationRepo, enqueued } = makeFakeAutomationRepo();
+
+    const handler = new DagTerminalHandler(
+      repo,
+      makeStubScheduler(),
+      ctx,
+      createLogger("error"),
+      automationRepo,
+    );
+    await handler.handle(taskSession);
+
+    const after = getNode("n1");
+    assert.equal(after?.status, "running", "node stays running on github rate limit");
+
+    const ticks = enqueued.filter((j) => j.kind === "dag-tick" && j.targetId === "dag-1");
+    assert.equal(ticks.length, 1);
+    const delayMs = new Date(ticks[0]!.runAt).getTime() - Date.now();
+    assert.ok(
+      delayMs > 115_000 && delayMs < 125_000,
+      `expected ~120s delay from retryAfterMs, got ${delayMs}ms`,
+    );
+
+    const ghAudits = audits.filter((a) => a.action === "dag.node.transient_github_retry");
+    assert.equal(ghAudits.length, 1, "transient github retry audit recorded");
   });
 
   test("dag-task with maxAttempts=0 lands directly without wiring self-heal", async () => {

@@ -7,6 +7,7 @@ export type EngineErrorCode =
   | "internal"
   | "upstream"
   | "transient_push_error"
+  | "transient_github_error"
   | "unsupported";
 
 const codeToStatus: Record<EngineErrorCode, number> = {
@@ -18,6 +19,7 @@ const codeToStatus: Record<EngineErrorCode, number> = {
   internal: 500,
   upstream: 502,
   transient_push_error: 503,
+  transient_github_error: 503,
   unsupported: 501,
 };
 
