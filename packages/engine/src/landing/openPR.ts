@@ -4,6 +4,7 @@ import type { Logger } from "../logger.js";
 import { EngineError } from "../errors.js";
 import { parseGithubRemote } from "../github/parseRemote.js";
 import { SessionRepo } from "../store/repos/sessionRepo.js";
+import { buildPrBody } from "./buildPrBody.js";
 import type { SessionStateUpdater } from "./sessionStateUpdater.js";
 
 export interface EnsurePullRequestDeps {
@@ -71,7 +72,6 @@ export function createEnsurePullRequest(deps: EnsurePullRequestDeps = {}) {
     }
 
     const baseBranch = session.baseBranch ?? "main";
-    const body = `Created by minions session ${slug}.`;
     const sessionRepo: SessionStateUpdater = deps.sessionRepo ?? new SessionRepo(ctx.db);
 
     const existing = await ctx.github.findPRByHead(session.repoId, session.branch, baseBranch);
@@ -111,6 +111,37 @@ export function createEnsurePullRequest(deps: EnsurePullRequestDeps = {}) {
         state: existing.state,
         branch: session.branch,
       });
+    }
+
+    const fallbackBody = `Created by minions session ${slug}.`;
+    let body = fallbackBody;
+    try {
+      const diff = await ctx.sessions.diff(slug);
+      const transcript = ctx.sessions.transcript(slug);
+      let parentPr: { number: number; url: string; parentTitle: string } | null = null;
+      if (session.parentSlug) {
+        const parent = ctx.sessions.get(session.parentSlug);
+        if (parent?.pr) {
+          parentPr = {
+            number: parent.pr.number,
+            url: parent.pr.url,
+            parentTitle: parent.title,
+          };
+        }
+      }
+      body = buildPrBody({
+        session,
+        diff,
+        transcript,
+        parentPr,
+        webBaseUrl: "",
+      });
+    } catch (err) {
+      log.warn("ensurePullRequest: failed to build rich PR body, falling back", {
+        slug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      body = fallbackBody;
     }
 
     const created = await ctx.github.createPR(session.repoId, {
