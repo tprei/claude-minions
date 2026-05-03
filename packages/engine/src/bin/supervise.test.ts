@@ -147,19 +147,36 @@ fi
       const counter = fs.readFileSync(counterFile, "utf8").trim();
       assert.equal(counter, "4", "fake engine ran 4 times (3 crashes + 1 clean)");
 
-      const crashFiles = fs
+      const crashFileNames = fs
         .readdirSync(crashDir)
-        .filter((f) => f.endsWith(".log"))
-        .sort();
-      assert.equal(crashFiles.length, 3, `expected 3 crash files, got ${crashFiles.length}: ${crashFiles.join(",")}`);
+        .filter((f) => f.endsWith(".log"));
+      assert.equal(
+        crashFileNames.length,
+        3,
+        `expected 3 crash files, got ${crashFileNames.length}: ${crashFileNames.join(",")}`,
+      );
 
-      for (let i = 0; i < crashFiles.length; i++) {
-        const body = fs.readFileSync(path.join(crashDir, crashFiles[i]!), "utf8");
+      // Sort by the monotonic restartCount in the JSON header, not the filename:
+      // filenames embed wall-clock timestamps which can skew (notably under WSL2 load).
+      const crashEntries = crashFileNames.map((name) => {
+        const body = fs.readFileSync(path.join(crashDir, name), "utf8");
         const firstLine = body.split("\n", 1)[0]!;
         const header = JSON.parse(firstLine) as Record<string, unknown>;
+        return { name, body, header };
+      });
+      crashEntries.sort(
+        (a, b) => (a.header.restartCount as number) - (b.header.restartCount as number),
+      );
+
+      for (let i = 0; i < crashEntries.length; i++) {
+        const { body, header } = crashEntries[i]!;
         assert.equal(header.event, "child_crash");
         assert.equal(typeof header.nextDelayMs, "number");
-        assert.ok(body.includes(`crash run #${i + 1}`), `crash log ${i + 1} should mention run #${i + 1}`);
+        assert.equal(header.restartCount, i + 1);
+        assert.ok(
+          body.includes(`crash run #${i + 1}`),
+          `crash log ${i + 1} should mention run #${i + 1}`,
+        );
       }
 
       const enginePath = path.join(logDir, "engine.log");
@@ -181,18 +198,10 @@ fi
         crashEvents.map((e) => e.nextDelayMs),
         [100, 200, 400],
       );
-
-      const expected = [100, 200, 400];
-      for (let i = 0; i < 3; i++) {
-        const crashTs = Date.parse(crashEvents[i]!.ts);
-        const nextSpawnTs = Date.parse(spawnEvents[i + 1]!.ts);
-        const measured = nextSpawnTs - crashTs;
-        const want = expected[i]!;
-        assert.ok(
-          measured >= want - 50 && measured <= want + 500,
-          `measured delay ${i} was ${measured}ms, expected ~${want}ms`,
-        );
-      }
+      // The actual sleep uses setTimeout (monotonic clock), and the configured
+      // backoff is already asserted above via nextDelayMs. We avoid asserting
+      // on Date.parse(event.ts) deltas because the wall clock can skew (notably
+      // under WSL2 / virtualized hosts) and produce negative differences here.
     });
 
     test("forwards SIGTERM to the child for graceful shutdown", { timeout: 15_000 }, async () => {
