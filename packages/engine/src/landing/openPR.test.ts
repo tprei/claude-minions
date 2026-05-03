@@ -1,6 +1,14 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import type { AuditEvent, PRSummary, RepoBinding, Session } from "@minions/shared";
+import type {
+  AuditEvent,
+  DiffStat,
+  PRSummary,
+  RepoBinding,
+  Session,
+  TranscriptEvent,
+  WorkspaceDiff,
+} from "@minions/shared";
 import type { EngineContext } from "../context.js";
 import type { EventBus } from "../bus/eventBus.js";
 import { KeyedMutex } from "../util/mutex.js";
@@ -54,6 +62,33 @@ interface EnsureHarness {
   createPRCalls: Array<{ repoId: string; payload: Record<string, unknown> }>;
 }
 
+function diffStat(path: string, additions: number, deletions: number): DiffStat {
+  return { path, additions, deletions, status: "modified" };
+}
+
+function buildDiff(stats: DiffStat[], slug: string): WorkspaceDiff {
+  return {
+    sessionSlug: slug,
+    patch: "",
+    stats,
+    truncated: false,
+    byteSize: 0,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function assistantText(opts: { seq: number; text: string; slug: string }): TranscriptEvent {
+  return {
+    kind: "assistant_text",
+    id: `at-${opts.seq}`,
+    sessionSlug: opts.slug,
+    seq: opts.seq,
+    turn: 0,
+    timestamp: new Date().toISOString(),
+    text: opts.text,
+  };
+}
+
 function buildSession(slug: string, overrides: Partial<Session> = {}): Session {
   return {
     slug,
@@ -91,9 +126,15 @@ function makeHarness(opts: {
   repo?: RepoBinding | null;
   findPRResult?: FindPRResult | null;
   createPRResult?: { number: number; url: string };
+  extraSessions?: Session[];
+  diff?: WorkspaceDiff | (() => Promise<WorkspaceDiff>);
+  transcript?: TranscriptEvent[];
 }): EnsureHarness {
   const audit: AuditEvent[] = [];
-  const sessionMap = new Map([[opts.session.slug, opts.session]]);
+  const sessionMap = new Map<string, Session>([[opts.session.slug, opts.session]]);
+  for (const extra of opts.extraSessions ?? []) {
+    sessionMap.set(extra.slug, extra);
+  }
   const prEdits: Array<{ slug: string; pr: PRSummary | null }> = [];
   const findPRByHeadCalls: Array<{ repoId: string; head: string; base: string }> = [];
   const createPRCalls: Array<{ repoId: string; payload: Record<string, unknown> }> = [];
@@ -146,7 +187,7 @@ function makeHarness(opts: {
       list: () => Array.from(sessionMap.values()),
       listPaged: () => ({ items: [] }),
       listWithTranscript: () => [],
-      transcript: () => [],
+      transcript: () => opts.transcript ?? [],
       stop: async () => {},
       close: async () => {},
       delete: async () => {},
@@ -161,14 +202,18 @@ function makeHarness(opts: {
       dismissAttention: () => { throw new Error("not implemented"); },
       kickReplyQueue: async () => false,
       resumeAllActive: async () => {},
-      diff: async (slug) => ({
-        sessionSlug: slug,
-        patch: "",
-        stats: [],
-        truncated: false,
-        byteSize: 0,
-        generatedAt: new Date().toISOString(),
-      }),
+      diff: async (slug) => {
+        if (typeof opts.diff === "function") return opts.diff();
+        if (opts.diff) return opts.diff;
+        return {
+          sessionSlug: slug,
+          patch: "",
+          stats: [],
+          truncated: false,
+          byteSize: 0,
+          generatedAt: new Date().toISOString(),
+        };
+      },
       screenshots: async () => [],
       screenshotPath: () => "",
       checkpoints: () => [],
@@ -326,5 +371,92 @@ describe("ensurePullRequest idempotency", () => {
 
     await ensurePr({ ctx: h.ctx, slug: "worker", log: createLogger("error") });
     assert.equal(h.createPRCalls.length, 0, "createPR must not be called when findPRByHead returns open PR");
+  });
+});
+
+describe("ensurePullRequest body assembly", () => {
+  test("createPR is called with a rich, sectioned body", async () => {
+    const session = buildSession("worker", {
+      prompt: "Fix the widget regression so users stop hitting the empty state.",
+    });
+
+    const h = makeHarness({
+      session,
+      findPRResult: null,
+      createPRResult: { number: 7, url: "https://github.com/acme/repo/pull/7" },
+      diff: buildDiff([diffStat("src/widget.ts", 12, 3)], session.slug),
+      transcript: [assistantText({ seq: 1, text: "Plan: edit widget.", slug: session.slug })],
+    });
+    const ensurePr = createEnsurePullRequest({ sessionRepo: h.updater });
+
+    await ensurePr({ ctx: h.ctx, slug: "worker", log: createLogger("error") });
+
+    assert.equal(h.createPRCalls.length, 1, "createPR was invoked");
+    const body = h.createPRCalls[0]?.payload.body as string;
+    assert.ok(body.includes("## Why"), "body has Why section");
+    assert.ok(body.includes("## What"), "body has What section");
+    assert.ok(body.includes("## Session"), "body has Session section");
+    assert.ok(
+      !body.startsWith("Created by minions session"),
+      "body must not be the legacy fallback string",
+    );
+  });
+
+  test("falls back to legacy body when diff computation throws", async () => {
+    const session = buildSession("worker");
+
+    const h = makeHarness({
+      session,
+      findPRResult: null,
+      createPRResult: { number: 11, url: "https://github.com/acme/repo/pull/11" },
+      diff: async () => {
+        throw new Error("diff exploded");
+      },
+    });
+    const ensurePr = createEnsurePullRequest({ sessionRepo: h.updater });
+
+    const summary = await ensurePr({
+      ctx: h.ctx,
+      slug: "worker",
+      log: createLogger("error"),
+    });
+
+    assert.equal(summary?.number, 11, "PR creation still succeeds despite diff failure");
+    assert.equal(h.createPRCalls.length, 1, "createPR was invoked once");
+    const body = h.createPRCalls[0]?.payload.body as string;
+    assert.equal(body, "Created by minions session worker.");
+  });
+
+  test("includes Stacks on prefix when parent session has a PR", async () => {
+    const parent = buildSession("parent", {
+      title: "Parent feature",
+      pr: {
+        number: 99,
+        url: "https://github.com/acme/repo/pull/99",
+        state: "open",
+        draft: false,
+        base: "main",
+        head: "minions/parent",
+        title: "Parent feature",
+      },
+    });
+    const session = buildSession("child", { parentSlug: "parent" });
+
+    const h = makeHarness({
+      session,
+      extraSessions: [parent],
+      findPRResult: null,
+      createPRResult: { number: 100, url: "https://github.com/acme/repo/pull/100" },
+      diff: buildDiff([diffStat("src/x.ts", 1, 0)], session.slug),
+    });
+    const ensurePr = createEnsurePullRequest({ sessionRepo: h.updater });
+
+    await ensurePr({ ctx: h.ctx, slug: "child", log: createLogger("error") });
+
+    const body = h.createPRCalls[0]?.payload.body as string;
+    assert.ok(
+      body.startsWith("Stacks on: PR #99 (Parent feature)"),
+      `expected Stacks-on prefix, got: ${body.slice(0, 80)}`,
+    );
   });
 });
