@@ -1,11 +1,14 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
+process.env.NODE_ENV = "test";
+
 export default defineConfig({
   resolve: {
     alias: {
       "@minions/shared": fileURLToPath(new URL("../shared/dist/index.js", import.meta.url)),
     },
+    conditions: ["development", "browser"],
   },
   test: {
     environment: "happy-dom",
