@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const WEB_SRC = process.env.MINIONS_WEB_SRC
-  ? path.resolve(process.env.MINIONS_WEB_SRC)
+const WEB_SRC = process.env.MWF_WEB_SRC
+  ? path.resolve(process.env.MWF_WEB_SRC)
   : path.resolve(__dirname, "..", "..", "web", "src");
 
 const SHARED_NAMED_TYPE_RE = /import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+["']@minions\/shared["']/g;

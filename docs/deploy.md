@@ -85,7 +85,7 @@ minions.your-domain.com {
 }
 ```
 
-Caddy auto-provisions LetsEncrypt. Update `MINIONS_CORS_ORIGINS=https://minions.your-domain.com` in `.env.deploy`, restart.
+Caddy auto-provisions LetsEncrypt. Update `MWF_CORS_ORIGINS=https://minions.your-domain.com` in `.env.deploy`, restart.
 
 ## Health + diagnostics
 
