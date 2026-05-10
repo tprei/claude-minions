@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "start": "tsx src/main.ts",
-    "dev": "MWF_DB_PATH=${MWF_DB_PATH:-/tmp/engine-port-dev.db} MWF_PORT=${MWF_PORT:-3000} MWF_DATA_DIR=${MWF_DATA_DIR:-/tmp/engine-port-data} tsx watch src/main.ts"
+    "dev": "MWF_DB_PATH=${MWF_DB_PATH:-/tmp/engine-port-dev.db} MWF_PORT=${MWF_PORT:-3000} MWF_DATA_DIR=${MWF_DATA_DIR:-/tmp/engine-port-data} tsx watch src/main.ts",
+    "smoke": "rm -f /tmp/engine-port-smoke.db && tsx scripts/smoke.ts"
   },
   "devDependencies": {
     "@types/web-push": "^3.6.4",
