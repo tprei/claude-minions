@@ -4,7 +4,8 @@ export type DomainErrorCode =
   | "session_mismatch"
   | "not_found"
   | "version_conflict"
-  | "idempotency_collision";
+  | "idempotency_collision"
+  | "invalid_plan";
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;

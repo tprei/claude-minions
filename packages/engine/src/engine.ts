@@ -35,6 +35,8 @@ import { LocalFinalizeService } from "./application/local-finalize-service.js";
 import { CIBabysitterService } from "./application/ci-babysitter-service.js";
 import { QualityGateService } from "./application/quality-gate-service.js";
 import { CompletionDispatcher } from "./application/completion-dispatcher.js";
+import { SchedulerService } from "./application/scheduler-service.js";
+import { WorkflowPlannerService } from "./application/planner-service.js";
 import type { QualityPlugin } from "./plugins/quality-plugin.js";
 import type { WorkflowEvent } from "./domain/events.js";
 import { buildSinksFromEnv, type Sink } from "./observability/sinks.js";
@@ -269,6 +271,8 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     serverDeps.pwaRoot = pwaRoot;
   }
 
+  let schedulerAbort: AbortController | undefined;
+
   if (config.providerFactory) {
     serverDeps.continueTaskService = new ContinueTaskService({
       repo,
@@ -279,7 +283,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       now,
       spawnOrchestrator: spawnTracked,
     });
-    serverDeps.retryTaskService = new RetryTaskService({
+    const retryTaskService = new RetryTaskService({
       repo,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       providerFactory: config.providerFactory,
@@ -287,6 +291,31 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       workspace,
       now,
       spawnOrchestrator: spawnTracked,
+    });
+    serverDeps.retryTaskService = retryTaskService;
+
+    schedulerAbort = new AbortController();
+    const schedulerService = new SchedulerService({
+      repo,
+      retry: retryTaskService,
+      log: log.child({ component: "scheduler" }),
+      signal: schedulerAbort.signal,
+    });
+
+    const recoverableForScheduler = await repo.listRecoverable();
+    for (const w of recoverableForScheduler) schedulerService.attach(w.id);
+    serverDeps.schedulerService = schedulerService;
+  }
+
+  const anthropicApiKey = process.env["MWF_ANTHROPIC_API_KEY"] ?? process.env["ANTHROPIC_API_KEY"];
+  const plannerModel = process.env["MWF_PLANNER_MODEL"] ?? "claude-sonnet-4-6";
+
+  if (anthropicApiKey) {
+    serverDeps.plannerService = new WorkflowPlannerService({
+      apiKey: anthropicApiKey,
+      model: plannerModel,
+      log: log.child({ component: "planner" }),
+      now,
     });
   }
 
@@ -437,6 +466,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       qualityAbort?.abort();
       completionDispatcherAbort?.abort();
       localFinalizeAbort?.abort();
+      schedulerAbort?.abort();
       observabilityAbort.abort();
       for (const entry of activeOrchestrators) {
         entry.controller.abort();

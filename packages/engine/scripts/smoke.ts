@@ -17,16 +17,36 @@ import { createAdaptorServer } from "@hono/node-server";
 import { unlink } from "node:fs/promises";
 import { createEngine } from "../src/engine.js";
 import { StubProviderPlugin } from "../src/plugins/providers/stub.js";
-import { StubRuntimeBackend } from "../src/plugins/stub-runtime.js";
 import { StubWorkspaceBackend } from "../src/plugins/workspace/stub-workspace.js";
 import { StubQualityPlugin } from "../src/plugins/quality/stub-quality-plugin.js";
 import type { Workflow } from "../src/domain/types.js";
+import type { RuntimeAttachOptions, RuntimeBackend, RuntimeOutputChunk, RuntimeStartResult, RuntimeStartSpec } from "../src/plugins/runtime-backend.js";
+import type { RuntimeProbeState } from "../src/application/recovery.js";
 
 const DB_PATH = "/tmp/engine-port-smoke.db";
 
 const WORKFLOW_ID = "smoke-wf-1";
 const TASK_ID = "smoke-task-1";
-const STUB_SESSION_ID = "smoke-session-stub";
+
+function makeFinalRuntime(): RuntimeBackend {
+  let counter = 0;
+  return {
+    async start(_spec: RuntimeStartSpec): Promise<RuntimeStartResult> {
+      return { sessionId: `smoke-session-${++counter}`, runtimeType: "stub" };
+    },
+    async stop(): Promise<void> {},
+    async probe(): Promise<RuntimeProbeState> { return "live"; },
+    attach(_sessionId: string, _opts?: RuntimeAttachOptions): AsyncIterable<RuntimeOutputChunk> {
+      return {
+        [Symbol.asyncIterator]: async function* () {
+          // Yield one line so parseFrame fires and the stub plugin returns the final event
+          const bytes = new TextEncoder().encode("final-line\n");
+          yield { sessionId: _sessionId, offset: 0, bytes };
+        },
+      };
+    },
+  };
+}
 
 function makeClient(baseUrl: string) {
   async function post(path: string, body: unknown): Promise<{ status: number; data: unknown }> {
@@ -67,7 +87,7 @@ async function pollUntilCompleted(
     if (!task) throw new Error(`task ${TASK_ID} not found in workflow graph`);
     const execStatus = task.executionStatus;
     console.log(`  poll: task executionStatus=${execStatus}`);
-    if (execStatus === "completed") return wf;
+    if (execStatus === "completed" || execStatus === "merged" || execStatus === "pr-open") return wf;
     if (execStatus === "failed" || execStatus === "cancelled" || execStatus === "needs-review") {
       throw new Error(`task reached terminal non-success status: ${execStatus}`);
     }
@@ -81,10 +101,11 @@ async function main(): Promise<void> {
   console.log("=== SMOKE START ===");
   console.log(`db: ${DB_PATH}`);
 
+  const finalEvent = { kind: "final" as const, sessionRef: "smoke-ref" };
   const engine = await createEngine({
     dbPath: DB_PATH,
-    providerFactory: () => new StubProviderPlugin({ frames: [] }),
-    runtime: new StubRuntimeBackend(),
+    providerFactory: () => new StubProviderPlugin({ frames: [[finalEvent]] }),
+    runtime: makeFinalRuntime(),
     workspace: new StubWorkspaceBackend(),
     qualityPlugin: new StubQualityPlugin(),
     logLevel: "warn",
@@ -128,55 +149,17 @@ async function main(): Promise<void> {
     const createdWf = createResult.data as Workflow;
     console.log(`workflow created: id=${createdWf.id}`);
 
-    // 2. Transition: pending → ready
-    const t0 = new Date().toISOString();
-    const readyResult = await client.post("/commands", {
-      kind: "transition-task",
-      workflowId: WORKFLOW_ID,
-      transition: { kind: "mark-ready", taskId: TASK_ID, now: t0 },
-    });
-    assertStatus("mark-ready", readyResult.status, 200);
-    console.log("  transition: pending → ready");
-
-    // 3. Transition: ready → running (supply a stub sessionId)
-    const t1 = new Date().toISOString();
-    const runningResult = await client.post("/commands", {
-      kind: "transition-task",
-      workflowId: WORKFLOW_ID,
-      transition: {
-        kind: "mark-running",
-        taskId: TASK_ID,
-        sessionId: STUB_SESSION_ID,
-        now: t1,
-      },
-    });
-    assertStatus("mark-running", runningResult.status, 200);
-    console.log("  transition: ready → running");
-
-    // 4. Transition: running → completed via complete-runtime
-    const t2 = new Date().toISOString();
-    const completeResult = await client.post("/commands", {
-      kind: "transition-task",
-      workflowId: WORKFLOW_ID,
-      transition: {
-        kind: "complete-runtime",
-        taskId: TASK_ID,
-        expectedSessionId: STUB_SESSION_ID,
-        now: t2,
-      },
-    });
-    assertStatus("complete-runtime", completeResult.status, 200);
-    console.log("  transition: running → completed");
-
-    // 5. Poll GET /workflows/:id until executionStatus=completed
+    // SchedulerService auto-dispatches the task — no manual transitions needed.
+    // Poll GET /workflows/:id until executionStatus=completed
     const pollStart = Date.now();
     const finalWf = await pollUntilCompleted(client);
     const pollMs = Date.now() - pollStart;
 
     const finalTask = finalWf.graph[TASK_ID]!;
-    if (finalTask.executionStatus !== "completed") {
+    const successStatuses = new Set(["completed", "merged", "pr-open"]);
+    if (!successStatuses.has(finalTask.executionStatus)) {
       throw new Error(
-        `expected executionStatus=completed, got=${finalTask.executionStatus}`,
+        `expected a success executionStatus, got=${finalTask.executionStatus}`,
       );
     }
 

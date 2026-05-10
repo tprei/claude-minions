@@ -24,6 +24,8 @@ import { validateCommand, validatePushSubscribe, validatePushUnsubscribe, valida
 import type { ObservabilityService } from "../observability/observability-service.js";
 import type { Logger } from "../observability/logger.js";
 import type { SupervisorWithRepos } from "../supervisor/supervisor.js";
+import type { WorkflowPlannerService } from "../application/planner-service.js";
+import type { SchedulerService } from "../application/scheduler-service.js";
 
 export interface ServerDeps {
   repo: WorkflowRepository;
@@ -43,6 +45,8 @@ export interface ServerDeps {
   observability?: ObservabilityService;
   log?: Logger;
   supervisor?: SupervisorWithRepos;
+  plannerService?: WorkflowPlannerService;
+  schedulerService?: SchedulerService;
 }
 
 type AcceptedCommandKind = CommandKind | "continue-task" | "retry-task";
@@ -133,7 +137,29 @@ export function createServer(deps: ServerDeps): Hono {
     deps.completionDispatcher?.attach(workflow.id);
     deps.localFinalizeService?.attach(workflow.id);
     deps.observability?.attach(workflow.id);
+    deps.schedulerService?.attach(workflow.id);
     return c.json(workflow, 201);
+  });
+
+  app.post("/workflows/plan", async (c) => {
+    if (!deps.plannerService) {
+      return c.json({ code: "planner_not_configured", message: "planner service not configured" }, 503);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ code: "invalid_body", message: "request body is not valid JSON" }, 400);
+    }
+
+    if (typeof (body as Record<string, unknown>)?.["prompt"] !== "string" ||
+        !(body as Record<string, unknown>)["prompt"]) {
+      return c.json({ code: "invalid_request", message: 'field "prompt" is required and must be a non-empty string' }, 400);
+    }
+
+    const spec = await deps.plannerService.plan({ prompt: (body as Record<string, string>)["prompt"]! });
+    return c.json({ spec });
   });
 
   app.get("/workflows", async (c) => {
