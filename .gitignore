@@ -33,4 +33,5 @@ packages/web/dev-dist/
 
 # dogfood Playwright screenshots
 *.png
+!packages/engine/test/fixtures/**/*.png
 /.codex
