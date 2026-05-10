@@ -16,7 +16,7 @@ import ReactFlow, {
   Position,
 } from "reactflow";
 import dagre from "dagre";
-import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine-next";
+import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useConnectionStore, type Connection } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";

@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import type { Workflow } from "@minions/engine-next";
+import type { Workflow } from "@minions/engine";
 import { Modal } from "../components/Modal.js";
 
 interface Props {

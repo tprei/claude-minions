@@ -8,7 +8,7 @@
  * which is the closest analog to the old sequence-ordered transcript merge.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import type { Workflow, TaskNode, WorkflowEvent } from "@minions/engine-next";
+import type { Workflow, TaskNode, WorkflowEvent } from "@minions/engine";
 import { useWorkflowStore } from "../workflowStore.js";
 
 const CONN = "conn-1";

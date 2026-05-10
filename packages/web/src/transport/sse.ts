@@ -1,6 +1,6 @@
 import type { Connection } from "../connections/store.js";
 import { sseStatusStore, type SseStatus } from "./sseStatus.js";
-import type { WorkflowEvent, WorkflowEventKind } from "@minions/engine-next";
+import type { WorkflowEvent, WorkflowEventKind } from "@minions/engine";
 
 export type { WorkflowEvent, WorkflowEventKind };
 

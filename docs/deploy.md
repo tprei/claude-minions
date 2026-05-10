@@ -23,16 +23,15 @@ $EDITOR .env.deploy
 Set in `.env.deploy`:
 
 ```
-MINIONS_TOKEN=<a long random secret>
-MINIONS_HOST=0.0.0.0
-MINIONS_PORT=8787
-MINIONS_REPOS='[{"id":"self","label":"claude-minions","remote":"https://github.com/<owner>/<repo>.git","defaultBranch":"main"}]'
+MWF_TOKEN=<a long random secret>
+MWF_HOST=0.0.0.0
+MWF_PORT=8787
+MWF_DB_PATH=/data/engine.db
+MWF_DATA_DIR=/data/engine
 
-MINIONS_GH_APP_ID=<Client ID>
-MINIONS_GH_APP_PRIVATE_KEY=/secrets/gh-app.pem
-MINIONS_GH_APP_INSTALLATION_ID=<Installation ID>
-
-MINIONS_CORS_ORIGINS=https://minions.<your-domain>,http://<mini-pc-lan-ip>:8787
+MWF_GITHUB_TOKEN=<GitHub personal access token or App token>
+MWF_GITHUB_REPO_OWNER=<owner>
+MWF_GITHUB_REPO_NAME=<repo>
 ```
 
 Drop the GitHub App private key into the secrets dir:

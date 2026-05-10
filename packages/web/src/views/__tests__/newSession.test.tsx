@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { VersionInfo } from "@minions/shared";
-import type { Workflow } from "@minions/engine-next";
+import type { Workflow } from "@minions/engine";
 import { NewSessionView } from "../newSession.js";
 import { useConnectionStore } from "../../connections/store.js";
 import { useVersionStore } from "../../store/version.js";

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Workflow, WorkflowEvent } from "@minions/engine-next";
+import type { Workflow, WorkflowEvent } from "@minions/engine";
 import { applyEventToSnapshot } from "../snapshotCache.js";
 import type { ConnectionSnapshot } from "../snapshotCache.js";
 

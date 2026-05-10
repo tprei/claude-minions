@@ -18,23 +18,24 @@ Pick the path that matches how the host is already managed:
   already runs other containers.
 
 Both paths land at the same place: a single engine process listening on
-`MINIONS_PORT`, restarted on crash, with logs you can tail after the fact.
+`MWF_PORT`, restarted on crash, with logs you can tail after the fact.
 
 ## Bare-metal path
 
-### Build
+### Install
 
 From the repo root:
 
 ```bash
 pnpm install
-pnpm -C packages/engine build
 ```
+
+The engine runs via tsx directly from source — no compile step needed.
 
 ### Token
 
-Export `MINIONS_TOKEN` in the shell that launches the supervisor, or set it in
-`.env.local` at the repo root. The supervisor refuses to start without it.
+Export `MWF_TOKEN` and `MWF_DB_PATH` in the shell that launches the engine, or
+set them in `.env.local` at the repo root.
 
 ### Run
 
@@ -52,8 +53,7 @@ The supervisor runs in the foreground. For unattended use, wrap it with
 - Crash logs: `~/.minions/crashes/<iso>.log`, one per crash, capturing the last
   ring-buffer window of stderr.
 
-Override the locations with `MINIONS_LOG_DIR` and `MINIONS_CRASH_LOG_DIR` if
-you want them on a different volume.
+Override the log location with `MWF_LOG_DIR` if you want it on a different volume.
 
 ### Backoff schedule
 
@@ -118,13 +118,13 @@ crashed one.
 Three options, in order of preference:
 
 - **`env_file` in compose** — point the service at `.env.deploy` and put
-  `MINIONS_TOKEN=...` there. This is the recommended default; it keeps the
+  `MWF_TOKEN=...` there. This is the recommended default; it keeps the
   token out of the compose file and out of process listings.
-- **`docker run -e MINIONS_TOKEN=...`** — fine for one-off runs, but the token
+- **`docker run -e MWF_TOKEN=...`** — fine for one-off runs, but the token
   ends up in shell history and `ps` output.
 - **Compose `secrets:` block** — hardened option for hosts where other users
   can read environment files. The secret is mounted as a file at
-  `/run/secrets/minions_token`; read it from an entrypoint shim that exports
+  `/run/secrets/mwf_token`; read it from an entrypoint shim that exports
   the value before exec'ing the engine.
 
 ## Mini-PC overnight checklist
@@ -140,9 +140,9 @@ Before walking away from the machine:
 - Auto-start on boot:
   - Docker path: `sudo systemctl enable docker`.
   - Bare-metal path: `sudo systemctl enable minions`.
-- Verify `MINIONS_TOKEN` is set in the unit's `EnvironmentFile` (or in
-  `.env.deploy` for the Docker path). A missing token is the most common cause
-  of a unit that "starts" but never serves traffic.
+- Verify `MWF_TOKEN` and `MWF_DB_PATH` are set in the unit's `EnvironmentFile`
+  (or in `.env.deploy` for the Docker path). Missing required vars are the most
+  common cause of a unit that "starts" but never serves traffic.
 - Tail `~/.minions/logs/engine.log` and watch `~/.minions/crashes/` for the
   first 10 minutes. A clean window here is the strongest signal that the unit
   is healthy.
@@ -171,10 +171,9 @@ Before walking away from the machine:
 
   The ring buffer captures stderr from the last window before the crash,
   which usually points at the failing call directly.
-- **Engine refuses to start.** The most common cause is `MINIONS_TOKEN`
-  validation. Check the unit's environment with `systemctl show minions
-  --property=Environment` (bare-metal) or `docker compose config` (Docker) to
-  confirm the variable is actually being passed in.
+- **Engine refuses to start.** Check for missing required env vars (`MWF_TOKEN`,
+  `MWF_DB_PATH`). Verify with `systemctl show minions --property=Environment`
+  (bare-metal) or `docker compose config` (Docker).
 - **Healthcheck fails but logs look fine.** `/api/health` returns 200 only
   when the configured provider is reachable. A green engine talking to a
   provider that has gone away will still flip the container to `unhealthy`.

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import type { Workflow, TaskNode, WorkflowEvent } from "@minions/engine-next";
+import type { Workflow, TaskNode, WorkflowEvent } from "@minions/engine";
 import { useWorkflowStore, selectTaskNodes, selectTaskNode } from "../workflowStore.js";
 
 const CONN = "conn-1";

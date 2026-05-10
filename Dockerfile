@@ -21,8 +21,9 @@ COPY packages/shared ./packages/shared
 COPY packages/engine ./packages/engine
 COPY packages/web    ./packages/web
 
+# shared needs a build step (tsc outputs to dist); engine runs via tsx at
+# runtime so no compile step needed here; web is bundled by vite.
 RUN pnpm --filter @minions/shared run build \
- && pnpm --filter @minions/engine run build \
  && pnpm --filter @minions/web    run build
 
 # ----- runtime ----------------------------------------------------------------
@@ -53,7 +54,8 @@ COPY --from=builder /app/packages/shared/package.json packages/shared/
 COPY --from=builder /app/packages/engine/package.json packages/engine/
 COPY --from=builder /app/packages/web/package.json    packages/web/
 COPY --from=builder /app/packages/shared/dist         packages/shared/dist
-COPY --from=builder /app/packages/engine/dist         packages/engine/dist
+# engine runs from source via tsx; copy the full src tree
+COPY --from=builder /app/packages/engine/src          packages/engine/src
 COPY --from=builder /app/packages/web/dist            packages/web/dist
 
 RUN pnpm install --prod --frozen-lockfile
@@ -67,14 +69,14 @@ ENV HOME=/data/home
 
 EXPOSE 8787
 
-ENV MINIONS_PORT=8787 \
-    MINIONS_HOST=0.0.0.0 \
-    MINIONS_WORKSPACE=/data/workspace \
-    MINIONS_SERVE_WEB=true \
-    MINIONS_WEB_DIST=/app/packages/web/dist
+ENV MWF_PORT=8787 \
+    MWF_HOST=0.0.0.0 \
+    MWF_WORKSPACE=/data/workspace \
+    MWF_SERVE_WEB=true \
+    MWF_WEB_DIST=/app/packages/web/dist
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:'+process.env.MINIONS_PORT+'/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+  CMD node -e "require('http').get('http://127.0.0.1:'+process.env.MWF_PORT+'/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 ENTRYPOINT ["tini","--"]
-CMD ["node","packages/engine/dist/cli.js"]
+CMD ["node","--import","tsx/esm","packages/engine/src/main.ts"]

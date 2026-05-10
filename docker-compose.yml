@@ -10,12 +10,10 @@
 #   git clone https://github.com/tprei/claude-minions.git ~/claude-minions
 #   cd ~/claude-minions
 #   cp .env.local.example .env.deploy
-#   # edit .env.deploy: set MINIONS_TOKEN, the GH App vars (MINIONS_GH_APP_*),
-#   # set MINIONS_GH_APP_PRIVATE_KEY=/secrets/gh-app.pem.
-#   # Optional: set CLOUDFLARE_TUNNEL_TOKEN=... to enable the named tunnel.
+#   # edit .env.deploy: set MWF_TOKEN, MWF_GITHUB_TOKEN, MWF_GITHUB_REPO_OWNER,
+#   # MWF_GITHUB_REPO_NAME. Optional: set CLOUDFLARE_TUNNEL_TOKEN.
 #   ln -sf .env.deploy .env   # compose reads ${VAR} from .env at parse time
-#   mkdir -p ./secrets ./data
-#   cp /path/to/your/.minions-gh-app.pem ./secrets/gh-app.pem
+#   mkdir -p ./secrets ./data/engine ./data/workspace
 #   docker run --rm -v ./data:/data -v ./secrets:/secrets alpine chown -R 10001:10001 /data /secrets
 #   docker compose up -d --build               # engine only
 #   docker compose --profile tunnel up -d      # engine + cloudflared tunnel
@@ -29,7 +27,7 @@
 #   git pull && docker compose --profile tunnel up -d --build
 #
 # The web UI is served from the same port; visit http://<host>:8787/ and
-# add a connection in the picker pointing back with your MINIONS_TOKEN.
+# add a connection in the picker pointing back with your MWF_TOKEN.
 
 services:
   engine:
@@ -42,11 +40,12 @@ services:
     env_file:
       - .env.deploy
     environment:
-      MINIONS_HOST: 0.0.0.0
-      MINIONS_PORT: 8787
-      MINIONS_WORKSPACE: /data/workspace
-      MINIONS_SERVE_WEB: "true"
-      MINIONS_WEB_DIST: /app/packages/web/dist
+      MWF_HOST: 0.0.0.0
+      MWF_PORT: 8787
+      MWF_DB_PATH: /data/engine.db
+      MWF_DATA_DIR: /data/engine
+      MWF_WORKSPACE_ROOT: /data/workspace
+      MWF_PWA_DIR: /app/packages/web/dist
       HOME: /data/home
     ports:
       - "8787:8787"

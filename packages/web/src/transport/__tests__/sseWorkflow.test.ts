@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Connection } from "../../connections/store.js";
-import type { WorkflowEvent } from "@minions/engine-next";
+import type { WorkflowEvent } from "@minions/engine";
 
 const CONN: Connection = {
   id: "conn-sse",

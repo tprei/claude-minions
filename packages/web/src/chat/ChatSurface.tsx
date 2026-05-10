@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { Workflow, TaskNode } from "@minions/engine-next";
+import type { Workflow, TaskNode } from "@minions/engine";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useRootStore } from "../store/root.js";
 import { dispatchCommand } from "../transport/rest.js";

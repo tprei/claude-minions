@@ -4,7 +4,7 @@
  * since useDagStore is now a re-export alias of useWorkflowStore.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import type { Workflow, TaskNode } from "@minions/engine-next";
+import type { Workflow, TaskNode } from "@minions/engine";
 import { useWorkflowStore } from "../workflowStore.js";
 
 const CONN = "conn-1";

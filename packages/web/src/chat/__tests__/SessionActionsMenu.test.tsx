@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { Workflow } from "@minions/engine-next";
+import type { Workflow } from "@minions/engine";
 import type { Connection } from "../../connections/store.js";
 
 vi.mock("../../transport/rest.js", () => ({

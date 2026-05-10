@@ -5,7 +5,7 @@ import { loadSnapshot, saveSnapshot } from "../transport/snapshotCache.js";
 import { useWorkflowStore } from "./workflowStore.js";
 import { useVersionStore } from "./version.js";
 import type { SseConnection } from "../transport/sse.js";
-import type { Workflow } from "@minions/engine-next";
+import type { Workflow } from "@minions/engine";
 
 async function refetch(conn: Connection, isDisposed: () => boolean): Promise<Workflow[]> {
   const workflows = await listWorkflows(conn);

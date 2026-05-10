@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Workflow, TaskNode, WorkflowEvent } from "@minions/engine-next";
+import type { Workflow, TaskNode, WorkflowEvent } from "@minions/engine";
 import { applyEventToSnapshot } from "../transport/snapshotCache.js";
 
 interface WorkflowStore {

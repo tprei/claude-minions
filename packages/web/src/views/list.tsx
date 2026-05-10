@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useCallback } from "react";
-import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine-next";
+import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useConnectionStore, type Connection } from "../connections/store.js";
 import { useRootStore } from "../store/root.js";

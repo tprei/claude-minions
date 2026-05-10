@@ -1,4 +1,4 @@
-import type { TaskNode } from "@minions/engine-next";
+import type { TaskNode } from "@minions/engine";
 import { useWorkflowStore, selectTaskNode, selectTaskNodes } from "./workflowStore.js";
 
 /**

@@ -1,5 +1,5 @@
 import { get as idbGet, set as idbSet } from "idb-keyval";
-import type { Workflow, WorkflowEvent } from "@minions/engine-next";
+import type { Workflow, WorkflowEvent } from "@minions/engine";
 
 export interface ConnectionSnapshot {
   workflows: Workflow[];

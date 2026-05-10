@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { WorkflowSpec } from "@minions/engine-next";
+import type { WorkflowSpec } from "@minions/engine";
 import { useConnectionStore } from "../connections/store.js";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useVersionStore } from "../store/version.js";

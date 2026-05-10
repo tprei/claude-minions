@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, type ReactElement } from "react";
-import type { Workflow } from "@minions/engine-next";
+import type { Workflow } from "@minions/engine";
 import { AppLayout } from "./views/layout.js";
 import { Header } from "./views/header.js";
 import { Sidebar } from "./views/sidebar.js";

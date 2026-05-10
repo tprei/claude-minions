@@ -1,4 +1,4 @@
-import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine-next";
+import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useConnectionStore } from "../connections/store.js";
 

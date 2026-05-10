@@ -1,4 +1,4 @@
-import type { TaskExecutionStatus } from "@minions/engine-next";
+import type { TaskExecutionStatus } from "@minions/engine";
 
 export interface StatusVisual {
   dotClass: string;

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# The supervisor is now embedded in the engine and starts automatically.
+# This script starts the engine in production mode.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -7,8 +9,4 @@ if [ -f .env.local ]; then
   . ./.env.local
   set +a
 fi
-if [ -f packages/engine/dist/bin/supervise.js ]; then
-  exec node packages/engine/dist/bin/supervise.js "$@"
-else
-  exec pnpm --filter @minions/engine exec tsx packages/engine/src/bin/supervise.ts "$@"
-fi
+exec pnpm --filter @minions/engine run start

@@ -7,7 +7,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import type { Workflow } from "@minions/engine-next";
+import type { Workflow } from "@minions/engine";
 import type { Connection } from "../connections/store.js";
 import { cx } from "../util/classnames.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";

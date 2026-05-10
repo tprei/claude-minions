@@ -2,7 +2,7 @@ import type { Connection } from "../connections/store.js";
 import type {
   Workflow,
   WorkflowSpec,
-} from "@minions/engine-next";
+} from "@minions/engine";
 
 export class ApiError extends Error {
   readonly code: string;

@@ -3,7 +3,7 @@
  * Verifies that each connection's workflow state is stored independently.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import type { Workflow, TaskNode } from "@minions/engine-next";
+import type { Workflow, TaskNode } from "@minions/engine";
 import { useWorkflowStore } from "../workflowStore.js";
 
 function makeTask(id: string, workflowId: string): TaskNode {
