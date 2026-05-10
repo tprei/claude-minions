@@ -27,8 +27,8 @@ RUN pnpm --filter @minions/shared run build \
  && pnpm --filter @minions/web    run build
 
 # ----- runtime ----------------------------------------------------------------
-# MINIONS_TOKEN must be injected at runtime (compose env_file or `docker run -e`).
-# Never bake into the image. The /api/health endpoint is public; all other /api routes
+# MWF_TOKEN must be injected at runtime (compose env_file or `docker run -e`).
+# Never bake into the image. The /health endpoint is public; all other routes
 # require the token via Authorization: Bearer or ?token= query for SSE.
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
@@ -76,7 +76,7 @@ ENV MWF_PORT=8787 \
     MWF_WEB_DIST=/app/packages/web/dist
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:'+process.env.MWF_PORT+'/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+  CMD node -e "require('http').get('http://127.0.0.1:'+process.env.MWF_PORT+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 ENTRYPOINT ["tini","--"]
 CMD ["node","--import","tsx/esm","packages/engine/src/main.ts"]

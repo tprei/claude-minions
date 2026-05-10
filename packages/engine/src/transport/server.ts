@@ -101,6 +101,8 @@ export function createServer(deps: ServerDeps): Hono {
     );
   });
 
+  app.get("/health", (c) => c.json({ status: "ok" }));
+
   app.post("/workflows", async (c) => {
     let body: unknown;
     try {
