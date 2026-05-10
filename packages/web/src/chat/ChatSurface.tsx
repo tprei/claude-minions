@@ -502,8 +502,18 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
     (s) => (activeId ? s.byConnection.get(activeId) ?? EMPTY_WORKFLOWS : EMPTY_WORKFLOWS),
   );
 
-  const workflow = sessionSlug ? workflowsMap.get(sessionSlug) : undefined;
-  const task = workflow ? Object.values(workflow.graph)[0] : undefined;
+  const { workflow, task } = (() => {
+    if (!sessionSlug) return { workflow: undefined, task: undefined };
+    const direct = workflowsMap.get(sessionSlug);
+    if (direct) {
+      return { workflow: direct, task: Object.values(direct.graph)[0] };
+    }
+    for (const wf of workflowsMap.values()) {
+      const t = wf.graph[sessionSlug];
+      if (t) return { workflow: wf, task: t };
+    }
+    return { workflow: undefined, task: undefined };
+  })();
 
   useEffect(() => {
     setLayout(CHAT_PANEL, { size: width, collapsed: !open });
