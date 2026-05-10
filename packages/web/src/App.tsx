@@ -10,7 +10,7 @@ import { parseUrl, type ViewKind } from "./routing/parseUrl.js";
 import { subscribeUrlChanges, setUrlState } from "./routing/urlState.js";
 import { useConnectionStore } from "./connections/store.js";
 import { useRootStore } from "./store/root.js";
-import { useWorkflowStore } from "./store/workflowStore.js";
+import { useWorkflowStore, EMPTY_WORKFLOWS } from "./store/workflowStore.js";
 import { apiFetch } from "./transport/rest.js";
 import type { Connection } from "./connections/store.js";
 import { ViewSwitcher } from "./views/ViewSwitcher.js";
@@ -62,7 +62,7 @@ export function App(): ReactElement {
   const hydrated = useConnectionStore(s => s._hydrated);
   const activeConn = useRootStore(s => s.getActiveConnection());
   const activeId = useConnectionStore(s => s.activeId);
-  const workflowsMap = useWorkflowStore(s => (activeId ? s.byConnection.get(activeId) ?? new Map<string, Workflow>() : new Map<string, Workflow>()));
+  const workflowsMap = useWorkflowStore(s => (activeId ? s.byConnection.get(activeId) ?? EMPTY_WORKFLOWS : EMPTY_WORKFLOWS));
 
   useEffect(() => {
     const unsub = subscribeUrlChanges(() => {

@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useCallback } from "react";
 import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine";
-import { useWorkflowStore } from "../store/workflowStore.js";
+import { useWorkflowStore, EMPTY_WORKFLOWS } from "../store/workflowStore.js";
 import { useConnectionStore, type Connection } from "../connections/store.js";
 import { useRootStore } from "../store/root.js";
 import { refetchConnection } from "../store/connectionState.js";
@@ -54,7 +54,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterRepo,
   const activeId = useConnectionStore((s) => s.activeId);
   const conn = useRootStore((s) => s.getActiveConnection());
   const workflowsMap = useWorkflowStore(
-    (s) => (activeId ? s.byConnection.get(activeId) ?? new Map<string, Workflow>() : new Map<string, Workflow>()),
+    (s) => (activeId ? s.byConnection.get(activeId) ?? EMPTY_WORKFLOWS : EMPTY_WORKFLOWS),
   );
   const [statusFilter, setStatusFilter] = useState<Set<TaskExecutionStatus>>(new Set());
   const [search, setSearch] = useState("");

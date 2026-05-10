@@ -17,7 +17,7 @@ import ReactFlow, {
 } from "reactflow";
 import dagre from "dagre";
 import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine";
-import { useWorkflowStore } from "../store/workflowStore.js";
+import { useWorkflowStore, EMPTY_WORKFLOWS } from "../store/workflowStore.js";
 import { useConnectionStore, type Connection } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
@@ -485,7 +485,7 @@ function DagCanvasChrome({ children, breakpoint, collapsed, toggleCollapsed }: D
 export function DagCanvasView({ dagId }: Props) {
   const activeId = useConnectionStore((s) => s.activeId);
   const workflowsMap = useWorkflowStore(
-    (s) => (activeId ? s.byConnection.get(activeId) ?? new Map<string, Workflow>() : new Map<string, Workflow>()),
+    (s) => (activeId ? s.byConnection.get(activeId) ?? EMPTY_WORKFLOWS : EMPTY_WORKFLOWS),
   );
   const workflows = useMemo(() => Array.from(workflowsMap.values()), [workflowsMap]);
 
