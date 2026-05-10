@@ -13,6 +13,7 @@
     "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
+    "@minions/engine-next": "workspace:*",
     "@minions/shared": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
