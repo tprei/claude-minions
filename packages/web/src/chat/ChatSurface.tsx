@@ -393,6 +393,7 @@ function TranscriptPanel({
 }) {
   const hasRuns = task.runs.length > 0;
   const [events, setEvents] = useState<TranscriptEvent[]>([]);
+  const [hydrating, setHydrating] = useState(false);
 
   // Reset transcript when the active task or workflow changes
   const taskKey = `${workflowId}:${task.id}`;
@@ -406,6 +407,7 @@ function TranscriptPanel({
   useEffect(() => {
     if (!conn || !latestRunId) return;
     let cancelled = false;
+    setHydrating(true);
     listTranscript(conn, workflowId, latestRunId)
       .then(({ transcript }) => {
         if (cancelled) return;
@@ -417,6 +419,9 @@ function TranscriptPanel({
       })
       .catch(() => {
         if (!cancelled) setEvents([]);
+      })
+      .finally(() => {
+        if (!cancelled) setHydrating(false);
       });
     return () => { cancelled = true; };
   }, [conn, workflowId, task.id, latestRunId, task.runs.length]);
@@ -452,6 +457,13 @@ function TranscriptPanel({
           <div className="text-center">
             <Spinner size="sm" />
             <p className="text-xs text-fg-subtle mt-2">Waiting for task to start…</p>
+          </div>
+        </div>
+      ) : hydrating && events.length === 0 ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <Spinner size="sm" />
+            <p className="text-xs text-fg-subtle mt-2">Loading transcript…</p>
           </div>
         </div>
       ) : (
