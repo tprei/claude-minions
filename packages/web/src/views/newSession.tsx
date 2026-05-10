@@ -132,7 +132,7 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
         const result = await planWorkflow(conn, trimmedPrompt);
         spec = result.spec;
       } catch (planErr) {
-        // 503 means planner not configured — fall back to single-task
+        // 503 means planner unavailable/disabled — fall back to single-task
         const errStatus = (planErr !== null && typeof planErr === "object" && "status" in planErr)
           ? (planErr as { status: number }).status
           : 0;

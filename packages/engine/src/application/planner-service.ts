@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { spawn } from "node:child_process";
 import { DomainError } from "../domain/errors.js";
 import type { Logger } from "../observability/logger.js";
 import type { WorkflowSpec, TaskSpec } from "../domain/types.js";
@@ -37,17 +37,13 @@ Output schema (strict JSON, no extra fields at top level):
   ]
 }`;
 
-type MessagesCreateCallable = (
-  params: Anthropic.MessageCreateParamsNonStreaming,
-) => Promise<Anthropic.Message>;
+export type RunClaudeFn = (prompt: string, signal?: AbortSignal) => Promise<string>;
 
 export interface WorkflowPlannerServiceDeps {
-  apiKey: string;
-  model: string;
+  runClaude?: RunClaudeFn;
+  claudeCommand?: string[];
   log: Logger;
   now: () => string;
-  /** Seam for testing — overrides the real Anthropic client call. */
-  messagesCreate?: MessagesCreateCallable;
 }
 
 function generateId(prefix: string): string {
@@ -86,51 +82,133 @@ function detectCycle(tasks: RawTaskSpec[]): boolean {
   return false;
 }
 
-export class WorkflowPlannerService {
-  private readonly deps: WorkflowPlannerServiceDeps;
-  private readonly messagesCreate: MessagesCreateCallable;
+function spawnClaude(claudeCommand: string[], prompt: string, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const [cmd, ...baseArgs] = claudeCommand;
+    if (!cmd) {
+      reject(new Error("claudeCommand must be non-empty"));
+      return;
+    }
+    const args = [
+      ...baseArgs,
+      "--system-prompt", SYSTEM_PROMPT,
+      "--output-format", "json",
+      "--no-session-persistence",
+      prompt,
+    ];
 
-  constructor(deps: WorkflowPlannerServiceDeps) {
-    this.deps = deps;
-    if (deps.messagesCreate) {
-      this.messagesCreate = deps.messagesCreate;
-    } else {
-      const client = new Anthropic({ apiKey: deps.apiKey });
-      this.messagesCreate = (params) => client.messages.create(params);
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+
+    if (signal) {
+      const onAbort = () => { child.kill("SIGTERM"); };
+      signal.addEventListener("abort", onAbort, { once: true });
+      child.once("exit", () => signal.removeEventListener("abort", onAbort));
+    }
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    child.on("error", (err) => reject(err));
+
+    child.on("close", (code) => {
+      if (signal?.aborted) {
+        reject(new DomainError("invalid_plan", "planner: request aborted", {}));
+        return;
+      }
+      if (code !== 0) {
+        const stderr = Buffer.concat(stderrChunks).toString("utf8").slice(0, 400);
+        reject(new Error(`claude exited with code ${String(code)}: ${stderr}`));
+        return;
+      }
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      let resultText: string;
+      try {
+        const envelope = JSON.parse(stdout) as { result?: string };
+        resultText = envelope.result ?? stdout;
+      } catch {
+        resultText = stdout;
+      }
+      resolve(resultText);
+    });
+  });
+}
+
+function extractJson(text: string): RawPlan {
+  const trimmed = text.trim();
+
+  // Try direct parse first
+  try {
+    return JSON.parse(trimmed) as RawPlan;
+  } catch {
+    // fall through
+  }
+
+  // Strip markdown fences: ```json ... ``` or ``` ... ```
+  const fenceMatch = /^```(?:json)?\s*([\s\S]*?)```\s*$/m.exec(trimmed);
+  if (fenceMatch?.[1]) {
+    try {
+      return JSON.parse(fenceMatch[1].trim()) as RawPlan;
+    } catch {
+      // fall through
     }
   }
 
-  async plan({ prompt }: { prompt: string }): Promise<WorkflowSpec> {
-    const { model, log } = this.deps;
+  // Extract largest balanced {...} block
+  let bestStart = -1;
+  let bestLen = 0;
+  for (let i = 0; i < trimmed.length; i++) {
+    if (trimmed[i] !== "{") continue;
+    let depth = 0;
+    let j = i;
+    for (; j < trimmed.length; j++) {
+      if (trimmed[j] === "{") depth++;
+      else if (trimmed[j] === "}") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    if (depth === 0 && j - i + 1 > bestLen) {
+      bestStart = i;
+      bestLen = j - i + 1;
+    }
+  }
+  if (bestStart >= 0) {
+    try {
+      return JSON.parse(trimmed.slice(bestStart, bestStart + bestLen)) as RawPlan;
+    } catch {
+      // fall through
+    }
+  }
+
+  throw new Error("no parseable JSON found");
+}
+
+export class WorkflowPlannerService {
+  private readonly deps: WorkflowPlannerServiceDeps;
+  private readonly claudeCommand: string[];
+
+  constructor(deps: WorkflowPlannerServiceDeps) {
+    this.deps = deps;
+    this.claudeCommand = deps.claudeCommand ?? ["claude", "-p"];
+  }
+
+  async plan({ prompt, signal }: { prompt: string; signal?: AbortSignal }): Promise<WorkflowSpec> {
+    const { log } = this.deps;
 
     log.info("planner: requesting plan", { prompt: prompt.slice(0, 80) });
 
-    const response = await this.messagesCreate({
-      model,
-      max_tokens: 2048,
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: [
-        { role: "user", content: prompt },
-      ],
-    });
-
-    const textBlock = response.content.find((b) => b.type === "text");
-    if (!textBlock || textBlock.type !== "text") {
-      throw new DomainError("invalid_plan", "planner: no text block in response", {});
-    }
+    const runClaude = this.deps.runClaude ?? ((p: string, sig?: AbortSignal) => spawnClaude(this.claudeCommand, p, sig));
+    const responseText = await runClaude(prompt, signal);
 
     let raw: RawPlan;
     try {
-      raw = JSON.parse(textBlock.text) as RawPlan;
+      raw = extractJson(responseText);
     } catch {
-      log.error("planner: failed to parse JSON", { text: textBlock.text.slice(0, 200) });
-      throw new DomainError("invalid_plan", "planner: LLM returned invalid JSON", { text: textBlock.text.slice(0, 200) });
+      log.error("planner: failed to parse JSON", { text: responseText.slice(0, 200) });
+      throw new DomainError("invalid_plan", "planner: LLM returned invalid JSON", { text: responseText.slice(0, 200) });
     }
 
     if (!VALID_KINDS.has(raw.kind)) {

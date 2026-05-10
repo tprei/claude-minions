@@ -307,13 +307,8 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     serverDeps.schedulerService = schedulerService;
   }
 
-  const anthropicApiKey = process.env["MWF_ANTHROPIC_API_KEY"] ?? process.env["ANTHROPIC_API_KEY"];
-  const plannerModel = process.env["MWF_PLANNER_MODEL"] ?? "claude-sonnet-4-6";
-
-  if (anthropicApiKey) {
+  if (!process.env["MWF_PLANNER_DISABLED"]) {
     serverDeps.plannerService = new WorkflowPlannerService({
-      apiKey: anthropicApiKey,
-      model: plannerModel,
       log: log.child({ component: "planner" }),
       now,
     });

@@ -2,49 +2,26 @@ import { describe, expect, it } from "vitest";
 import { WorkflowPlannerService } from "../../src/application/planner-service.js";
 import { DomainError } from "../../src/domain/errors.js";
 import { silentLogger } from "../test-helpers.js";
-import type Anthropic from "@anthropic-ai/sdk";
 
 const NOW = "2026-05-10T00:00:00.000Z";
 const now = () => NOW;
 
-function makeMessage(text: string): Anthropic.Message {
-  return {
-    id: "msg-test",
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text, citations: [] }],
-    model: "claude-sonnet-4-6",
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: {
-      input_tokens: 100,
-      output_tokens: 50,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-    },
-  } as unknown as Anthropic.Message;
-}
-
-function makePlanner(
-  messagesCreate: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>,
-) {
+function makePlanner(runClaude: (prompt: string) => Promise<string>) {
   return new WorkflowPlannerService({
-    apiKey: "test-key",
-    model: "claude-sonnet-4-6",
     log: silentLogger(),
     now,
-    messagesCreate,
+    runClaude,
   });
 }
 
 describe("WorkflowPlannerService", () => {
-  it("parses a valid single-task response", async () => {
+  it("parses a valid single-task response — bare JSON", async () => {
     const raw = JSON.stringify({
       kind: "single-task",
       tasks: [{ id: "t0", title: "Do the thing", prompt: "Do the thing in detail", dependsOn: [] }],
     });
 
-    const planner = makePlanner(async () => makeMessage(raw));
+    const planner = makePlanner(async () => raw);
     const spec = await planner.plan({ prompt: "Do the thing" });
 
     expect(spec.kind).toBe("single-task");
@@ -57,6 +34,20 @@ describe("WorkflowPlannerService", () => {
     expect(typeof spec.tasks[0]?.id).toBe("string");
   });
 
+  it("parses a valid single-task response — JSON wrapped in ```json fences", async () => {
+    const inner = JSON.stringify({
+      kind: "single-task",
+      tasks: [{ id: "t0", title: "Fenced task", prompt: "Do it inside fences", dependsOn: [] }],
+    });
+    const fenced = "```json\n" + inner + "\n```";
+
+    const planner = makePlanner(async () => fenced);
+    const spec = await planner.plan({ prompt: "Fenced" });
+
+    expect(spec.kind).toBe("single-task");
+    expect(spec.tasks[0]?.title).toBe("Fenced task");
+  });
+
   it("parses a valid multi-task manual-dag response with dependsOn", async () => {
     const raw = JSON.stringify({
       kind: "manual-dag",
@@ -67,7 +58,7 @@ describe("WorkflowPlannerService", () => {
       ],
     });
 
-    const planner = makePlanner(async () => makeMessage(raw));
+    const planner = makePlanner(async () => raw);
     const spec = await planner.plan({ prompt: "Setup, build, and test the project" });
 
     expect(spec.kind).toBe("manual-dag");
@@ -88,14 +79,14 @@ describe("WorkflowPlannerService", () => {
   });
 
   it("rejects malformed JSON", async () => {
-    const planner = makePlanner(async () => makeMessage("not json at all {{{{"));
+    const planner = makePlanner(async () => "not json at all {{{{");
     await expect(planner.plan({ prompt: "do something" })).rejects.toThrow(DomainError);
     await expect(planner.plan({ prompt: "do something" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
   it("rejects a plan with zero tasks", async () => {
     const raw = JSON.stringify({ kind: "single-task", tasks: [] });
-    const planner = makePlanner(async () => makeMessage(raw));
+    const planner = makePlanner(async () => raw);
     await expect(planner.plan({ prompt: "do something" })).rejects.toThrow(DomainError);
     await expect(planner.plan({ prompt: "do something" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
@@ -107,7 +98,7 @@ describe("WorkflowPlannerService", () => {
         { id: "t0", title: "A", prompt: "do A", dependsOn: ["nonexistent"] },
       ],
     });
-    const planner = makePlanner(async () => makeMessage(raw));
+    const planner = makePlanner(async () => raw);
     await expect(planner.plan({ prompt: "do A" })).rejects.toThrow(DomainError);
     await expect(planner.plan({ prompt: "do A" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
@@ -120,14 +111,14 @@ describe("WorkflowPlannerService", () => {
         { id: "t1", title: "B", prompt: "do B", dependsOn: ["t0"] },
       ],
     });
-    const planner = makePlanner(async () => makeMessage(raw));
+    const planner = makePlanner(async () => raw);
     await expect(planner.plan({ prompt: "A and B depend on each other" })).rejects.toThrow(DomainError);
     await expect(planner.plan({ prompt: "A and B depend on each other" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
   it("rejects an invalid kind", async () => {
     const raw = JSON.stringify({ kind: "unknown-kind", tasks: [{ id: "t0", title: "A", prompt: "do A", dependsOn: [] }] });
-    const planner = makePlanner(async () => makeMessage(raw));
+    const planner = makePlanner(async () => raw);
     await expect(planner.plan({ prompt: "do A" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
@@ -140,7 +131,7 @@ describe("WorkflowPlannerService", () => {
       ],
     });
 
-    const planner = makePlanner(async () => makeMessage(raw));
+    const planner = makePlanner(async () => raw);
     const spec = await planner.plan({ prompt: "do two tasks" });
 
     // LLM ids must not appear in the output
@@ -155,5 +146,19 @@ describe("WorkflowPlannerService", () => {
     const second = spec.tasks.find((t) => t.title === "Second");
     const first = spec.tasks.find((t) => t.title === "First");
     expect(second?.dependsOn).toEqual([first?.id]);
+  });
+
+  it("extracts JSON from prose-wrapped response (largest {…} block)", async () => {
+    const inner = JSON.stringify({
+      kind: "single-task",
+      tasks: [{ id: "t0", title: "Prose task", prompt: "extracted from prose", dependsOn: [] }],
+    });
+    const wrapped = `Here is the plan:\n${inner}\nHope that helps!`;
+
+    const planner = makePlanner(async () => wrapped);
+    const spec = await planner.plan({ prompt: "Prose" });
+
+    expect(spec.kind).toBe("single-task");
+    expect(spec.tasks[0]?.title).toBe("Prose task");
   });
 });
