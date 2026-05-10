@@ -46,6 +46,7 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
   const [title, setTitle] = useState("");
   const [repoId, setRepoId] = useState<string>(defaultRepoId);
   const [baseBranch, setBaseBranch] = useState("main");
+  const [usePlanner, setUsePlanner] = useState(false);
   const { attachments, setAttachments, onPaste, onDrop, clear } = useAttachments();
 
   const [submitting, setSubmitting] = useState(false);
@@ -127,6 +128,14 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
     setSubmitting(true);
     setError(null);
     try {
+      if (!usePlanner) {
+        const spec = makeSingleTaskSpec();
+        const workflow = await createWorkflow(conn, spec);
+        useWorkflowStore.getState().upsert(activeId, workflow);
+        clear();
+        setUrlState({ connectionId: activeId, view: "list", sessionSlug: null, query: {} });
+        return;
+      }
       let spec: WorkflowSpec;
       try {
         const result = await planWorkflow(conn, trimmedPrompt);
@@ -279,6 +288,15 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
             />
           </div>
         )}
+
+        <label className="flex items-center gap-2 text-xs text-fg-muted cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={usePlanner}
+            onChange={e => setUsePlanner(e.target.checked)}
+          />
+          <span>Plan with agent (decompose into a DAG)</span>
+        </label>
 
         <div className="flex flex-col gap-1.5">
           <label className="text-xs text-fg-muted">Attachments</label>
