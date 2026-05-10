@@ -125,10 +125,10 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterRepo,
     return list;
   }, [rows, filterStatus, filterMode, filterRepo, statusFilter, search, sortDir]);
 
-  const navigate = (workflowId: string) => {
+  const navigate = (taskId: string) => {
     const { query } = parseUrl();
     if (!activeId) return;
-    setUrlState({ connectionId: activeId, view: "list", sessionSlug: workflowId, query });
+    setUrlState({ connectionId: activeId, view: "list", sessionSlug: taskId, query });
   };
 
   const navigateToDag = (workflowId: string) => {
@@ -221,7 +221,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterRepo,
                     key={`${row.workflowId}/${row.taskId}`}
                     row={row}
                     conn={conn}
-                    onClick={() => navigate(row.workflowId)}
+                    onClick={() => navigate(row.taskId)}
                     onOpenDag={navigateToDag}
                   />
                 ))}
@@ -233,7 +233,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterRepo,
                   key={`${row.workflowId}/${row.taskId}`}
                   row={row}
                   conn={conn}
-                  onClick={() => navigate(row.workflowId)}
+                  onClick={() => navigate(row.taskId)}
                   onOpenDag={navigateToDag}
                 />
               ))}
