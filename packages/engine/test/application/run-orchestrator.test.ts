@@ -67,7 +67,7 @@ function makeOrchestrator(
     workspaceId: "stub-wf1_task1",
     applyCommand,
     publish: publish ?? (() => {}),
-    persistTranscript,
+    ...(persistTranscript ? { persistTranscript } : {}),
     now: () => now,
     log: silentLogger(),
   });
