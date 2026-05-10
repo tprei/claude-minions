@@ -8,7 +8,7 @@ import type { SseConnection } from "../transport/sse.js";
 import type { Workflow } from "@minions/engine";
 
 async function refetch(conn: Connection, isDisposed: () => boolean): Promise<Workflow[]> {
-  const workflows = await listWorkflows(conn);
+  const workflows = await listWorkflows(conn, { includeCompleted: true });
   if (isDisposed()) return [];
   useWorkflowStore.getState().replaceAll(conn.id, workflows);
   useVersionStore.getState().seedFromWorkflows(
