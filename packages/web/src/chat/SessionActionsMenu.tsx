@@ -7,38 +7,30 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import type { Session } from "@minions/shared";
+import type { Workflow } from "@minions/engine-next";
 import type { Connection } from "../connections/store.js";
 import { cx } from "../util/classnames.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { Sheet } from "../components/Sheet.js";
 import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { hapticTap } from "../pwa/haptics.js";
-import { deleteSession, postCommand } from "../transport/rest.js";
-import { CancelSessionDialog } from "./cancelSession.js";
+import { dispatchCommand } from "../transport/rest.js";
+import { useWorkflowStore } from "../store/workflowStore.js";
+import { useConnectionStore } from "../connections/store.js";
 
 interface Props {
-  session: Session;
+  workflow: Workflow;
   conn: Connection;
   onAfterDelete?: () => void;
   className?: string;
 }
 
-type DialogKind = "cancel" | "close" | "delete" | null;
+type DialogKind = "cancel" | "delete" | null;
 
-const CANCELLABLE_STATUSES: ReadonlySet<Session["status"]> = new Set([
-  "pending",
-  "running",
-  "waiting_input",
-]);
-const TERMINAL_STATUSES: ReadonlySet<Session["status"]> = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-]);
+const ACTIVE_STATUSES = new Set(["active"]);
 
 export function SessionActionsMenu({
-  session,
+  workflow,
   conn,
   onAfterDelete,
   className,
@@ -75,33 +67,40 @@ export function SessionActionsMenu({
     };
   }, [open, close, isMobile]);
 
-  const canCancel = CANCELLABLE_STATUSES.has(session.status);
-  const canClose = TERMINAL_STATUSES.has(session.status) && Boolean(session.worktreePath);
+  const canCancel = ACTIVE_STATUSES.has(workflow.status);
 
   const onAction = (kind: Exclude<DialogKind, null>): void => {
     setOpen(false);
     setDialog(kind);
   };
 
-  const onDeleteConfirm = useCallback(async (): Promise<void> => {
-    await deleteSession(conn, session.slug);
-    onAfterDelete?.();
-  }, [conn, session.slug, onAfterDelete]);
-
-  const onCloseConfirm = useCallback(async (): Promise<void> => {
-    await postCommand(conn, {
-      kind: "close",
-      sessionSlug: session.slug,
-      removeWorktree: true,
+  const onCancelConfirm = useCallback(async (): Promise<void> => {
+    const firstTask = Object.values(workflow.graph)[0];
+    if (!firstTask) return;
+    await dispatchCommand(conn, {
+      kind: "transition-task",
+      workflowId: workflow.id,
+      transition: {
+        kind: "cancel",
+        taskId: firstTask.id,
+        now: new Date().toISOString(),
+      },
     });
-  }, [conn, session.slug]);
+  }, [conn, workflow]);
+
+  const onDeleteConfirm = useCallback(async (): Promise<void> => {
+    const activeId = useConnectionStore.getState().activeId;
+    if (!activeId) return;
+    useWorkflowStore.getState().remove(activeId, workflow.id);
+    onAfterDelete?.();
+  }, [workflow.id, onAfterDelete]);
 
   return (
     <span className={cx("relative inline-flex", className)}>
       <button
         ref={triggerRef}
         type="button"
-        aria-label="Session actions"
+        aria-label="Task actions"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
@@ -128,16 +127,13 @@ export function SessionActionsMenu({
           {canCancel && (
             <MenuItem onClick={() => onAction("cancel")}>Cancel</MenuItem>
           )}
-          {canClose && (
-            <MenuItem onClick={() => onAction("close")}>Close</MenuItem>
-          )}
           <MenuItem onClick={() => onAction("delete")} variant="danger">
-            Delete…
+            Remove…
           </MenuItem>
         </div>
       )}
       {isMobile && open && (
-        <Sheet open={open} onClose={close} title={session.title}>
+        <Sheet open={open} onClose={close} title={workflow.id}>
           <div
             id={menuId}
             role="menu"
@@ -147,51 +143,31 @@ export function SessionActionsMenu({
             {canCancel && (
               <MenuItem mobile onClick={() => onAction("cancel")}>Cancel</MenuItem>
             )}
-            {canClose && (
-              <MenuItem mobile onClick={() => onAction("close")}>Close</MenuItem>
-            )}
             <MenuItem mobile onClick={() => onAction("delete")} variant="danger">
-              Delete…
+              Remove…
             </MenuItem>
           </div>
         </Sheet>
       )}
 
       {canCancel && (
-        <CancelSessionDialog
+        <ConfirmDialog
           open={dialog === "cancel"}
           onClose={() => setDialog(null)}
-          sessions={[{ slug: session.slug, title: session.title }]}
-          conn={conn}
+          onConfirm={onCancelConfirm}
+          title="Cancel task"
+          body={<p>Cancel all running tasks in this workflow?</p>}
+          confirmLabel="Cancel task"
+          variant="danger"
         />
       )}
-      <ConfirmDialog
-        open={dialog === "close"}
-        onClose={() => setDialog(null)}
-        onConfirm={onCloseConfirm}
-        title="Close session"
-        body={
-          <p>
-            Cancel {session.title} ({session.slug}) and remove its worktree on
-            disk? Transcript and history are preserved.
-          </p>
-        }
-        confirmLabel="Close session"
-        variant="danger"
-      />
       <ConfirmDialog
         open={dialog === "delete"}
         onClose={() => setDialog(null)}
         onConfirm={onDeleteConfirm}
-        title="Delete session"
-        body={
-          <p>
-            Permanently delete {session.title} ({session.slug})? This removes
-            the session row, transcript, screenshots, checkpoints, worktree on
-            disk, and uploads. Cannot be undone.
-          </p>
-        }
-        confirmLabel="Delete session"
+        title="Remove workflow"
+        body={<p>Remove this workflow from the list? This only removes it from the local view.</p>}
+        confirmLabel="Remove"
         variant="danger"
       />
     </span>

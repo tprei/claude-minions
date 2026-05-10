@@ -203,3 +203,30 @@ export function getAlerts(
   const qs = params.toString();
   return apiFetch<{ alerts: unknown[] }>(conn, qs ? `/alerts?${qs}` : "/alerts");
 }
+
+export interface ListRepoFilesOptions {
+  q?: string;
+  limit?: number;
+}
+
+export function listRepoFiles(
+  conn: Connection,
+  repoId: string,
+  opts?: ListRepoFilesOptions,
+): Promise<{ items: string[] }> {
+  const params = new URLSearchParams();
+  params.set("repoId", repoId);
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  return apiFetch<{ items: string[] }>(conn, `/repos/files?${params.toString()}`);
+}
+
+export function uploadAttachment(
+  conn: Connection,
+  data: { name: string; mimeType: string; dataBase64: string },
+): Promise<{ url: string }> {
+  return apiFetch<{ url: string }>(conn, "/attachments", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}

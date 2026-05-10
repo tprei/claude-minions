@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { CreateSessionRequest, Session, SessionMode } from "@minions/shared";
+import type { WorkflowSpec } from "@minions/engine-next";
 import { useConnectionStore } from "../connections/store.js";
-import { useSessionStore } from "../store/sessionStore.js";
+import { useWorkflowStore } from "../store/workflowStore.js";
 import { useVersionStore } from "../store/version.js";
+import { createWorkflow } from "../transport/rest.js";
 import { setUrlState } from "../routing/urlState.js";
 import { AttachmentBar, useAttachments } from "../chat/attachments.js";
 import { startListening, stopListening, isVoiceSupported, type VoiceSession } from "../chat/voice.js";
@@ -21,18 +22,15 @@ interface Props {
   filterRepo?: string | null;
 }
 
-const MODE_OPTIONS: { value: SessionMode; label: string }[] = [
-  { value: "task", label: "Task" },
-  { value: "ship", label: "Ship" },
-  { value: "loop", label: "Loop" },
-  { value: "think", label: "Think" },
-  { value: "plan", label: "Plan" },
-];
-
 const NONE_REPO = "__none__";
 
-export function NewSessionView({ api, filterRepo = null }: Props) {
+function generateId(): string {
+  return `wf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function NewSessionView({ api: _api, filterRepo = null }: Props) {
   const activeId = useConnectionStore(s => s.activeId);
+  const conn = useConnectionStore(s => s.connections.find(c => c.id === s.activeId) ?? null);
   const repos = useVersionStore(s => (activeId ? s.byConnection.get(activeId)?.repos : undefined));
 
   const repoIds = repos?.map(r => r.id) ?? [];
@@ -45,11 +43,8 @@ export function NewSessionView({ api, filterRepo = null }: Props) {
 
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
-  const [mode, setMode] = useState<SessionMode>("task");
   const [repoId, setRepoId] = useState<string>(defaultRepoId);
   const [baseBranch, setBaseBranch] = useState("main");
-  const [modelHint, setModelHint] = useState("");
-  const [costBudgetUsd, setCostBudgetUsd] = useState<number | undefined>(undefined);
   const { attachments, setAttachments, onPaste, onDrop, clear } = useAttachments();
 
   const [submitting, setSubmitting] = useState(false);
@@ -98,7 +93,7 @@ export function NewSessionView({ api, filterRepo = null }: Props) {
 
   const trimmedPrompt = prompt.trim();
   const promptValid = trimmedPrompt.length >= 5;
-  const canSubmit = promptValid && !submitting;
+  const canSubmit = promptValid && !submitting && !!conn;
 
   const effectiveTitle = useMemo(() => {
     const t = title.trim();
@@ -108,38 +103,28 @@ export function NewSessionView({ api, filterRepo = null }: Props) {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!canSubmit || !activeId) return;
+    if (!canSubmit || !activeId || !conn) return;
     setSubmitting(true);
     setError(null);
     try {
-      const body: CreateSessionRequest = {
-        prompt: trimmedPrompt,
-        title: effectiveTitle,
-        mode,
+      const taskId = generateId();
+      const spec: WorkflowSpec = {
+        id: generateId(),
+        kind: "single-task",
+        tasks: [{
+          id: taskId,
+          title: effectiveTitle || trimmedPrompt.slice(0, 60),
+          prompt: trimmedPrompt,
+          ...(repoId !== NONE_REPO && baseBranch.trim() ? { mergeTarget: baseBranch.trim() } : {}),
+        }],
+        policy: {},
       };
-      if (repoId !== NONE_REPO) {
-        body.repoId = repoId;
-        const branch = baseBranch.trim();
-        if (branch.length > 0) body.baseBranch = branch;
-      }
-      const hint = modelHint.trim();
-      if (hint.length > 0) body.modelHint = hint;
-      if (costBudgetUsd !== undefined && costBudgetUsd > 0) {
-        body.costBudgetUsd = costBudgetUsd;
-      }
-      if (attachments.length > 0) {
-        body.attachments = attachments.map(a => ({
-          name: a.name,
-          mimeType: a.mimeType,
-          dataBase64: a.dataBase64,
-        }));
-      }
-      const session = (await api.post("/api/sessions", body)) as Session;
+      const workflow = await createWorkflow(conn, spec);
+      useWorkflowStore.getState().upsert(activeId, workflow);
       clear();
-      useSessionStore.getState().upsertSession(activeId, session);
-      setUrlState({ connectionId: activeId, view: "list", sessionSlug: session.slug });
+      setUrlState({ connectionId: activeId, view: "list", sessionSlug: null, query: {} });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create session");
+      setError(err instanceof Error ? err.message : "Failed to create workflow");
     } finally {
       setSubmitting(false);
     }
@@ -163,7 +148,7 @@ export function NewSessionView({ api, filterRepo = null }: Props) {
       <form onSubmit={handleSubmit} className="max-w-2xl mx-auto p-6 flex flex-col gap-4">
         <div>
           <h1 className="text-lg font-semibold text-fg">New session</h1>
-          <p className="text-xs text-fg-subtle mt-0.5">Spawn a session against the active connection.</p>
+          <p className="text-xs text-fg-subtle mt-0.5">Spawn a task against the active connection.</p>
         </div>
 
         {error && (
@@ -220,40 +205,21 @@ export function NewSessionView({ api, filterRepo = null }: Props) {
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs text-fg-muted">Mode</label>
-          <div className="flex gap-2 flex-wrap">
-            {MODE_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setMode(opt.value)}
-                className={cx(
-                  "pill cursor-pointer border",
-                  mode === opt.value
-                    ? "bg-accent/20 border-accent text-accent"
-                    : "border-border text-fg-muted hover:text-fg",
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
+        {repos && repos.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-fg-muted">Repository</label>
+            <select
+              className="input"
+              value={repoId}
+              onChange={e => setRepoId(e.target.value)}
+            >
+              <option value={NONE_REPO}>(none)</option>
+              {repos.map(r => (
+                <option key={r.id} value={r.id}>{r.label}</option>
+              ))}
+            </select>
           </div>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs text-fg-muted">Repository</label>
-          <select
-            className="input"
-            value={repoId}
-            onChange={e => setRepoId(e.target.value)}
-          >
-            <option value={NONE_REPO}>(none)</option>
-            {(repos ?? []).map(r => (
-              <option key={r.id} value={r.id}>{r.label}</option>
-            ))}
-          </select>
-        </div>
+        )}
 
         {repoId !== NONE_REPO && (
           <div className="flex flex-col gap-1.5">
@@ -266,34 +232,6 @@ export function NewSessionView({ api, filterRepo = null }: Props) {
             />
           </div>
         )}
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs text-fg-muted">Model hint (optional)</label>
-          <input
-            className="input"
-            value={modelHint}
-            onChange={e => setModelHint(e.target.value)}
-            placeholder="claude-3-5-sonnet-20241022"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs text-fg-muted">Budget (USD, optional)</label>
-          <input
-            type="number"
-            inputMode="decimal"
-            className="input"
-            min={0}
-            step={0.01}
-            value={costBudgetUsd ?? ""}
-            onChange={e => {
-              const v = e.target.valueAsNumber;
-              setCostBudgetUsd(Number.isFinite(v) && v > 0 ? v : undefined);
-            }}
-            placeholder="No cap"
-          />
-          <p className="text-xs text-fg-subtle">Pause the session when cost reaches this cap.</p>
-        </div>
 
         <div className="flex flex-col gap-1.5">
           <label className="text-xs text-fg-muted">Attachments</label>

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { DAGNode } from "@minions/shared";
+import type { TaskNode } from "@minions/engine-next";
 import { useConnectionStore } from "../../connections/store.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,15 +30,25 @@ const TEST_CONN = {
 let container: HTMLDivElement;
 let root: Root;
 
-function makeDagNode(overrides: Partial<DAGNode> = {}): DAGNode {
+function makeTask(overrides: Partial<TaskNode> = {}): TaskNode {
   return {
-    id: "n1",
+    id: "task-1",
+    workflowId: "wf-1",
     title: "Plan thing",
     prompt: "do the thing",
-    status: "ready",
+    executionStatus: "ready",
+    stackStatus: "clean",
     dependsOn: [],
-    sessionSlug: "alpha",
-    metadata: {},
+    priority: 0,
+    claims: [],
+    contract: { summary: "", expectedArtifacts: [] },
+    artifacts: [],
+    runs: [],
+    readiness: "unknown",
+    version: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    sessionId: "session-alpha",
     ...overrides,
   };
 }
@@ -66,16 +76,16 @@ afterEach(() => {
   useConnectionStore.setState({ connections: [], activeId: null, _hydrated: true });
 });
 
-describe("DagNodeComponent slug link", () => {
-  it("renders the slug button with nodrag/cursor-pointer to escape reactflow's drag layer", async () => {
-    const node = makeDagNode({ sessionSlug: "alpha" });
+describe("DagNodeComponent session link", () => {
+  it("renders the view button when sessionId is present", async () => {
+    const task = makeTask({ sessionId: "session-alpha" });
 
     await act(async () => {
       root.render(
         createElement(DagNodeComponent, {
-          id: node.id,
+          id: task.id,
           type: "dagNode",
-          data: { node },
+          data: { task },
           selected: false,
           isConnectable: true,
           xPos: 0,
@@ -90,20 +100,19 @@ describe("DagNodeComponent slug link", () => {
       '[data-testid="dag-node-session-link"]',
     ) as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
-    expect(btn!.textContent).toBe("alpha");
     expect(btn!.className).toContain("nodrag");
     expect(btn!.className).toContain("cursor-pointer");
   });
 
-  it("clicking the slug navigates via setUrlState with the session slug", async () => {
-    const node = makeDagNode({ sessionSlug: "alpha" });
+  it("clicking the link navigates via setUrlState", async () => {
+    const task = makeTask({ sessionId: "session-alpha" });
 
     await act(async () => {
       root.render(
         createElement(DagNodeComponent, {
-          id: node.id,
+          id: task.id,
           type: "dagNode",
-          data: { node },
+          data: { task },
           selected: false,
           isConnectable: true,
           xPos: 0,
@@ -126,19 +135,18 @@ describe("DagNodeComponent slug link", () => {
     expect(setUrlStateMock).toHaveBeenCalledTimes(1);
     expect(setUrlStateMock.mock.calls[0]![0]).toMatchObject({
       connectionId: TEST_CONN.id,
-      sessionSlug: "alpha",
     });
   });
 
-  it("does not render the slug link when sessionSlug is absent", async () => {
-    const node = makeDagNode({ sessionSlug: undefined });
+  it("does not render the session link when sessionId is absent", async () => {
+    const task = makeTask({ sessionId: undefined });
 
     await act(async () => {
       root.render(
         createElement(DagNodeComponent, {
-          id: node.id,
+          id: task.id,
           type: "dagNode",
-          data: { node },
+          data: { task },
           selected: false,
           isConnectable: true,
           xPos: 0,

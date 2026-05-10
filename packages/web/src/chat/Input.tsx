@@ -8,7 +8,7 @@ import { startListening, stopListening, isVoiceSupported, type VoiceSession } fr
 import { useFeature } from "../hooks/useFeature.js";
 import { cx } from "../util/classnames.js";
 import { useRootStore } from "../store/root.js";
-import { listRepoFiles, uploadAttachment } from "../transport/rest.js";
+import { listRepoFiles } from "../transport/rest.js";
 import type { SlashCommand } from "./slashCommands.js";
 
 interface Props {
@@ -83,22 +83,17 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
       return;
     }
     let cancelled = false;
-    const handle = window.setTimeout(() => {
-      listRepoFiles(conn, repoId, { q: token.query, limit: 50 })
-        .then((res) => {
-          if (cancelled) return;
+    listRepoFiles(conn, repoId, { q: token.query, limit: 50 })
+      .then((res) => {
+        if (!cancelled) {
           setMention({ token, results: res.items });
           setMentionIdx(0);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setMention(null);
-        });
-    }, 120);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setMention(null);
+      });
+    return () => { cancelled = true; };
   }, [value, caret, conn, repoId]);
 
   const applyMention = useCallback(
@@ -129,33 +124,10 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
       clearAttachments();
       return;
     }
-    let uploaded: Attachment[] = attachments;
-    if (attachments.some((a) => !a.url)) {
-      if (!conn) {
-        setUploadError("No active connection for upload");
-        return;
-      }
-      setUploading(true);
-      setUploadError(null);
-      try {
-        uploaded = await Promise.all(
-          attachments.map(async (a) => {
-            if (a.url) return a;
-            const res = await uploadAttachment(conn, a.file);
-            return { ...a, url: res.url };
-          }),
-        );
-      } catch (err) {
-        setUploadError(err instanceof Error ? err.message : "Upload failed");
-        setUploading(false);
-        return;
-      }
-      setUploading(false);
-    }
-    onSubmit(trimmed, uploaded);
+    onSubmit(trimmed, attachments);
     setValue("");
     clearAttachments();
-  }, [value, attachments, conn, onSubmit, onSlashCommand, clearAttachments]);
+  }, [value, attachments, onSubmit, onSlashCommand, clearAttachments]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showMention && mention) {

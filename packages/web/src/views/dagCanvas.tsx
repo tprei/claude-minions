@@ -16,260 +16,152 @@ import ReactFlow, {
   Position,
 } from "reactflow";
 import dagre from "dagre";
-import {
-  isRetryableDagNodeStatus,
-  type DAG,
-  type DAGNode,
-  type DAGNodeStatus,
-  type DagNodeCiSummary,
-} from "@minions/shared";
-import { useDagStore, EMPTY_DAGS } from "../store/dagStore.js";
-import { useSessionStore, EMPTY_SESSIONS } from "../store/sessionStore.js";
+import type { Workflow, TaskNode, TaskExecutionStatus } from "@minions/engine-next";
+import { useWorkflowStore } from "../store/workflowStore.js";
 import { useConnectionStore, type Connection } from "../connections/store.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
-import { useFeature } from "../hooks/useFeature.js";
 import { useApiMutation } from "../hooks/useApiMutation.js";
-import { UpgradeNotice } from "../components/UpgradeNotice.js";
 import { Modal } from "../components/Modal.js";
 import { Button } from "../components/Button.js";
-import { retryDagNode } from "../transport/rest.js";
+import { dispatchCommand } from "../transport/rest.js";
 import { cx } from "../util/classnames.js";
 import { PANEL_DAG_CANVAS, usePanelLayout, type Breakpoint } from "../util/panelLayout.js";
 import { getViewport, setViewport, type Viewport } from "./dagViewport.js";
+import { STATUS_DOT, STATUS_LABEL } from "./statusToVisual.js";
 import "reactflow/dist/style.css";
 
 const DAG_DEFAULT_WIDTH = 720;
 const DAG_MIN_WIDTH = 320;
 const DAG_MAX_WIDTH = 1600;
 
-const STATUS_COLOR: Record<DAGNodeStatus, string> = {
+const STATUS_COLOR: Record<TaskExecutionStatus, string> = {
   pending: "border-border bg-bg-soft text-fg-muted",
   ready: "border-blue-400 bg-blue-100 text-blue-800 dark:border-blue-600 dark:bg-blue-950 dark:text-blue-300",
   running: "border-green-400 bg-green-100 text-green-800 dark:border-green-500 dark:bg-green-950 dark:text-green-300",
-  done: "border-teal-400 bg-teal-100 text-teal-800 dark:border-teal-600 dark:bg-teal-950 dark:text-teal-300",
-  failed: "border-red-400 bg-red-100 text-red-800 dark:border-red-500 dark:bg-red-950 dark:text-red-300",
-  skipped: "border-border bg-bg-elev text-fg-subtle",
+  finalizing: "border-teal-400 bg-teal-100 text-teal-800 dark:border-teal-600 dark:bg-teal-950 dark:text-teal-300",
+  "quality-pending": "border-amber-400 bg-amber-100 text-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300",
   "ci-pending": "border-amber-400 bg-amber-100 text-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300",
-  "ci-failed": "border-orange-400 bg-orange-100 text-orange-800 dark:border-orange-500 dark:bg-orange-950 dark:text-orange-300",
-  landed: "border-purple-400 bg-purple-100 text-purple-800 dark:border-purple-600 dark:bg-purple-950 dark:text-purple-300",
   "pr-open": "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-500 dark:bg-indigo-950 dark:text-indigo-300",
   merged: "border-purple-400 bg-purple-100 text-purple-900 dark:border-purple-700 dark:bg-purple-950 dark:text-purple-200",
-  rebasing: "border-yellow-400 bg-yellow-100 text-yellow-800 dark:border-yellow-500 dark:bg-yellow-950 dark:text-yellow-300",
-  "rebase-conflict": "border-red-400 bg-red-100 text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-400",
+  "needs-review": "border-amber-400 bg-amber-100 text-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300",
+  completed: "border-teal-400 bg-teal-100 text-teal-800 dark:border-teal-600 dark:bg-teal-950 dark:text-teal-300",
+  failed: "border-red-400 bg-red-100 text-red-800 dark:border-red-500 dark:bg-red-950 dark:text-red-300",
   cancelled: "border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-400",
 };
 
 const NODE_W = 180;
 const NODE_H = 80;
-const PARENT_NODE_ID = "__parent__";
-
-const CI_PILL_CLASS: Record<DagNodeCiSummary["state"], string> = {
-  passing: "border-green-400 bg-green-100/70 text-green-800 dark:border-green-700 dark:bg-green-950/70 dark:text-green-300",
-  failing: "border-red-400 bg-red-100/70 text-red-800 dark:border-red-700 dark:bg-red-950/70 dark:text-red-300",
-  pending: "border-zinc-300 bg-zinc-100/70 text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900/70 dark:text-zinc-300",
-};
-
-const CI_PILL_LABEL: Record<DagNodeCiSummary["state"], string> = {
-  passing: "CI passing",
-  failing: "CI failing",
-  pending: "CI pending",
-};
-
-function ciTooltip(summary: DagNodeCiSummary): string {
-  const header = `${CI_PILL_LABEL[summary.state]} — ${summary.counts.passed} pass / ${summary.counts.failed} fail / ${summary.counts.pending} pending`;
-  if (summary.checks.length === 0) return header;
-  const lines = summary.checks
-    .slice(0, 12)
-    .map((c) => `• ${c.name || "(unnamed)"} [${c.bucket}]`);
-  if (summary.checks.length > 12) {
-    lines.push(`… +${summary.checks.length - 12} more`);
-  }
-  return `${header}\n${lines.join("\n")}`;
-}
-
-function CiStatusPill({ summary }: { summary: DagNodeCiSummary }) {
-  const handleClick = (e: React.MouseEvent): void => {
-    e.stopPropagation();
-    if (!summary.prUrl) return;
-    window.open(summary.prUrl, "_blank", "noopener,noreferrer");
-  };
-  const clickable = !!summary.prUrl;
-  const dot =
-    summary.state === "passing"
-      ? "bg-green-400"
-      : summary.state === "failing"
-        ? "bg-red-400"
-        : "bg-zinc-400";
-  return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={!clickable}
-      title={ciTooltip(summary)}
-      data-testid="dag-node-ci-pill"
-      data-ci-state={summary.state}
-      className={cx(
-        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] leading-none",
-        CI_PILL_CLASS[summary.state],
-        clickable ? "cursor-pointer hover:brightness-125" : "cursor-default opacity-80",
-      )}
-    >
-      <span className={cx("inline-block w-1.5 h-1.5 rounded-full", dot)} />
-      <span>CI</span>
-      {summary.counts.failed > 0 && (
-        <span className="font-semibold">{summary.counts.failed}✗</span>
-      )}
-      {summary.counts.failed === 0 && summary.counts.pending > 0 && (
-        <span className="font-semibold">{summary.counts.pending}…</span>
-      )}
-    </button>
-  );
-}
 
 interface DagNodeData {
-  node: DAGNode;
-  onRequestRetry?: (nodeId: string) => void;
+  task: TaskNode;
+  onRequestRetry?: (taskId: string) => void;
 }
 
-interface ParentNodeData {
-  sessionSlug: string;
-  parentDagId: string | null;
+function isRetryable(status: TaskExecutionStatus): boolean {
+  return status === "failed" || status === "cancelled";
 }
 
-function layoutDag(
-  dag: DAG,
-  onRequestRetry?: (nodeId: string) => void,
+function layoutWorkflow(
+  workflow: Workflow,
+  onRequestRetry?: (taskId: string) => void,
 ): { nodes: Node[]; edges: Edge[]; rootIds: string[] } {
+  const tasks = Object.values(workflow.graph);
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "TB", ranksep: 80, nodesep: 40 });
 
-  for (const n of dag.nodes) {
-    g.setNode(n.id, { width: NODE_W, height: NODE_H });
+  for (const t of tasks) {
+    g.setNode(t.id, { width: NODE_W, height: NODE_H });
   }
-  for (const n of dag.nodes) {
-    for (const dep of n.dependsOn) {
-      g.setEdge(dep, n.id);
+  for (const t of tasks) {
+    for (const dep of t.dependsOn) {
+      g.setEdge(dep, t.id);
     }
   }
 
   dagre.layout(g);
 
-  const nodes: Node[] = dag.nodes.map((n) => {
-    const pos = g.node(n.id);
+  const nodes: Node[] = tasks.map((t) => {
+    const pos = g.node(t.id);
     return {
-      id: n.id,
+      id: t.id,
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
-      data: { node: n, onRequestRetry } satisfies DagNodeData,
+      data: { task: t, onRequestRetry } satisfies DagNodeData,
       type: "dagNode",
     };
   });
 
   const edges: Edge[] = [];
-  for (const n of dag.nodes) {
-    for (const dep of n.dependsOn) {
+  for (const t of tasks) {
+    for (const dep of t.dependsOn) {
       edges.push({
-        id: `${dep}->${n.id}`,
+        id: `${dep}->${t.id}`,
         source: dep,
-        target: n.id,
+        target: t.id,
         markerEnd: { type: MarkerType.ArrowClosed },
         style: { stroke: "#4b5563" },
       });
     }
   }
 
-  const rootIds = dag.nodes
-    .filter((n) => n.dependsOn.length === 0)
-    .map((n) => n.id);
+  const rootIds = tasks
+    .filter((t) => t.dependsOn.length === 0)
+    .map((t) => t.id);
 
   return { nodes, edges, rootIds };
 }
 
-function findParentDagId(
-  dags: Iterable<DAG>,
-  parentSlug: string,
-  excludeDagId: string,
-): string | null {
-  for (const d of dags) {
-    if (d.id === excludeDagId) continue;
-    if (d.rootSessionSlug === parentSlug) return d.id;
-    if (d.nodes.some((n) => n.sessionSlug === parentSlug)) return d.id;
-  }
-  return null;
-}
-
 export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
-  const { node, onRequestRetry } = data;
+  const { task, onRequestRetry } = data;
   const activeId = useConnectionStore((s) => s.activeId);
-  const hasAttention = useSessionStore((s) => {
-    if (!node.sessionSlug || !activeId) return false;
-    const sessions = s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS;
-    const session = sessions.get(node.sessionSlug);
-    return !!session && session.attention.length > 0;
-  });
-  const hasCiFailedAttention = useSessionStore((s) => {
-    if (!node.sessionSlug || !activeId) return false;
-    const sessions = s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS;
-    const session = sessions.get(node.sessionSlug);
-    return !!session && session.attention.some((a) => a.kind === "ci_failed");
-  });
-  const showAttention = hasAttention || node.status === "failed";
-  const canRetry = isRetryableDagNodeStatus(node.status);
-  const ciSummary = node.ciSummary ?? null;
+  const canRetry = isRetryable(task.executionStatus);
+  const hasFailed = task.executionStatus === "failed";
 
-  const goToSession = (slug: string): void => {
+  const goToSession = (taskId: string): void => {
     if (!activeId) return;
     const { view, query } = parseUrl();
-    setUrlState({ connectionId: activeId, view, sessionSlug: slug, query });
+    setUrlState({ connectionId: activeId, view, sessionSlug: taskId, query });
   };
 
   return (
     <div
       className={cx(
         "relative rounded-lg border px-3 py-2 text-xs cursor-default select-none",
-        STATUS_COLOR[node.status],
+        STATUS_COLOR[task.executionStatus],
       )}
       style={{ width: NODE_W }}
       data-testid="dag-node"
-      data-node-id={node.id}
+      data-node-id={task.id}
     >
       <Handle type="target" position={Position.Top} className="!bg-zinc-400 dark:!bg-zinc-600" />
-      {showAttention && (
+      {hasFailed && (
         <span
-          aria-label={hasCiFailedAttention ? "CI failed" : "needs attention"}
+          aria-label="task failed"
           data-testid="dag-node-attention-badge"
-          data-ci-failed={hasCiFailedAttention ? "true" : "false"}
-          title={
-            hasCiFailedAttention
-              ? "CI failed — session flagged for attention"
-              : node.status === "failed"
-                ? "node failed"
-                : "session has attention flags"
-          }
+          title="Task failed"
           className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none border border-red-700 dark:border-red-300 shadow"
         >
           !
         </span>
       )}
-      <div className="font-medium leading-tight line-clamp-2 break-words">{node.title}</div>
+      <div className="font-medium leading-tight line-clamp-2 break-words">{task.title}</div>
       <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="text-[10px] opacity-70">{node.status}</span>
-        {ciSummary && <CiStatusPill summary={ciSummary} />}
+        <span className="text-[10px] opacity-70">{STATUS_LABEL[task.executionStatus]}</span>
       </div>
       <div className="mt-1 flex items-center gap-2">
-        {node.sessionSlug && (
+        {task.sessionId && (
           <button
             type="button"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              if (node.sessionSlug) goToSession(node.sessionSlug);
+              goToSession(task.id);
             }}
             data-testid="dag-node-session-link"
             className="nodrag nopan text-[10px] underline opacity-60 hover:opacity-100 cursor-pointer"
           >
-            {node.sessionSlug}
+            view
           </button>
         )}
         {canRetry && onRequestRetry && (
@@ -277,7 +169,7 @@ export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onRequestRetry(node.id);
+              onRequestRetry(task.id);
             }}
             className="text-[10px] px-1.5 py-0.5 rounded border border-red-400 bg-red-100/60 text-red-700 hover:bg-red-200/60 hover:text-red-800 dark:border-red-700 dark:bg-red-950/60 dark:text-red-300 dark:hover:bg-red-900/60 dark:hover:text-red-200"
           >
@@ -290,52 +182,36 @@ export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
   );
 }
 
-function ParentNodeComponent({ data }: NodeProps<ParentNodeData>) {
-  const target = data.parentDagId ? "open parent DAG" : "open parent session";
-  return (
-    <div
-      className="rounded-lg border border-dashed border-fg-subtle bg-bg-elev px-3 py-2 text-xs text-fg-muted cursor-pointer select-none"
-      style={{ width: NODE_W }}
-      title={`double-click to ${target}`}
-    >
-      <div className="text-[10px] uppercase tracking-wide opacity-60">parent</div>
-      <div className="font-medium leading-tight line-clamp-2 break-words">{data.sessionSlug}</div>
-      <Handle type="source" position={Position.Bottom} className="!bg-zinc-400 dark:!bg-zinc-600" />
-    </div>
-  );
-}
-
 const NODE_TYPES: NodeTypes = {
   dagNode: DagNodeComponent,
-  parentRef: ParentNodeComponent,
 };
 
 interface CanvasProps {
-  dag: DAG;
+  workflow: Workflow;
   connectionId: string | null;
-  onSelectDag: (id: string) => void;
   breakpoint: Breakpoint;
 }
 
-function transitiveDescendants(dag: DAG, rootId: string): DAGNode[] {
+function transitiveDescendants(workflow: Workflow, rootId: string): TaskNode[] {
+  const tasks = Object.values(workflow.graph);
   const set = new Set<string>([rootId]);
   let changed = true;
   while (changed) {
     changed = false;
-    for (const n of dag.nodes) {
-      if (set.has(n.id)) continue;
-      if (n.dependsOn.some((dep) => set.has(dep))) {
-        set.add(n.id);
+    for (const t of tasks) {
+      if (set.has(t.id)) continue;
+      if (t.dependsOn.some((dep) => set.has(dep))) {
+        set.add(t.id);
         changed = true;
       }
     }
   }
   set.delete(rootId);
-  return dag.nodes.filter((n) => set.has(n.id));
+  return tasks.filter((t) => set.has(t.id));
 }
 
 interface DagCanvasFlowProps {
-  dag: DAG;
+  workflow: Workflow;
   nodes: Node[];
   edges: Edge[];
   defaultViewport: RFViewport | undefined;
@@ -345,7 +221,7 @@ interface DagCanvasFlowProps {
 }
 
 function DagCanvasFlow({
-  dag,
+  workflow,
   nodes,
   edges,
   defaultViewport,
@@ -358,7 +234,7 @@ function DagCanvasFlow({
 
   useEffect(() => {
     rf.fitView({ padding: 0.15, duration: 200 });
-  }, [rf, dag.id, breakpoint, nodes.length]);
+  }, [rf, workflow.id, breakpoint, nodes.length]);
 
   return (
     <ReactFlow
@@ -379,91 +255,48 @@ function DagCanvasFlow({
   );
 }
 
-function DagCanvasInner({ dag, connectionId, onSelectDag, breakpoint }: CanvasProps) {
-  const dagsMap = useDagStore(
-    (s) => (connectionId ? s.byConnection.get(connectionId) ?? EMPTY_DAGS : EMPTY_DAGS),
-  );
+function DagCanvasInner({ workflow, connectionId, breakpoint }: CanvasProps) {
   const conn = useConnectionStore((s) =>
     connectionId ? s.connections.find((c) => c.id === connectionId) ?? null : null,
   );
 
   const [retryFor, setRetryFor] = useState<string | null>(null);
 
-  const retryMutation = useApiMutation<{ conn: Connection; dagId: string; nodeId: string }, DAG>(
-    ({ conn: c, dagId, nodeId }) => retryDagNode(c, dagId, nodeId),
+  const retryMutation = useApiMutation<{ conn: Connection; workflowId: string; taskId: string }, unknown>(
+    ({ conn: c, workflowId, taskId }) => dispatchCommand(c, {
+      kind: "retry-task",
+      workflowId,
+      taskId,
+      prompt: "",
+    }),
     {
       onSuccess: () => {
         setRetryFor(null);
       },
     },
   );
+
   const { reset: resetRetryMutation, run: runRetryMutation } = retryMutation;
 
   const handleRequestRetry = useCallback(
-    (nodeId: string) => {
+    (taskId: string) => {
       resetRetryMutation();
-      setRetryFor(nodeId);
+      setRetryFor(taskId);
     },
     [resetRetryMutation],
   );
 
   const { nodes, edges } = useMemo(() => {
-    const { nodes: baseNodes, edges: baseEdges, rootIds } = layoutDag(dag, handleRequestRetry);
+    return layoutWorkflow(workflow, handleRequestRetry);
+  }, [workflow, handleRequestRetry]);
 
-    if (!dag.rootSessionSlug) {
-      return { nodes: baseNodes, edges: baseEdges };
-    }
-
-    const parentDagId = findParentDagId(
-      dagsMap.values(),
-      dag.rootSessionSlug,
-      dag.id,
-    );
-
-    const minRootX = baseNodes.length
-      ? Math.min(...baseNodes.map((n) => n.position.x))
-      : 0;
-    const maxRootX = baseNodes.length
-      ? Math.max(...baseNodes.map((n) => n.position.x + NODE_W))
-      : NODE_W;
-    const centerX = (minRootX + maxRootX) / 2 - NODE_W / 2;
-    const topY = baseNodes.length
-      ? Math.min(...baseNodes.map((n) => n.position.y))
-      : 0;
-
-    const parentNode: Node = {
-      id: PARENT_NODE_ID,
-      position: { x: centerX, y: topY - NODE_H - 80 },
-      data: {
-        sessionSlug: dag.rootSessionSlug,
-        parentDagId,
-      } satisfies ParentNodeData,
-      type: "parentRef",
-      draggable: false,
-      selectable: false,
-    };
-
-    const parentEdges: Edge[] = rootIds.map((rootId) => ({
-      id: `${PARENT_NODE_ID}->${rootId}`,
-      source: PARENT_NODE_ID,
-      target: rootId,
-      markerEnd: { type: MarkerType.ArrowClosed },
-      style: { stroke: "#a78bfa", strokeDasharray: "4 4" },
-    }));
-
-    return {
-      nodes: [parentNode, ...baseNodes],
-      edges: [...baseEdges, ...parentEdges],
-    };
-  }, [dag, dagsMap, handleRequestRetry]);
-
-  const retryNode = useMemo(
-    () => (retryFor ? dag.nodes.find((n) => n.id === retryFor) ?? null : null),
-    [dag, retryFor],
+  const retryTask = useMemo(
+    () => (retryFor ? workflow.graph[retryFor] ?? null : null),
+    [workflow, retryFor],
   );
   const downstream = useMemo(
-    () => (retryFor ? transitiveDescendants(dag, retryFor) : []),
-    [dag, retryFor],
+    () => (retryFor ? transitiveDescendants(workflow, retryFor) : []),
+    [workflow, retryFor],
   );
 
   const closeRetryModal = useCallback(() => {
@@ -473,13 +306,13 @@ function DagCanvasInner({ dag, connectionId, onSelectDag, breakpoint }: CanvasPr
 
   const handleConfirmRetry = useCallback(() => {
     if (!conn || !retryFor) return;
-    void runRetryMutation({ conn, dagId: dag.id, nodeId: retryFor });
-  }, [conn, retryFor, dag.id, runRetryMutation]);
+    void runRetryMutation({ conn, workflowId: workflow.id, taskId: retryFor });
+  }, [conn, retryFor, workflow.id, runRetryMutation]);
 
   const stored = useMemo<Viewport | null>(() => {
     if (!connectionId) return null;
-    return getViewport(connectionId, dag.id);
-  }, [connectionId, dag.id]);
+    return getViewport(connectionId, workflow.id);
+  }, [connectionId, workflow.id]);
 
   const defaultViewport = useMemo<RFViewport | undefined>(() => {
     if (!stored) return undefined;
@@ -499,34 +332,25 @@ function DagCanvasInner({ dag, connectionId, onSelectDag, breakpoint }: CanvasPr
       if (breakpoint === "mobile") return;
       if (saveTimer.current !== null) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        setViewport(connectionId, dag.id, {
+        setViewport(connectionId, workflow.id, {
           x: viewport.x,
           y: viewport.y,
           scale: viewport.zoom,
         });
       }, 200);
     },
-    [connectionId, dag.id, breakpoint],
+    [connectionId, workflow.id, breakpoint],
   );
 
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
-      if (node.id !== PARENT_NODE_ID) return;
-      const data = node.data as ParentNodeData;
-      if (data.parentDagId) {
-        onSelectDag(data.parentDagId);
-        return;
-      }
       if (!connectionId) return;
+      const task = workflow.graph[node.id];
+      if (!task) return;
       const { view, query } = parseUrl();
-      setUrlState({
-        connectionId,
-        view,
-        sessionSlug: data.sessionSlug,
-        query,
-      });
+      setUrlState({ connectionId, view, sessionSlug: task.id, query });
     },
-    [connectionId, onSelectDag],
+    [connectionId, workflow],
   );
 
   const downstreamPreview = downstream.slice(0, 5);
@@ -536,7 +360,7 @@ function DagCanvasInner({ dag, connectionId, onSelectDag, breakpoint }: CanvasPr
     <div className="w-full h-full">
       <ReactFlowProvider>
         <DagCanvasFlow
-          dag={dag}
+          workflow={workflow}
           nodes={nodes}
           edges={edges}
           defaultViewport={defaultViewport}
@@ -546,31 +370,25 @@ function DagCanvasInner({ dag, connectionId, onSelectDag, breakpoint }: CanvasPr
         />
       </ReactFlowProvider>
       <Modal
-        open={retryNode !== null}
+        open={retryTask !== null}
         onClose={closeRetryModal}
-        title={retryNode ? `Retry node "${retryNode.title}"?` : undefined}
+        title={retryTask ? `Retry "${retryTask.title}"?` : undefined}
       >
-        {retryNode && (
+        {retryTask && (
           <div className="flex flex-col gap-4 text-sm">
-            <div>
-              <div className="text-xs text-fg-subtle mb-1">Failure reason:</div>
-              <pre className="card p-2 text-xs whitespace-pre-wrap break-words max-h-40 overflow-auto">
-                {retryNode.failedReason ?? "(none recorded)"}
-              </pre>
-            </div>
             <div>
               {downstream.length === 0 ? (
                 <div className="text-xs text-fg-muted">
-                  No downstream nodes depend on this one.
+                  No downstream tasks depend on this one.
                 </div>
               ) : (
                 <>
                   <div className="text-xs text-fg-muted mb-1">
-                    Downstream nodes will be re-stacked against the new branch:
+                    Downstream tasks will be re-stacked against the new branch:
                   </div>
                   <ul className="list-disc pl-5 text-xs text-fg-muted space-y-0.5">
-                    {downstreamPreview.map((n) => (
-                      <li key={n.id} className="truncate">{n.title}</li>
+                    {downstreamPreview.map((t) => (
+                      <li key={t.id} className="truncate">{t.title}</li>
                     ))}
                     {downstreamExtra > 0 && (
                       <li className="text-fg-subtle">+{downstreamExtra} more</li>
@@ -655,12 +473,11 @@ function DagCanvasChrome({ children, breakpoint, collapsed, toggleCollapsed }: D
 }
 
 export function DagCanvasView({ dagId }: Props) {
-  const enabled = useFeature("dags");
   const activeId = useConnectionStore((s) => s.activeId);
-  const dagsMap = useDagStore(
-    (s) => (activeId ? s.byConnection.get(activeId) ?? EMPTY_DAGS : EMPTY_DAGS),
+  const workflowsMap = useWorkflowStore(
+    (s) => (activeId ? s.byConnection.get(activeId) ?? new Map<string, Workflow>() : new Map<string, Workflow>()),
   );
-  const dags = useMemo(() => Array.from(dagsMap.values()), [dagsMap]);
+  const workflows = useMemo(() => Array.from(workflowsMap.values()), [workflowsMap]);
 
   const { collapsed, breakpoint, toggleCollapsed } = usePanelLayout(
     PANEL_DAG_CANVAS,
@@ -671,7 +488,7 @@ export function DagCanvasView({ dagId }: Props) {
     },
   );
 
-  const selectDag = useCallback(
+  const selectWorkflow = useCallback(
     (id: string) => {
       const { view, sessionSlug, query } = parseUrl();
       if (!activeId) return;
@@ -680,7 +497,7 @@ export function DagCanvasView({ dagId }: Props) {
     [activeId],
   );
 
-  const clearDag = useCallback(() => {
+  const clearWorkflow = useCallback(() => {
     const { view, sessionSlug, query } = parseUrl();
     if (!activeId) return;
     const { dag: _dag, ...rest } = query;
@@ -688,9 +505,7 @@ export function DagCanvasView({ dagId }: Props) {
     setUrlState({ connectionId: activeId, view, sessionSlug, query: rest });
   }, [activeId]);
 
-  if (!enabled) return <UpgradeNotice feature="dags" />;
-
-  const selected = dagId ? dags.find((d) => d.id === dagId) : undefined;
+  const selected = dagId ? workflows.find((w) => w.id === dagId) : undefined;
 
   if (!selected) {
     return (
@@ -700,24 +515,27 @@ export function DagCanvasView({ dagId }: Props) {
         toggleCollapsed={toggleCollapsed}
       >
         <div className="p-6 overflow-y-auto">
-          <h2 className="text-sm font-medium text-fg-muted mb-4">Select a DAG</h2>
-          {dags.length === 0 && (
-            <p className="text-sm text-fg-subtle">No DAGs available.</p>
+          <h2 className="text-sm font-medium text-fg-muted mb-4">Select a workflow</h2>
+          {workflows.length === 0 && (
+            <p className="text-sm text-fg-subtle">No workflows available.</p>
           )}
           <div className="space-y-2">
-            {dags.map((dag) => (
-              <button
-                key={dag.id}
-                type="button"
-                onClick={() => selectDag(dag.id)}
-                className="w-full text-left card px-4 py-3 hover:border-border transition-colors"
-              >
-                <div className="text-sm font-medium text-fg">{dag.title}</div>
-                <div className="text-xs text-fg-subtle mt-0.5">
-                  {dag.id} · {dag.status} · {dag.nodes.length} nodes
-                </div>
-              </button>
-            ))}
+            {workflows.map((w) => {
+              const firstTask = Object.values(w.graph)[0];
+              return (
+                <button
+                  key={w.id}
+                  type="button"
+                  onClick={() => selectWorkflow(w.id)}
+                  className="w-full text-left card px-4 py-3 hover:border-border transition-colors"
+                >
+                  <div className="text-sm font-medium text-fg">{firstTask?.title ?? w.id}</div>
+                  <div className="text-xs text-fg-subtle mt-0.5">
+                    {w.id} · {w.status} · {Object.keys(w.graph).length} tasks
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       </DagCanvasChrome>
@@ -734,20 +552,23 @@ export function DagCanvasView({ dagId }: Props) {
         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-bg-soft text-xs md:text-sm md:px-4 md:py-2 md:gap-x-3">
           <button
             type="button"
-            onClick={clearDag}
+            onClick={clearWorkflow}
             className="text-fg-subtle hover:text-fg-muted flex-shrink-0"
           >
-            ← all DAGs
+            ← all workflows
           </button>
-          <span className="text-fg font-medium truncate min-w-0 flex-1">{selected.title}</span>
+          <span className="text-fg font-medium truncate min-w-0 flex-1">
+            {Object.values(selected.graph)[0]?.title ?? selected.id}
+          </span>
           <span className="pill bg-bg-elev text-fg-muted text-[10px] flex-shrink-0">{selected.status}</span>
-          <span className="text-fg-subtle text-[10px] md:text-xs flex-shrink-0">{selected.nodes.length} nodes</span>
+          <span className="text-fg-subtle text-[10px] md:text-xs flex-shrink-0">
+            {Object.keys(selected.graph).length} tasks
+          </span>
         </div>
         <div className="flex-1">
           <DagCanvasInner
-            dag={selected}
+            workflow={selected}
             connectionId={activeId}
-            onSelectDag={selectDag}
             breakpoint={breakpoint}
           />
         </div>

@@ -1,4 +1,18 @@
 import { create } from "zustand";
+import type { RepoBinding } from "@minions/shared";
+
+/**
+ * Per-connection metadata surfaced by the engine's health/version endpoint.
+ * The new engine-next does not expose a /version route; these fields default
+ * to empty so UI components compile and render gracefully.
+ */
+export interface ConnectionMeta {
+  apiVersion: string;
+  libraryVersion: string;
+  provider: string;
+  features: string[];
+  repos: RepoBinding[];
+}
 
 /**
  * Tracks the last known version number for each workflow, used for optimistic
@@ -12,43 +26,87 @@ interface WorkflowVersionEntry {
 }
 
 interface VersionStore {
-  /** connId → workflowId → version */
-  byConnection: Map<string, Map<string, number>>;
+  /** connId → ConnectionMeta */
+  byConnection: Map<string, ConnectionMeta>;
+  /** connId → (workflowId → version) */
+  workflowVersions: Map<string, Map<string, number>>;
+  setConnectionMeta: (connId: string, meta: ConnectionMeta) => void;
+  /** Alias for setConnectionMeta, accepts VersionInfo from @minions/shared for backward compat. */
+  setVersion: (connId: string, info: { apiVersion: string; libraryVersion: string; provider: string; features: string[]; repos: RepoBinding[] }) => void;
   setWorkflowVersion: (connId: string, workflowId: string, version: number) => void;
   getWorkflowVersion: (connId: string, workflowId: string) => number | undefined;
   /** Bulk-seed versions from a snapshot of workflows. */
   seedFromWorkflows: (connId: string, entries: WorkflowVersionEntry[]) => void;
 }
 
+const EMPTY_META: ConnectionMeta = {
+  apiVersion: "",
+  libraryVersion: "",
+  provider: "",
+  features: [],
+  repos: [],
+};
+
 export const useVersionStore = create<VersionStore>((set, get) => ({
   byConnection: new Map(),
+  workflowVersions: new Map(),
+
+  setConnectionMeta(connId, meta) {
+    set(s => {
+      const next = new Map(s.byConnection);
+      next.set(connId, meta);
+      return { byConnection: next };
+    });
+  },
+
+  setVersion(connId, info) {
+    set(s => {
+      const next = new Map(s.byConnection);
+      next.set(connId, {
+        apiVersion: info.apiVersion,
+        libraryVersion: info.libraryVersion,
+        provider: info.provider,
+        features: info.features,
+        repos: info.repos,
+      });
+      return { byConnection: next };
+    });
+  },
 
   setWorkflowVersion(connId, workflowId, version) {
     set(s => {
-      const byConnection = new Map(s.byConnection);
-      const inner = new Map(byConnection.get(connId) ?? []);
+      const workflowVersions = new Map(s.workflowVersions);
+      const inner = new Map(workflowVersions.get(connId) ?? []);
       inner.set(workflowId, version);
-      byConnection.set(connId, inner);
-      return { byConnection };
+      workflowVersions.set(connId, inner);
+      return { workflowVersions };
     });
   },
 
   getWorkflowVersion(connId, workflowId) {
-    return get().byConnection.get(connId)?.get(workflowId);
+    return get().workflowVersions.get(connId)?.get(workflowId);
   },
 
   seedFromWorkflows(connId, entries) {
     set(s => {
-      const byConnection = new Map(s.byConnection);
-      const inner = new Map(byConnection.get(connId) ?? []);
+      const workflowVersions = new Map(s.workflowVersions);
+      const inner = new Map(workflowVersions.get(connId) ?? []);
       for (const { workflowId, version } of entries) {
         inner.set(workflowId, version);
       }
-      byConnection.set(connId, inner);
-      return { byConnection };
+      workflowVersions.set(connId, inner);
+      return { workflowVersions };
     });
   },
 }));
+
+/**
+ * Selector: connection-level metadata (repos, features, versions).
+ * Returns empty defaults when no metadata has been seeded for this connection.
+ */
+export function selectConnectionMeta(connId: string): ConnectionMeta {
+  return useVersionStore.getState().byConnection.get(connId) ?? EMPTY_META;
+}
 
 /**
  * Detect a version conflict: returns true when the local version for a

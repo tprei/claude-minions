@@ -3,7 +3,6 @@ import { connectWorkflowSse } from "../transport/sse.js";
 import { listWorkflows } from "../transport/rest.js";
 import { loadSnapshot, saveSnapshot } from "../transport/snapshotCache.js";
 import { useWorkflowStore } from "./workflowStore.js";
-import { useMemoryStore } from "./memoryStore.js";
 import { useVersionStore } from "./version.js";
 import type { SseConnection } from "../transport/sse.js";
 import type { Workflow } from "@minions/engine-next";
@@ -116,13 +115,3 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
   };
 }
 
-/** Called externally when a memory SSE event arrives (memory feature). */
-export function handleMemoryEvent(
-  connId: string,
-  kind: "upsert" | "remove",
-  payload: { memory?: import("../types.js").Memory; id?: string },
-): void {
-  const store = useMemoryStore.getState();
-  if (kind === "upsert" && payload.memory) store.upsert(connId, payload.memory);
-  if (kind === "remove" && payload.id) store.remove(connId, payload.id);
-}

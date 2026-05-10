@@ -28,7 +28,6 @@ vi.mock("../../transport/rest.js", () => ({
 
 import { ChatInput } from "../Input.js";
 import { HelpModal } from "../HelpModal.js";
-import { CostModal } from "../CostModal.js";
 import { dispatchSlashUi } from "../ChatSurface.js";
 import type { SlashCommand, SlashContext } from "../slashCommands.js";
 
@@ -72,45 +71,16 @@ function fireKeyDown(el: HTMLElement, key: string): void {
   el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 }
 
-const STUB_SESSION = {
-  slug: "sess-1",
-  title: "test",
-  prompt: "",
-  mode: "task" as const,
-  status: "waiting_input" as const,
-  childSlugs: [],
-  attention: [],
-  quickActions: [],
-  stats: {
-    turns: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-    costUsd: 0.42,
-    durationMs: 0,
-    toolCalls: 0,
-  },
-  provider: "test",
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-  metadata: {},
-  costBudgetUsd: 2,
-};
-
 interface HarnessProps {
   postCommand: ReturnType<typeof vi.fn>;
-  onOpenExecutePlan?: () => void;
 }
 
-function Harness({ postCommand, onOpenExecutePlan }: HarnessProps): ReactElement {
+function Harness({ postCommand }: HarnessProps): ReactElement {
   const [helpOpen, setHelpOpen] = useState(false);
-  const [costOpen, setCostOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("transcript");
 
   const handleSlashCommand = useCallback(
     async (cmd: SlashCommand, args: string[]) => {
-      const ctx: SlashContext = { sessionSlug: STUB_SESSION.slug };
+      const ctx: SlashContext = { sessionSlug: "sess-1" };
       const result = cmd.build(args, ctx);
       if (result.kind === "command") {
         postCommand(result.payload);
@@ -119,27 +89,21 @@ function Harness({ postCommand, onOpenExecutePlan }: HarnessProps): ReactElement
           activeId: null,
           openConfig: () => {},
           openHelp: () => setHelpOpen(true),
-          openCost: () => setCostOpen(true),
-          openExecutePlan: () => onOpenExecutePlan?.(),
-          setActiveTab,
+          openCost: () => {},
         });
       }
     },
-    [postCommand, onOpenExecutePlan],
+    [postCommand],
   );
 
   return createElement(
     "div",
     null,
-    createElement("div", { "data-testid": "active-tab" }, activeTab),
     createElement(ChatInput, {
       onSubmit: () => {},
       onSlashCommand: handleSlashCommand,
     }),
     helpOpen ? createElement(HelpModal, { onClose: () => setHelpOpen(false) }) : null,
-    costOpen
-      ? createElement(CostModal, { session: STUB_SESSION, onClose: () => setCostOpen(false) })
-      : null,
   );
 }
 
@@ -189,51 +153,9 @@ describe("ChatInput slash popover", () => {
     expect(postCommand).toHaveBeenCalledTimes(1);
     expect(postCommand).toHaveBeenCalledWith({
       kind: "reply",
-      sessionSlug: STUB_SESSION.slug,
+      sessionSlug: "sess-1",
       text: "/clear",
     });
-  });
-
-  it("/cost + Enter renders the CostModal", async () => {
-    const postCommand = vi.fn();
-    act(() => {
-      root.render(createElement(Harness, { postCommand }));
-    });
-    await flush();
-
-    await typeAndEnter("/cost");
-
-    const modal = container.querySelector('[data-testid="cost-value"]');
-    expect(modal).not.toBeNull();
-    expect(modal?.textContent).toBe("$0.42");
-    expect(postCommand).not.toHaveBeenCalled();
-  });
-
-  it("/diff + Enter switches the active tab to diff", async () => {
-    const postCommand = vi.fn();
-    act(() => {
-      root.render(createElement(Harness, { postCommand }));
-    });
-    await flush();
-
-    await typeAndEnter("/diff");
-
-    const tab = container.querySelector('[data-testid="active-tab"]');
-    expect(tab?.textContent).toBe("diff");
-  });
-
-  it("/execute-plan + Enter calls openExecutePlan", async () => {
-    const postCommand = vi.fn();
-    const onOpenExecutePlan = vi.fn();
-    act(() => {
-      root.render(createElement(Harness, { postCommand, onOpenExecutePlan }));
-    });
-    await flush();
-
-    await typeAndEnter("/execute-plan");
-
-    expect(onOpenExecutePlan).toHaveBeenCalledTimes(1);
-    expect(postCommand).not.toHaveBeenCalled();
   });
 
   it("/help + Enter renders the HelpModal listing all command rows", async () => {
