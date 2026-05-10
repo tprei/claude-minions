@@ -51,9 +51,9 @@ export class RetryTaskService {
       throw new DomainError("not_found", "task not found", { taskId });
     }
 
-    if (task.executionStatus !== "needs-review") {
+    if (task.executionStatus !== "needs-review" && task.executionStatus !== "pending") {
       throw new DomainError("invalid_transition",
-        `retry-task requires task in needs-review, got ${task.executionStatus}`,
+        `retry-task requires task in pending or needs-review, got ${task.executionStatus}`,
         { taskId, currentStatus: task.executionStatus });
     }
 
@@ -61,6 +61,14 @@ export class RetryTaskService {
       throw new DomainError("invalid_transition",
         `task stack is ${task.stackStatus}; must be clean before retry`,
         { taskId, stackStatus: task.stackStatus });
+    }
+
+    if (task.executionStatus === "pending") {
+      await applyCommand({
+        kind: "transition-task",
+        workflowId,
+        transition: { kind: "mark-ready", taskId, now: now() },
+      });
     }
 
     const depArtifacts = dependencyArtifactsFor(workflow, taskId);
