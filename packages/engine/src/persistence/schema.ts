@@ -78,3 +78,23 @@ export const SQL_LIST_SUBS_BY_WORKFLOW =
 
 export const SQL_LIST_DISTINCT_WORKFLOW_IDS =
   "SELECT DISTINCT workflow_id FROM push_subscriptions";
+
+export const TRANSCRIPTS_DDL = `
+CREATE TABLE IF NOT EXISTS transcripts (
+  workflow_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  occurred_at TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (run_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_transcripts_workflow ON transcripts(workflow_id);
+`;
+
+export const SQL_INSERT_TRANSCRIPT =
+  "INSERT INTO transcripts (workflow_id, run_id, seq, occurred_at, kind, payload) " +
+  "SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM transcripts WHERE run_id = ?";
+
+export const SQL_LIST_TRANSCRIPT =
+  "SELECT seq, occurred_at, kind, payload FROM transcripts WHERE workflow_id = ? AND run_id = ? ORDER BY seq";

@@ -145,3 +145,42 @@ describe("GET /workflows/:id", () => {
     expect(body.code).toBe("not_found");
   });
 });
+
+describe("GET /workflows/:id/runs/:runId/transcript", () => {
+  it("returns 404 when workflow does not exist", async () => {
+    const { app } = makeApp();
+    const res = await app.request("/workflows/nonexistent/runs/run-1/transcript");
+    expect(res.status).toBe(404);
+    const body = await res.json() as { code: string };
+    expect(body.code).toBe("not_found");
+  });
+
+  it("returns 200 with empty transcript for existing workflow with no entries", async () => {
+    const { app, repo } = makeApp();
+    const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
+    await repo.save(workflow, []);
+
+    const res = await app.request("/workflows/wf-1/runs/run-1/transcript");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { transcript: unknown[] };
+    expect(body.transcript).toEqual([]);
+  });
+
+  it("returns 200 with persisted transcript entries in order", async () => {
+    const { app, repo } = makeApp();
+    const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
+    await repo.save(workflow, []);
+
+    await repo.appendTranscript("wf-1", "run-1", now, { kind: "assistant_text", text: "hello" });
+    await repo.appendTranscript("wf-1", "run-1", now, { kind: "thinking", text: "reasoning" });
+
+    const res = await app.request("/workflows/wf-1/runs/run-1/transcript");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { transcript: Array<{ seq: number; providerEvent: { kind: string } }> };
+    expect(body.transcript).toHaveLength(2);
+    expect(body.transcript[0]?.seq).toBe(1);
+    expect(body.transcript[0]?.providerEvent.kind).toBe("assistant_text");
+    expect(body.transcript[1]?.seq).toBe(2);
+    expect(body.transcript[1]?.providerEvent.kind).toBe("thinking");
+  });
+});

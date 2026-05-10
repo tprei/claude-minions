@@ -8,6 +8,14 @@ import type { Command, CommandResult } from "./commands.js";
 import type { TransitionCommand } from "./transitions.js";
 import type { Logger } from "../observability/logger.js";
 
+const PERSISTENT_TRANSCRIPT_KINDS = new Set<ProviderEvent["kind"]>([
+  "assistant_text",
+  "thinking",
+  "tool_call",
+  "tool_result",
+  "error",
+]);
+
 export interface RunOrchestratorDeps {
   workflowId: string;
   taskId: string;
@@ -19,6 +27,7 @@ export interface RunOrchestratorDeps {
   workspaceId: string;
   applyCommand: (cmd: Command) => Promise<CommandResult>;
   publish: (event: ProviderEvent) => void;
+  persistTranscript?: (occurredAt: string, event: ProviderEvent) => Promise<void>;
   now: () => string;
   signal?: AbortSignal;
   fromOffset?: number;
@@ -90,6 +99,10 @@ export class RunOrchestrator {
         }
 
         const event = item.event;
+
+        if (PERSISTENT_TRANSCRIPT_KINDS.has(event.kind) && this.deps.persistTranscript !== undefined) {
+          await this.deps.persistTranscript(now(), event);
+        }
 
         // set finalReceived before publish so a publish throw on final still marks final as seen
         if (event.kind === "final") finalReceived = true;

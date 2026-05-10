@@ -3,7 +3,7 @@ import type { Workflow, TaskNode } from "@minions/engine";
 import type { TranscriptEvent } from "@minions/shared";
 import { useWorkflowStore, EMPTY_WORKFLOWS } from "../store/workflowStore.js";
 import { useRootStore } from "../store/root.js";
-import { dispatchCommand } from "../transport/rest.js";
+import { dispatchCommand, listTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
 import { connectWorkflowSse } from "../transport/sse.js";
 import { providerEventToTranscript } from "../transcript/providerEventToTranscript.js";
@@ -400,6 +400,26 @@ function TranscriptPanel({
   useEffect(() => {
     setEvents([]);
   }, [taskKey]);
+
+  // Seed transcript from persisted store when a run is available
+  const latestRunId = task.runs[0]?.id;
+  useEffect(() => {
+    if (!conn || !latestRunId) return;
+    let cancelled = false;
+    listTranscript(conn, workflowId, latestRunId)
+      .then(({ transcript }) => {
+        if (cancelled) return;
+        const seeded = transcript.flatMap((entry) => {
+          const te = providerEventToTranscript(entry.providerEvent, task.id, task.runs.length, entry.occurredAt);
+          return te !== null ? [te] : [];
+        });
+        setEvents(seeded);
+      })
+      .catch(() => {
+        if (!cancelled) setEvents([]);
+      });
+    return () => { cancelled = true; };
+  }, [conn, workflowId, task.id, latestRunId, task.runs.length]);
 
   useEffect(() => {
     if (!conn) return;

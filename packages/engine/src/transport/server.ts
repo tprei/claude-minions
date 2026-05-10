@@ -357,6 +357,17 @@ export function createServer(deps: ServerDeps): Hono {
     });
   });
 
+  app.get("/workflows/:id/runs/:runId/transcript", async (c) => {
+    const workflowId = c.req.param("id");
+    const runId = c.req.param("runId");
+    const workflow = await repo.get(workflowId);
+    if (!workflow) {
+      return c.json({ code: "not_found", message: "workflow not found", details: {} }, 404);
+    }
+    const transcript = await repo.listTranscript(workflowId, runId);
+    return c.json({ transcript });
+  });
+
   app.get("/audit/events", (c) => {
     if (!deps.supervisor) {
       return c.json({ code: "supervisor_disabled", message: "supervisor not configured" }, 503);

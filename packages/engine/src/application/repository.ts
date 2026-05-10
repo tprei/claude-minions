@@ -3,12 +3,19 @@
 import { DomainError } from "../domain/errors.js";
 import type { WorkflowEvent } from "../domain/events.js";
 import type { Workflow } from "../domain/types.js";
+import type { ProviderEvent } from "../plugins/provider-plugin.js";
 import { SubscriberHub } from "../persistence/subscriber-hub.js";
 import { hasNonTerminalOperation } from "./recovery.js";
 
 export interface IdempotencyRecord {
   key: string;
   resultRef: string;
+}
+
+export interface TranscriptEntry {
+  seq: number;
+  occurredAt: string;
+  providerEvent: ProviderEvent;
 }
 
 export interface WorkflowRepository {
@@ -26,6 +33,8 @@ export interface WorkflowRepository {
   lookupIdempotency(workflowId: string, key: string): Promise<string | undefined>;
   listRecoverable(): Promise<Workflow[]>;
   list(opts?: { includeCompleted?: boolean }): Promise<Workflow[]>;
+  appendTranscript(workflowId: string, runId: string, occurredAt: string, providerEvent: ProviderEvent): Promise<void>;
+  listTranscript(workflowId: string, runId: string): Promise<TranscriptEntry[]>;
 }
 
 export class InMemoryWorkflowRepository implements WorkflowRepository {
@@ -33,6 +42,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   private readonly events = new Map<string, WorkflowEvent[]>();
   private readonly idempotency = new Map<string, Map<string, string>>();
   private readonly hub = new SubscriberHub();
+  private readonly transcripts = new Map<string, TranscriptEntry[]>();
 
   async get(workflowId: string): Promise<Workflow | undefined> {
     return this.workflows.get(workflowId);
@@ -42,6 +52,11 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     this.workflows.delete(workflowId);
     this.events.delete(workflowId);
     this.idempotency.delete(workflowId);
+    for (const key of this.transcripts.keys()) {
+      if (key.startsWith(`${workflowId}:`)) {
+        this.transcripts.delete(key);
+      }
+    }
   }
 
   async save(
@@ -123,5 +138,18 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return [...this.workflows.values()]
       .filter((w) => opts?.includeCompleted === true || w.status === "active")
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async appendTranscript(workflowId: string, runId: string, occurredAt: string, providerEvent: ProviderEvent): Promise<void> {
+    const key = `${workflowId}:${runId}`;
+    const entries = this.transcripts.get(key) ?? [];
+    const seq = entries.length + 1;
+    entries.push({ seq, occurredAt, providerEvent });
+    this.transcripts.set(key, entries);
+  }
+
+  async listTranscript(workflowId: string, runId: string): Promise<TranscriptEntry[]> {
+    const key = `${workflowId}:${runId}`;
+    return [...(this.transcripts.get(key) ?? [])];
   }
 }

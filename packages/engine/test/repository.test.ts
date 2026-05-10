@@ -248,6 +248,41 @@ describe("InMemoryWorkflowRepository", () => {
     await expect(repo.delete("nonexistent")).resolves.toBeUndefined();
   });
 
+  describe("transcript persistence", () => {
+    it("appendTranscript then listTranscript returns entries in seq order", async () => {
+      const repo = new InMemoryWorkflowRepository();
+      await repo.appendTranscript("wf-1", "run-A", now, { kind: "assistant_text", text: "hi" });
+      await repo.appendTranscript("wf-1", "run-A", now, { kind: "thinking", text: "hmm" });
+      await repo.appendTranscript("wf-1", "run-A", now, { kind: "tool_call", id: "tc-1", name: "bash", input: {} });
+
+      const entries = await repo.listTranscript("wf-1", "run-A");
+      expect(entries).toHaveLength(3);
+      expect(entries.map((e) => e.seq)).toEqual([1, 2, 3]);
+      expect(entries[0]?.providerEvent.kind).toBe("assistant_text");
+      expect(entries[2]?.providerEvent.kind).toBe("tool_call");
+    });
+
+    it("seq is scoped per run_id: run-A and run-B both start at 1", async () => {
+      const repo = new InMemoryWorkflowRepository();
+      await repo.appendTranscript("wf-1", "run-A", now, { kind: "assistant_text", text: "A1" });
+      await repo.appendTranscript("wf-1", "run-A", now, { kind: "assistant_text", text: "A2" });
+      await repo.appendTranscript("wf-1", "run-B", now, { kind: "thinking", text: "B1" });
+      await repo.appendTranscript("wf-1", "run-B", now, { kind: "thinking", text: "B2" });
+
+      const runA = await repo.listTranscript("wf-1", "run-A");
+      const runB = await repo.listTranscript("wf-1", "run-B");
+
+      expect(runA.map((e) => e.seq)).toEqual([1, 2]);
+      expect(runB.map((e) => e.seq)).toEqual([1, 2]);
+    });
+
+    it("listTranscript returns empty array for unknown run", async () => {
+      const repo = new InMemoryWorkflowRepository();
+      const entries = await repo.listTranscript("wf-1", "nonexistent");
+      expect(entries).toEqual([]);
+    });
+  });
+
   it("listRecoverable INCLUDES completed workflows that hold a pending or running graph operation", async () => {
     const repo = new InMemoryWorkflowRepository();
     const wf = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);

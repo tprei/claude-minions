@@ -51,6 +51,7 @@ function makeOrchestrator(
   applyCommand: (cmd: Command) => Promise<CommandResult>,
   shouldThrow?: Error,
   publish?: (event: ProviderEvent) => void,
+  persistTranscript?: (occurredAt: string, event: ProviderEvent) => Promise<void>,
 ) {
   const provider = new StubProviderPlugin({ frames: providerFrames });
   const runtime = makeRuntime(chunks, shouldThrow);
@@ -66,6 +67,7 @@ function makeOrchestrator(
     workspaceId: "stub-wf1_task1",
     applyCommand,
     publish: publish ?? (() => {}),
+    persistTranscript,
     now: () => now,
     log: silentLogger(),
   });
@@ -564,6 +566,36 @@ describe("RunOrchestrator", () => {
 
     expect(cleanupSpy).toHaveBeenCalledOnce();
     expect(cleanupSpy).toHaveBeenCalledWith("ws-wf1_task1");
+  });
+
+  it("persistTranscript called for persistent kinds (assistant_text, thinking, tool_call, tool_result, error) but not usage or final", async () => {
+    const persisted: ProviderEvent[] = [];
+    const applyCommand = vi.fn(async (_cmd: Command): Promise<CommandResult> => makeCommandResult());
+
+    const events: ProviderEvent[] = [
+      { kind: "assistant_text", text: "hello" },
+      { kind: "thinking", text: "hmm" },
+      { kind: "tool_call", id: "tc-1", name: "bash", input: { cmd: "ls" } },
+      { kind: "tool_result", id: "tc-1", output: "file.txt" },
+      { kind: "error", recoverable: true, message: "soft error" },
+      { kind: "usage", inputTokens: 10, outputTokens: 5 },
+      { kind: "final", sessionRef: "ref-x" },
+    ];
+    const chunks = makeChunks(events.map((_, i) => `l${i}`), 0);
+
+    const orchestrator = makeOrchestrator(
+      events.map((e) => [e]),
+      chunks,
+      applyCommand,
+      undefined,
+      undefined,
+      async (_occurredAt, event) => { persisted.push(event); },
+    );
+    await orchestrator.run();
+
+    expect(persisted.map((e) => e.kind)).toEqual([
+      "assistant_text", "thinking", "tool_call", "tool_result", "error",
+    ]);
   });
 
   it("workspace.cleanup throw on mark-interrupted path is swallowed; orchestrator exits cleanly", async () => {

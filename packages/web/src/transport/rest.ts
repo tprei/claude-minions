@@ -2,6 +2,7 @@ import type { Connection } from "../connections/store.js";
 import type {
   Workflow,
   WorkflowSpec,
+  TranscriptEntry,
 } from "@minions/engine";
 
 export class ApiError extends Error {
@@ -194,6 +195,19 @@ export function getWorkflowAuditEvents(
     qs
       ? `/audit/workflows/${encodeURIComponent(workflowId)}?${qs}`
       : `/audit/workflows/${encodeURIComponent(workflowId)}`,
+  );
+}
+
+export { type TranscriptEntry };
+
+export function listTranscript(
+  conn: Connection,
+  workflowId: string,
+  runId: string,
+): Promise<{ transcript: TranscriptEntry[] }> {
+  return apiFetch<{ transcript: TranscriptEntry[] }>(
+    conn,
+    `/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/transcript`,
   );
 }
 

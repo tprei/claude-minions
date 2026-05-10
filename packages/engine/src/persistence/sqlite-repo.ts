@@ -3,7 +3,8 @@ import type { Statement } from "better-sqlite3";
 import { DomainError } from "../domain/errors.js";
 import type { WorkflowEvent } from "../domain/events.js";
 import type { Workflow } from "../domain/types.js";
-import type { IdempotencyRecord, WorkflowRepository } from "../application/repository.js";
+import type { ProviderEvent } from "../plugins/provider-plugin.js";
+import type { IdempotencyRecord, TranscriptEntry, WorkflowRepository } from "../application/repository.js";
 import { hasNonTerminalOperation } from "../application/recovery.js";
 import {
   SCHEMA_DDL,
@@ -22,6 +23,9 @@ import {
   SQL_LOOKUP_IDEMPOTENCY,
   SQL_MAX_CURSOR,
   SQL_UPSERT_WORKFLOW,
+  TRANSCRIPTS_DDL,
+  SQL_INSERT_TRANSCRIPT,
+  SQL_LIST_TRANSCRIPT,
 } from "./schema.js";
 import { SubscriberHub } from "./subscriber-hub.js";
 
@@ -49,6 +53,13 @@ interface IdempotencyRow {
   result_ref: string;
 }
 
+interface TranscriptRow {
+  seq: number;
+  occurred_at: string;
+  kind: string;
+  payload: string;
+}
+
 export class SQLiteWorkflowRepository implements WorkflowRepository {
   private readonly db: Database.Database;
   private readonly hub = new SubscriberHub();
@@ -71,10 +82,13 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     events: WorkflowEvent[],
     idempotency: IdempotencyRecord[],
   ) => WorkflowEvent[];
+  private readonly stmtInsertTranscript: Statement<[string, string, string, string, string, string]>;
+  private readonly stmtListTranscript: Statement<[string, string], TranscriptRow>;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
     this.db.exec(SCHEMA_DDL);
+    this.db.exec(TRANSCRIPTS_DDL);
 
     this.stmtGetWorkflow = this.db.prepare<[string], WorkflowRow>(SQL_GET_WORKFLOW);
     this.stmtGetVersion = this.db.prepare<[string], VersionRow>(SQL_GET_VERSION);
@@ -86,6 +100,10 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     this.stmtEventsSince = this.db.prepare<[string, number], EventRow>(SQL_EVENTS_SINCE);
     this.stmtLookupIdempotency =
       this.db.prepare<[string, string], IdempotencyRow>(SQL_LOOKUP_IDEMPOTENCY);
+    this.stmtInsertTranscript =
+      this.db.prepare<[string, string, string, string, string, string]>(SQL_INSERT_TRANSCRIPT);
+    this.stmtListTranscript =
+      this.db.prepare<[string, string], TranscriptRow>(SQL_LIST_TRANSCRIPT);
     this.stmtListNonCompleted = this.db.prepare<[], WorkflowRow>(SQL_LIST_NON_COMPLETED);
     this.stmtListCompleted = this.db.prepare<[], WorkflowRow>(SQL_LIST_COMPLETED);
     this.stmtListActiveOrdered = this.db.prepare<[], WorkflowRow>(SQL_LIST_ACTIVE_ORDERED);
@@ -227,6 +245,19 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
       ? this.stmtListAllOrdered
       : this.stmtListActiveOrdered;
     return stmt.all().map((row) => JSON.parse(row.blob) as Workflow);
+  }
+
+  async appendTranscript(workflowId: string, runId: string, occurredAt: string, providerEvent: ProviderEvent): Promise<void> {
+    this.stmtInsertTranscript.run(workflowId, runId, occurredAt, providerEvent.kind, JSON.stringify(providerEvent), runId);
+  }
+
+  async listTranscript(workflowId: string, runId: string): Promise<TranscriptEntry[]> {
+    const rows = this.stmtListTranscript.all(workflowId, runId);
+    return rows.map((row) => ({
+      seq: row.seq,
+      occurredAt: row.occurred_at,
+      providerEvent: JSON.parse(row.payload) as ProviderEvent,
+    }));
   }
 
   subscriberCount(workflowId: string): number {

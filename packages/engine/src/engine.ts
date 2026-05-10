@@ -207,6 +207,8 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
             };
             repo.publishTransient(ctx.workflowId, envelope);
           },
+          persistTranscript: (occurredAt, providerEvent) =>
+            repo.appendTranscript(ctx.workflowId, ctx.runId, occurredAt, providerEvent),
           now,
         };
         if (ctx.fromOffset !== undefined) deps.fromOffset = ctx.fromOffset;

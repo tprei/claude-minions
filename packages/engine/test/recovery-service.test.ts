@@ -221,6 +221,8 @@ describe("RecoveryService.scan", () => {
       lookupIdempotency: (id, key) => inner.lookupIdempotency(id, key),
       listRecoverable: () => inner.listRecoverable(),
       list: (opts) => inner.list(opts),
+      appendTranscript: (wid, rid, oat, pe) => inner.appendTranscript(wid, rid, oat, pe),
+      listTranscript: (wid, rid) => inner.listTranscript(wid, rid),
     };
 
     const service = createRecoveryService(
@@ -320,6 +322,8 @@ describe("RecoveryService.scan", () => {
       lookupIdempotency: (id, key) => inner.lookupIdempotency(id, key),
       listRecoverable: () => inner.listRecoverable(),
       list: (opts) => inner.list(opts),
+      appendTranscript: (wid, rid, oat, pe) => inner.appendTranscript(wid, rid, oat, pe),
+      listTranscript: (wid, rid) => inner.listTranscript(wid, rid),
     };
 
     const service = createRecoveryService(

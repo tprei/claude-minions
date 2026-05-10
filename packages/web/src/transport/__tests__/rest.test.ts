@@ -182,4 +182,34 @@ describe("rest transport", () => {
       await expect(deleteWorkflow(CONN, "missing")).rejects.toBeInstanceOf(ApiError);
     });
   });
+
+  describe("listTranscript", () => {
+    it("GETs /workflows/:id/runs/:runId/transcript and returns transcript array", async () => {
+      const fixture = {
+        transcript: [
+          { seq: 1, occurredAt: "2026-01-01T00:00:00Z", providerEvent: { kind: "assistant_text", text: "hi" } },
+          { seq: 2, occurredAt: "2026-01-01T00:00:01Z", providerEvent: { kind: "thinking", text: "hmm" } },
+        ],
+      };
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse(fixture));
+
+      const { listTranscript } = await import("../rest.js");
+      const result = await listTranscript(CONN, "wf-1", "run-1");
+
+      const [url] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("http://engine-test/workflows/wf-1/runs/run-1/transcript");
+      expect(result.transcript).toHaveLength(2);
+      expect(result.transcript[0]?.seq).toBe(1);
+      expect(result.transcript[1]?.providerEvent.kind).toBe("thinking");
+    });
+
+    it("throws ApiError on 404 (workflow not found)", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(
+        jsonResponse({ code: "not_found", message: "workflow not found", details: {} }, 404),
+      );
+
+      const { listTranscript, ApiError } = await import("../rest.js");
+      await expect(listTranscript(CONN, "missing", "run-1")).rejects.toBeInstanceOf(ApiError);
+    });
+  });
 });
