@@ -3,7 +3,7 @@ import type { WorkflowSpec } from "@minions/engine";
 import { useConnectionStore } from "../connections/store.js";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useVersionStore } from "../store/version.js";
-import { createWorkflow } from "../transport/rest.js";
+import { createWorkflow, dispatchCommand } from "../transport/rest.js";
 import { setUrlState } from "../routing/urlState.js";
 import { AttachmentBar, useAttachments } from "../chat/attachments.js";
 import { startListening, stopListening, isVoiceSupported, type VoiceSession } from "../chat/voice.js";
@@ -121,6 +121,12 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
       };
       const workflow = await createWorkflow(conn, spec);
       useWorkflowStore.getState().upsert(activeId, workflow);
+      await dispatchCommand(conn, {
+        kind: "retry-task",
+        workflowId: workflow.id,
+        taskId,
+        prompt: trimmedPrompt,
+      });
       clear();
       setUrlState({ connectionId: activeId, view: "list", sessionSlug: null, query: {} });
     } catch (err) {
