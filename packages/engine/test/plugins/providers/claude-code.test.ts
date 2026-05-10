@@ -250,7 +250,7 @@ describe("ClaudeCodeProvider", () => {
       expect(passedPrompt).toContain("git log --oneline -3");
       expect(passedPrompt).toContain("USER TASK:");
       expect(passedPrompt).toContain("Do not exit before committing");
-      expect(inv.command.slice(3)).toEqual(["--output-format", "stream-json", "--verbose"]);
+      expect(inv.command.slice(3)).toEqual(["--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]);
       expect(inv.providerType).toBe("claude-code");
     });
 
@@ -290,7 +290,7 @@ describe("ClaudeCodeProvider", () => {
         prompt: "continue from here",
       });
       expect(inv.command).toEqual([
-        "claude", "-p", "continue from here", "--resume", "abc-uuid", "--output-format", "stream-json", "--verbose",
+        "claude", "-p", "continue from here", "--resume", "abc-uuid", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
       ]);
       expect(inv.providerType).toBe("claude-code");
     });

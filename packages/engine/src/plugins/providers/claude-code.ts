@@ -33,7 +33,7 @@ USER TASK:
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
     const wrapped = `${ClaudeCodeProvider.COMMIT_PREAMBLE}${spec.prompt}`;
     return {
-      command: ["claude", "-p", wrapped, "--output-format", "stream-json", "--verbose"],
+      command: ["claude", "-p", wrapped, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
       providerType: "claude-code",
     };
   }
@@ -41,7 +41,7 @@ USER TASK:
   async resume(spec: ProviderResumeSpec): Promise<ProviderInvocation> {
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
     return {
-      command: ["claude", "-p", spec.prompt, "--resume", spec.sessionRef, "--output-format", "stream-json", "--verbose"],
+      command: ["claude", "-p", spec.prompt, "--resume", spec.sessionRef, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
       providerType: "claude-code",
     };
   }
