@@ -234,17 +234,38 @@ describe("ClaudeCodeProvider", () => {
   });
 
   describe("prepare", () => {
-    it("returns correct argv shape", async () => {
+    it("returns correct argv shape with commit preamble wrapped around the user prompt", async () => {
       const inv = await provider.prepare({
         taskId: "t1",
         workflowId: "wf1",
         prompt: "fix the bug",
         dependencyArtifacts: [],
       });
-      expect(inv.command).toEqual([
-        "claude", "-p", "fix the bug", "--output-format", "stream-json", "--verbose",
-      ]);
+      expect(inv.command[0]).toBe("claude");
+      expect(inv.command[1]).toBe("-p");
+      const passedPrompt = inv.command[2];
+      expect(passedPrompt).toContain("fix the bug");
+      expect(passedPrompt).toContain("git add -A");
+      expect(passedPrompt).toContain("git -c user.email=minions@local -c user.name=minions commit");
+      expect(passedPrompt).toContain("git log --oneline -3");
+      expect(passedPrompt).toContain("USER TASK:");
+      expect(passedPrompt).toContain("Do not exit before committing");
+      expect(inv.command.slice(3)).toEqual(["--output-format", "stream-json", "--verbose"]);
       expect(inv.providerType).toBe("claude-code");
+    });
+
+    it("preamble appears before the user task text", async () => {
+      const inv = await provider.prepare({
+        taskId: "t1",
+        workflowId: "wf1",
+        prompt: "fix the bug",
+        dependencyArtifacts: [],
+      });
+      const passedPrompt = inv.command[2]!;
+      const preambleEnd = passedPrompt.indexOf("USER TASK:");
+      const userTaskStart = passedPrompt.indexOf("fix the bug");
+      expect(preambleEnd).toBeGreaterThan(-1);
+      expect(userTaskStart).toBeGreaterThan(preambleEnd);
     });
 
     it("throws when prompt is empty", async () => {

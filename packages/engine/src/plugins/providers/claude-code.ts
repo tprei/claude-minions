@@ -20,10 +20,20 @@ export class ClaudeCodeProvider implements ProviderPlugin {
     sessionRefFormat: "uuid",
   };
 
+  static readonly COMMIT_PREAMBLE = `You are running inside a git worktree. After completing the work, you MUST:
+  1. Run \`git add -A\` to stage every change you made.
+  2. Run \`git -c user.email=minions@local -c user.name=minions commit -m "<short summary>"\` to commit.
+  3. Verify with \`git log --oneline -3\`.
+Do not exit before committing. If there is nothing to commit, that is a failure — investigate why and produce a real change.
+
+USER TASK:
+`;
+
   async prepare(spec: ProviderPrepareSpec): Promise<ProviderInvocation> {
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
+    const wrapped = `${ClaudeCodeProvider.COMMIT_PREAMBLE}${spec.prompt}`;
     return {
-      command: ["claude", "-p", spec.prompt, "--output-format", "stream-json", "--verbose"],
+      command: ["claude", "-p", wrapped, "--output-format", "stream-json", "--verbose"],
       providerType: "claude-code",
     };
   }
