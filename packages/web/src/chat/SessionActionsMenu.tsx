@@ -7,7 +7,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import type { Workflow } from "@minions/engine";
+import type { TaskStackStatus, Workflow } from "@minions/engine";
 import type { Connection } from "../connections/store.js";
 import { cx } from "../util/classnames.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
@@ -69,6 +69,10 @@ export function SessionActionsMenu({
 
   const canCancel = ACTIVE_STATUSES.has(workflow.status);
 
+  const nonCleanStack = Object.values(workflow.graph)
+    .map((t) => t.stackStatus)
+    .find((s): s is Exclude<TaskStackStatus, "clean"> => s !== "clean");
+
   const onAction = (kind: Exclude<DialogKind, null>): void => {
     setOpen(false);
     setDialog(kind);
@@ -124,6 +128,11 @@ export function SessionActionsMenu({
           onClick={(e) => e.stopPropagation()}
           className="absolute right-0 top-full mt-1 z-30 min-w-[10rem] card p-1 shadow-lg"
         >
+          {nonCleanStack && (
+            <div className="px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400 border-b border-border mb-1">
+              Stack: {nonCleanStack}
+            </div>
+          )}
           {canCancel && (
             <MenuItem onClick={() => onAction("cancel")}>Cancel</MenuItem>
           )}
@@ -140,6 +149,11 @@ export function SessionActionsMenu({
             onClick={(e) => e.stopPropagation()}
             className="flex flex-col gap-2"
           >
+            {nonCleanStack && (
+              <div className="px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                Stack: {nonCleanStack}
+              </div>
+            )}
             {canCancel && (
               <MenuItem mobile onClick={() => onAction("cancel")}>Cancel</MenuItem>
             )}

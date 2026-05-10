@@ -28,7 +28,7 @@ import { dispatchCommand } from "../transport/rest.js";
 import { cx } from "../util/classnames.js";
 import { PANEL_DAG_CANVAS, usePanelLayout, type Breakpoint } from "../util/panelLayout.js";
 import { getViewport, setViewport, type Viewport } from "./dagViewport.js";
-import { STATUS_DOT, STATUS_LABEL } from "./statusToVisual.js";
+import { STATUS_DOT, STATUS_LABEL, getTaskVisual } from "./statusToVisual.js";
 import "reactflow/dist/style.css";
 
 const DAG_DEFAULT_WIDTH = 720;
@@ -117,6 +117,7 @@ export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
   const activeId = useConnectionStore((s) => s.activeId);
   const canRetry = isRetryable(task.executionStatus);
   const hasFailed = task.executionStatus === "failed";
+  const { badgeLabel } = getTaskVisual(task.executionStatus, task.stackStatus);
 
   const goToSession = (taskId: string): void => {
     if (!activeId) return;
@@ -143,6 +144,15 @@ export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
           className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none border border-red-700 dark:border-red-300 shadow"
         >
           !
+        </span>
+      )}
+      {badgeLabel && (
+        <span
+          data-testid="dag-node-stack-badge"
+          title={badgeLabel}
+          className="absolute top-0 right-0 translate-x-1 -translate-y-1/2 inline-flex items-center px-1 py-0.5 rounded text-[8px] font-mono font-bold leading-none bg-amber-400 text-amber-900 dark:bg-amber-500 dark:text-amber-950 shadow"
+        >
+          {badgeLabel}
         </span>
       )}
       <div className="font-medium leading-tight line-clamp-2 break-words">{task.title}</div>

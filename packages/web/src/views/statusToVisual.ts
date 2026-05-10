@@ -1,8 +1,9 @@
-import type { TaskExecutionStatus } from "@minions/engine";
+import type { TaskExecutionStatus, TaskStackStatus } from "@minions/engine";
 
 export interface StatusVisual {
   dotClass: string;
   label: string;
+  badgeLabel?: string;
 }
 
 /**
@@ -39,6 +40,26 @@ export const STATUS_LABEL: Record<TaskExecutionStatus, string> = {
   failed: "failed",
   cancelled: "cancelled",
 };
+
+const STACK_BADGE: Record<TaskStackStatus, string | undefined> = {
+  clean: undefined,
+  "restack-pending": "RESTACK PENDING",
+  restacking: "RESTACKING",
+  "restack-conflict": "CONFLICT",
+  "stale-artifacts": "STALE",
+};
+
+export function getTaskVisual(
+  executionStatus: TaskExecutionStatus,
+  stackStatus: TaskStackStatus,
+): StatusVisual {
+  const badgeLabel = STACK_BADGE[stackStatus];
+  return {
+    dotClass: STATUS_DOT[executionStatus],
+    label: STATUS_LABEL[executionStatus],
+    ...(badgeLabel !== undefined ? { badgeLabel } : {}),
+  };
+}
 
 export function statusToVisual(status: TaskExecutionStatus): StatusVisual {
   return {
