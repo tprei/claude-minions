@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { WorkflowSpec } from "@minions/engine";
 import { useConnectionStore } from "../connections/store.js";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useVersionStore } from "../store/version.js";
-import { createWorkflow, dispatchCommand } from "../transport/rest.js";
+import { createWorkflow, planWorkflow, ApiError } from "../transport/rest.js";
 import { setUrlState } from "../routing/urlState.js";
 import { AttachmentBar, useAttachments } from "../chat/attachments.js";
 import { startListening, stopListening, isVoiceSupported, type VoiceSession } from "../chat/voice.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { cx } from "../util/classnames.js";
+import { PlanPreviewModal } from "./PlanPreviewModal.js";
 
 interface ApiClient {
   get: (path: string) => Promise<unknown>;
@@ -49,6 +50,10 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [planSpec, setPlanSpec] = useState<WorkflowSpec | null>(null);
+  const [planModalOpen, setPlanModalOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   const voiceEnabled = useFeature("voice-input");
   const voiceSupported = useMemo(() => voiceEnabled && isVoiceSupported(), [voiceEnabled]);
@@ -101,40 +106,76 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
     return trimmedPrompt.slice(0, 60);
   }, [title, trimmedPrompt]);
 
+  function makeSingleTaskSpec(): WorkflowSpec {
+    const taskId = generateId();
+    return {
+      id: generateId(),
+      kind: "single-task",
+      tasks: [{
+        id: taskId,
+        title: effectiveTitle || trimmedPrompt.slice(0, 60),
+        prompt: trimmedPrompt,
+        ...(repoId !== NONE_REPO && baseBranch.trim() ? { mergeTarget: baseBranch.trim() } : {}),
+      }],
+      policy: {},
+    };
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit || !activeId || !conn) return;
     setSubmitting(true);
     setError(null);
     try {
-      const taskId = generateId();
-      const spec: WorkflowSpec = {
-        id: generateId(),
-        kind: "single-task",
-        tasks: [{
-          id: taskId,
-          title: effectiveTitle || trimmedPrompt.slice(0, 60),
-          prompt: trimmedPrompt,
-          ...(repoId !== NONE_REPO && baseBranch.trim() ? { mergeTarget: baseBranch.trim() } : {}),
-        }],
-        policy: {},
-      };
-      const workflow = await createWorkflow(conn, spec);
-      useWorkflowStore.getState().upsert(activeId, workflow);
-      await dispatchCommand(conn, {
-        kind: "retry-task",
-        workflowId: workflow.id,
-        taskId,
-        prompt: trimmedPrompt,
-      });
-      clear();
-      setUrlState({ connectionId: activeId, view: "list", sessionSlug: null, query: {} });
+      let spec: WorkflowSpec;
+      try {
+        const result = await planWorkflow(conn, trimmedPrompt);
+        spec = result.spec;
+      } catch (planErr) {
+        // 503 means planner not configured — fall back to single-task
+        const errStatus = (planErr !== null && typeof planErr === "object" && "status" in planErr)
+          ? (planErr as { status: number }).status
+          : 0;
+        const is503 = errStatus === 503;
+        if (is503) {
+          spec = makeSingleTaskSpec();
+          // Dispatch directly without showing modal when planner unavailable
+          const workflow = await createWorkflow(conn, spec);
+          useWorkflowStore.getState().upsert(activeId, workflow);
+          clear();
+          setUrlState({ connectionId: activeId, view: "list", sessionSlug: null, query: {} });
+          return;
+        }
+        throw planErr;
+      }
+      setPlanSpec(spec);
+      setPlanModalOpen(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create workflow");
+      setError(err instanceof Error ? err.message : "Failed to plan workflow");
     } finally {
       setSubmitting(false);
     }
   }
+
+  const handleConfirmPlan = useCallback(async (spec: WorkflowSpec) => {
+    if (!activeId || !conn) return;
+    setConfirming(true);
+    try {
+      const workflow = await createWorkflow(conn, spec);
+      useWorkflowStore.getState().upsert(activeId, workflow);
+      setPlanModalOpen(false);
+      setPlanSpec(null);
+      clear();
+      setUrlState({ connectionId: activeId, view: "list", sessionSlug: null, query: {} });
+    } finally {
+      setConfirming(false);
+    }
+  }, [activeId, conn, clear]);
+
+  const handleCancelPlan = useCallback(() => {
+    setPlanModalOpen(false);
+    setPlanSpec(null);
+  }, []);
 
   if (!activeId) {
     return (
@@ -258,6 +299,14 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
           </button>
         </div>
       </form>
+
+      <PlanPreviewModal
+        open={planModalOpen}
+        spec={planSpec}
+        onConfirm={handleConfirmPlan}
+        onCancel={handleCancelPlan}
+        confirming={confirming}
+      />
     </div>
   );
 }

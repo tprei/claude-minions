@@ -9,7 +9,7 @@ import { useVersionStore } from "../../store/version.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { createWorkflowMock } = vi.hoisted(() => ({
+const { createWorkflowMock, planWorkflowMock } = vi.hoisted(() => ({
   createWorkflowMock: vi.fn(async (_conn: unknown, _spec: unknown): Promise<Workflow> => ({
     id: "wf-new",
     kind: "single-task",
@@ -40,12 +40,28 @@ const { createWorkflowMock } = vi.hoisted(() => ({
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   })),
+  planWorkflowMock: vi.fn(),
 }));
 
-vi.mock("../../transport/rest.js", () => ({
-  createWorkflow: createWorkflowMock,
-  apiFetch: vi.fn(),
-}));
+vi.mock("../../transport/rest.js", () => {
+  class ApiError extends Error {
+    code: string;
+    status: number;
+    detail: undefined;
+    constructor(status: number, body: { code: string; message: string }) {
+      super(body.message);
+      this.name = "ApiError";
+      this.code = body.code;
+      this.status = status;
+    }
+  }
+  return {
+    createWorkflow: createWorkflowMock,
+    apiFetch: vi.fn(),
+    ApiError,
+    planWorkflow: planWorkflowMock,
+  };
+});
 
 vi.mock("../../store/workflowStore.js", () => ({
   useWorkflowStore: Object.assign(
@@ -92,11 +108,21 @@ function setReactValue(el: HTMLInputElement | HTMLTextAreaElement, value: string
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+const PLAN_RESPONSE = {
+  spec: {
+    id: "wf-plan-1",
+    kind: "single-task",
+    tasks: [{ id: "t-plan-1", title: "Planned task", prompt: "do something useful here" }],
+  },
+};
+
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   createWorkflowMock.mockClear();
+  // Re-set planWorkflow implementation after clearMocks resets it
+  planWorkflowMock.mockResolvedValue(PLAN_RESPONSE);
   useConnectionStore.setState({ activeId: CONN_ID, connections: [TEST_CONN], _hydrated: true });
   useVersionStore.getState().setVersion(CONN_ID, makeVersionInfo());
 });
@@ -110,8 +136,7 @@ afterEach(() => {
 
 async function flush(): Promise<void> {
   await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
   });
 }
 
@@ -138,7 +163,8 @@ describe("NewSessionView", () => {
     expect(submit).not.toBeNull();
   });
 
-  it("calls createWorkflow when form is submitted with a valid prompt", async () => {
+  it("shows the plan preview modal when planWorkflow succeeds", async () => {
+
     act(() => {
       root.render(createElement(NewSessionView, { api: makeApi() }));
     });
@@ -152,6 +178,51 @@ describe("NewSessionView", () => {
     const form = container.querySelector("form") as HTMLFormElement;
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      // Let planWorkflow mock resolve (microtask) + state update
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    });
+    // Extra flush for React re-render after state update
+    await flush();
+
+    // Verify planWorkflow was called
+    expect(planWorkflowMock).toHaveBeenCalledTimes(1);
+
+    // Modal should be open — use vi.waitFor to poll for the button (React re-render is async)
+    await vi.waitFor(() => {
+      const buttons = Array.from(container.querySelectorAll("button"));
+      const confirm = buttons.find((b) => b.textContent?.includes("Confirm"));
+      expect(confirm).toBeDefined();
+    }, { timeout: 2000, interval: 10 });
+  });
+
+  it("calls createWorkflow when the plan modal is confirmed", async () => {
+    act(() => {
+      root.render(createElement(NewSessionView, { api: makeApi() }));
+    });
+    await flush();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    act(() => {
+      setReactValue(textarea, "do something useful here");
+    });
+
+    const form = container.querySelector("form") as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      // Let planWorkflow mock resolve (microtask) + state update
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    });
+    // Extra flush for React re-render after state update
+    await flush();
+
+    // Click "Confirm & dispatch"
+    const allButtons = Array.from(container.querySelectorAll("button"));
+    const confirmDispatch = allButtons.find((b) => b.textContent?.includes("Confirm"));
+    expect(confirmDispatch).toBeDefined();
+
+    await act(async () => {
+      confirmDispatch!.click();
+      for (let i = 0; i < 20; i++) await Promise.resolve();
     });
     await flush();
 

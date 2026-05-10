@@ -211,6 +211,16 @@ export function listTranscript(
   );
 }
 
+export function planWorkflow(
+  conn: Connection,
+  prompt: string,
+): Promise<{ spec: WorkflowSpec }> {
+  return apiFetch<{ spec: WorkflowSpec }>(conn, "/workflows/plan", {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  });
+}
+
 export function getAlerts(
   conn: Connection,
   opts?: Pick<AuditEventsOptions, "limit" | "beforeTs">,
