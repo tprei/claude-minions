@@ -1,0 +1,28 @@
+{
+  "name": "@minions/engine-next",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "tsx src/main.ts"
+  },
+  "devDependencies": {
+    "@types/web-push": "^3.6.4",
+    "jsdom": "^29.1.1",
+    "pngjs": "^7.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^6.0.3",
+    "vite": "^6.0.0",
+    "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.9.0",
+    "hono": "^4.12.17",
+    "web-push": "^3.6.7"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "TEST FIXTURE — slice 16 pwa-stub",
+  "short_name": "pwa-stub",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#000000",
+  "icons": []
+}
