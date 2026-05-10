@@ -35,7 +35,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates openssh-client tini curl gnupg \
+ && apt-get install -y --no-install-recommends git ca-certificates openssh-client tini curl gnupg tmux \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod 644 /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
@@ -70,10 +70,10 @@ ENV HOME=/data/home
 EXPOSE 8787
 
 ENV MWF_PORT=8787 \
-    MWF_HOST=0.0.0.0 \
-    MWF_WORKSPACE=/data/workspace \
-    MWF_SERVE_WEB=true \
-    MWF_WEB_DIST=/app/packages/web/dist
+    MWF_DB_PATH=/data/engine.db \
+    MWF_DATA_DIR=/data/sessions \
+    MWF_WORKSPACE_ROOT=/data/workspace \
+    MWF_PWA_DIR=/app/packages/web/dist
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:'+process.env.MWF_PORT+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
