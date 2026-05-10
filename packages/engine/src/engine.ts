@@ -406,13 +406,20 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
 
   if (!githubEnabled) {
     localFinalizeAbort = new AbortController();
-    const localFinalizeService = new LocalFinalizeService({
+    const localFinalizeDeps: ConstructorParameters<typeof LocalFinalizeService>[0] = {
       workflowRepo: repo,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       signal: localFinalizeAbort.signal,
       now,
       log: log.child({ component: "local-finalize" }),
-    });
+    };
+    if (config.repoPath && sharedGitClient) {
+      localFinalizeDeps.workspace = workspace;
+      localFinalizeDeps.gitClient = sharedGitClient;
+      localFinalizeDeps.repoPath = config.repoPath;
+      localFinalizeDeps.baseBranch = config.githubBaseBranch ?? "main";
+    }
+    const localFinalizeService = new LocalFinalizeService(localFinalizeDeps);
     const recoverableWorkflows = await repo.listRecoverable();
     for (const w of recoverableWorkflows) localFinalizeService.attach(w.id);
     serverDeps.localFinalizeService = localFinalizeService;
