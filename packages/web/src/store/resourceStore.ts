@@ -1,35 +1,25 @@
 import { create } from "zustand";
-import type { ResourceSnapshot } from "../types.js";
+
+/**
+ * Resource store — stubbed.
+ *
+ * The legacy engine emitted periodic `resource` SSE events carrying
+ * ResourceSnapshot (CPU/memory/disk). The new engine-next transport only
+ * emits WorkflowEvents; there is no resource telemetry channel. This store
+ * is kept as an empty stub so that downstream components (resource/) compile
+ * until step 6-7 rewrites them.
+ */
 
 export const RESOURCE_HISTORY_MAX = 60;
 
-interface ResourceStore {
-  byConnection: Map<string, ResourceSnapshot[]>;
-  push: (connId: string, snapshot: ResourceSnapshot) => void;
-  clear: (connId: string) => void;
+export interface ResourceEntry {
+  ts: number;
 }
 
-export const useResourceStore = create<ResourceStore>((set) => ({
+interface ResourceStore {
+  byConnection: Map<string, ResourceEntry[]>;
+}
+
+export const useResourceStore = create<ResourceStore>(() => ({
   byConnection: new Map(),
-
-  push(connId, snapshot) {
-    set(s => {
-      const byConnection = new Map(s.byConnection);
-      const prev = byConnection.get(connId) ?? [];
-      const next = prev.length >= RESOURCE_HISTORY_MAX
-        ? [...prev.slice(prev.length - RESOURCE_HISTORY_MAX + 1), snapshot]
-        : [...prev, snapshot];
-      byConnection.set(connId, next);
-      return { byConnection };
-    });
-  },
-
-  clear(connId) {
-    set(s => {
-      if (!s.byConnection.has(connId)) return s;
-      const byConnection = new Map(s.byConnection);
-      byConnection.delete(connId);
-      return { byConnection };
-    });
-  },
 }));
