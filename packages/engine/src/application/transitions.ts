@@ -16,6 +16,7 @@ export type TransitionKind =
   | "start-ci-gate"
   | "complete-ci-gate"
   | "merge-task"
+  | "complete-without-pr"
   | "merge-conflict"
   | "cancel-task"
   | "recover-task"
@@ -156,6 +157,10 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
   },
   "merge-task": {
     from: ["pr-open"],
+    apply: () => ({ patch: { executionStatus: "merged" } }),
+  },
+  "complete-without-pr": {
+    from: ["finalizing"],
     apply: () => ({ patch: { executionStatus: "merged" } }),
   },
   "merge-conflict": {

@@ -1,9 +1,13 @@
 import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Workflow, TaskNode } from "@minions/engine";
-import { useWorkflowStore } from "../store/workflowStore.js";
+import type { TranscriptEvent } from "@minions/shared";
+import { useWorkflowStore, EMPTY_WORKFLOWS } from "../store/workflowStore.js";
 import { useRootStore } from "../store/root.js";
 import { dispatchCommand } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
+import { connectWorkflowSse } from "../transport/sse.js";
+import { providerEventToTranscript } from "../transcript/providerEventToTranscript.js";
+import type { Connection } from "../connections/store.js";
 import { Button } from "../components/Button.js";
 import { ChatInput } from "./Input.js";
 import { HelpModal } from "./HelpModal.js";
@@ -361,7 +365,9 @@ function SurfacePanel({
         aria-labelledby={`surface-tab-${activeTab}`}
         className="flex-1 min-h-0 flex flex-col overflow-hidden"
       >
-        {activeTab === "transcript" && <TranscriptPanel task={task} />}
+        {activeTab === "transcript" && (
+          <TranscriptPanel task={task} workflowId={workflow.id} conn={conn} />
+        )}
       </div>
       <ChatInput
         onSubmit={handleSubmit}
@@ -376,8 +382,49 @@ function SurfacePanel({
   );
 }
 
-function TranscriptPanel({ task }: { task: TaskNode }) {
+function TranscriptPanel({
+  task,
+  workflowId,
+  conn,
+}: {
+  task: TaskNode;
+  workflowId: string;
+  conn: Connection | null;
+}) {
   const hasRuns = task.runs.length > 0;
+  const [events, setEvents] = useState<TranscriptEvent[]>([]);
+
+  // Reset transcript when the active task or workflow changes
+  const taskKey = `${workflowId}:${task.id}`;
+
+  useEffect(() => {
+    setEvents([]);
+  }, [taskKey]);
+
+  useEffect(() => {
+    if (!conn) return;
+
+    const sseConn = connectWorkflowSse(conn, workflowId, {
+      onEvent(e) {
+        if (e.kind !== "provider-event") return;
+        if (e.payload.taskId !== task.id) return;
+        const transcriptEvent = providerEventToTranscript(
+          e.payload.providerEvent,
+          task.id,
+          task.runs.length,
+          e.occurredAt,
+        );
+        if (transcriptEvent !== null) {
+          setEvents((prev) => [...prev, transcriptEvent]);
+        }
+      },
+    });
+
+    return () => {
+      sseConn.close();
+    };
+  }, [conn, workflowId, task.id, task.runs.length]);
+
   return (
     <div className="flex-1 overflow-y-auto">
       {!hasRuns ? (
@@ -388,7 +435,7 @@ function TranscriptPanel({ task }: { task: TaskNode }) {
           </div>
         </div>
       ) : (
-        <Transcript events={[]} />
+        <Transcript events={events} />
       )}
       <div className="p-3 space-y-2">
         <div className="text-xs text-fg-subtle font-medium">Task details</div>
@@ -432,7 +479,7 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
   });
   const activeId = useConnectionStore((s) => s.activeId);
   const workflowsMap = useWorkflowStore(
-    (s) => (activeId ? s.byConnection.get(activeId) ?? new Map<string, Workflow>() : new Map<string, Workflow>()),
+    (s) => (activeId ? s.byConnection.get(activeId) ?? EMPTY_WORKFLOWS : EMPTY_WORKFLOWS),
   );
 
   const workflow = sessionSlug ? workflowsMap.get(sessionSlug) : undefined;

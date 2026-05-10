@@ -229,6 +229,25 @@ describe("InMemoryWorkflowRepository", () => {
     expect(result.map((w) => w.id).sort()).toEqual(["wf-1", "wf-2", "wf-3"]);
   });
 
+  it("delete removes the workflow and its events from the store", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
+    await repo.save(workflow, [makeEvent("wf-1")]);
+
+    expect(await repo.get("wf-1")).toBeDefined();
+    expect(await repo.eventsSince("wf-1", 0)).toHaveLength(1);
+
+    await repo.delete("wf-1");
+
+    expect(await repo.get("wf-1")).toBeUndefined();
+    expect(await repo.eventsSince("wf-1", 0)).toHaveLength(0);
+  });
+
+  it("delete is a no-op when the workflow does not exist", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await expect(repo.delete("nonexistent")).resolves.toBeUndefined();
+  });
+
   it("listRecoverable INCLUDES completed workflows that hold a pending or running graph operation", async () => {
     const repo = new InMemoryWorkflowRepository();
     const wf = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);

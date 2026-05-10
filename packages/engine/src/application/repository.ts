@@ -18,6 +18,7 @@ export interface WorkflowRepository {
     events: WorkflowEvent[],
     idempotency?: IdempotencyRecord[],
   ): Promise<void>;
+  delete(workflowId: string): Promise<void>;
   eventsSince(workflowId: string, cursor: number): Promise<WorkflowEvent[]>;
   latestCursor(workflowId: string): Promise<number>;
   subscribe(workflowId: string, fromCursor: number): AsyncIterable<WorkflowEvent>;
@@ -35,6 +36,12 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async get(workflowId: string): Promise<Workflow | undefined> {
     return this.workflows.get(workflowId);
+  }
+
+  async delete(workflowId: string): Promise<void> {
+    this.workflows.delete(workflowId);
+    this.events.delete(workflowId);
+    this.idempotency.delete(workflowId);
   }
 
   async save(

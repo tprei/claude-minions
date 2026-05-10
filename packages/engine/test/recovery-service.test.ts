@@ -213,6 +213,7 @@ describe("RecoveryService.scan", () => {
         return inner.get(id);
       },
       save: (w, e, i) => inner.save(w, e, i),
+      delete: (id) => inner.delete(id),
       eventsSince: (id, cursor) => inner.eventsSince(id, cursor),
       latestCursor: (id) => inner.latestCursor(id),
       subscribe: (id, cursor) => inner.subscribe(id, cursor),
@@ -311,6 +312,7 @@ describe("RecoveryService.scan", () => {
         return inner.get(id);
       },
       save: (w, e, i) => inner.save(w, e, i),
+      delete: (id) => inner.delete(id),
       eventsSince: (id, cursor) => inner.eventsSince(id, cursor),
       latestCursor: (id) => inner.latestCursor(id),
       subscribe: (id, cursor) => inner.subscribe(id, cursor),

@@ -14,7 +14,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { Sheet } from "../components/Sheet.js";
 import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { hapticTap } from "../pwa/haptics.js";
-import { dispatchCommand } from "../transport/rest.js";
+import { dispatchCommand, deleteWorkflow } from "../transport/rest.js";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useConnectionStore } from "../connections/store.js";
 
@@ -93,11 +93,12 @@ export function SessionActionsMenu({
   }, [conn, workflow]);
 
   const onDeleteConfirm = useCallback(async (): Promise<void> => {
+    await deleteWorkflow(conn, workflow.id);
     const activeId = useConnectionStore.getState().activeId;
     if (!activeId) return;
     useWorkflowStore.getState().remove(activeId, workflow.id);
     onAfterDelete?.();
-  }, [workflow.id, onAfterDelete]);
+  }, [conn, workflow.id, onAfterDelete]);
 
   return (
     <span className={cx("relative inline-flex", className)}>

@@ -70,6 +70,10 @@ export function createWorkflow(conn: Connection, spec: WorkflowSpec): Promise<Wo
   });
 }
 
+export function deleteWorkflow(conn: Connection, id: string): Promise<void> {
+  return apiFetch<void>(conn, `/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export interface ContinueTaskInput {
   kind: "continue-task";
   workflowId: string;

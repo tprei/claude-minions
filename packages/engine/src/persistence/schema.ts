@@ -51,6 +51,10 @@ export const SQL_LIST_ACTIVE_ORDERED =
 export const SQL_LIST_ALL_ORDERED =
   "SELECT blob FROM workflows ORDER BY json_extract(blob, '$.updatedAt') DESC";
 
+export const SQL_DELETE_WORKFLOW = "DELETE FROM workflows WHERE id = ?";
+export const SQL_DELETE_WORKFLOW_EVENTS = "DELETE FROM events WHERE workflow_id = ?";
+export const SQL_DELETE_WORKFLOW_IDEMPOTENCY = "DELETE FROM idempotency WHERE workflow_id = ?";
+
 export const PUSH_SUBSCRIPTIONS_DDL = `
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   endpoint TEXT NOT NULL,

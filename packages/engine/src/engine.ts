@@ -31,6 +31,7 @@ import { TokenBucket } from "./plugins/github/rate-limiter.js";
 import { GitHubClient } from "./plugins/github/github-client.js";
 import { GitHubScmPlugin } from "./plugins/github/github-scm-plugin.js";
 import { MergeService } from "./application/merge-service.js";
+import { LocalFinalizeService } from "./application/local-finalize-service.js";
 import { CIBabysitterService } from "./application/ci-babysitter-service.js";
 import { QualityGateService } from "./application/quality-gate-service.js";
 import { CompletionDispatcher } from "./application/completion-dispatcher.js";
@@ -373,6 +374,22 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     }
   }
 
+  let localFinalizeAbort: AbortController | undefined;
+
+  if (!githubEnabled) {
+    localFinalizeAbort = new AbortController();
+    const localFinalizeService = new LocalFinalizeService({
+      workflowRepo: repo,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      signal: localFinalizeAbort.signal,
+      now,
+      log: log.child({ component: "local-finalize" }),
+    });
+    const recoverableWorkflows = await repo.listRecoverable();
+    for (const w of recoverableWorkflows) localFinalizeService.attach(w.id);
+    serverDeps.localFinalizeService = localFinalizeService;
+  }
+
   let completionDispatcherAbort: AbortController | undefined;
 
   if (serverDeps.mergeService) {
@@ -415,6 +432,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       ciBabysitterAbort?.abort();
       qualityAbort?.abort();
       completionDispatcherAbort?.abort();
+      localFinalizeAbort?.abort();
       observabilityAbort.abort();
       for (const entry of activeOrchestrators) {
         entry.controller.abort();

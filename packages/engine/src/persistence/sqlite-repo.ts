@@ -7,6 +7,9 @@ import type { IdempotencyRecord, WorkflowRepository } from "../application/repos
 import { hasNonTerminalOperation } from "../application/recovery.js";
 import {
   SCHEMA_DDL,
+  SQL_DELETE_WORKFLOW,
+  SQL_DELETE_WORKFLOW_EVENTS,
+  SQL_DELETE_WORKFLOW_IDEMPOTENCY,
   SQL_EVENTS_SINCE,
   SQL_GET_VERSION,
   SQL_GET_WORKFLOW,
@@ -62,6 +65,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
   private readonly stmtListCompleted: Statement<[], WorkflowRow>;
   private readonly stmtListActiveOrdered: Statement<[], WorkflowRow>;
   private readonly stmtListAllOrdered: Statement<[], WorkflowRow>;
+  private readonly txDelete: (workflowId: string) => void;
   private readonly txSave: (
     workflow: Workflow,
     events: WorkflowEvent[],
@@ -86,6 +90,15 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     this.stmtListCompleted = this.db.prepare<[], WorkflowRow>(SQL_LIST_COMPLETED);
     this.stmtListActiveOrdered = this.db.prepare<[], WorkflowRow>(SQL_LIST_ACTIVE_ORDERED);
     this.stmtListAllOrdered = this.db.prepare<[], WorkflowRow>(SQL_LIST_ALL_ORDERED);
+
+    const stmtDeleteWorkflow = this.db.prepare<[string]>(SQL_DELETE_WORKFLOW);
+    const stmtDeleteEvents = this.db.prepare<[string]>(SQL_DELETE_WORKFLOW_EVENTS);
+    const stmtDeleteIdempotency = this.db.prepare<[string]>(SQL_DELETE_WORKFLOW_IDEMPOTENCY);
+    this.txDelete = this.db.transaction((workflowId: string) => {
+      stmtDeleteEvents.run(workflowId);
+      stmtDeleteIdempotency.run(workflowId);
+      stmtDeleteWorkflow.run(workflowId);
+    });
 
     this.txSave = this.db.transaction(
       (workflow: Workflow, events: WorkflowEvent[], idempotency: IdempotencyRecord[]) => {
@@ -152,6 +165,10 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     const row = this.stmtGetWorkflow.get(workflowId);
     if (!row) return undefined;
     return JSON.parse(row.blob) as Workflow;
+  }
+
+  async delete(workflowId: string): Promise<void> {
+    this.txDelete(workflowId);
   }
 
   async save(

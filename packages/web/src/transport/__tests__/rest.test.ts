@@ -160,4 +160,26 @@ describe("rest transport", () => {
       expect((init as RequestInit).method).toBe("POST");
     });
   });
+
+  describe("deleteWorkflow", () => {
+    it("DELETEs /workflows/:id and resolves on 204", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+      const { deleteWorkflow } = await import("../rest.js");
+      await expect(deleteWorkflow(CONN, "wf-1")).resolves.toBeUndefined();
+
+      const [url, init] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("http://engine-test/workflows/wf-1");
+      expect((init as RequestInit).method).toBe("DELETE");
+    });
+
+    it("throws ApiError on 404", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(
+        jsonResponse({ code: "not_found", message: "workflow not found", details: {} }, 404),
+      );
+
+      const { deleteWorkflow, ApiError } = await import("../rest.js");
+      await expect(deleteWorkflow(CONN, "missing")).rejects.toBeInstanceOf(ApiError);
+    });
+  });
 });

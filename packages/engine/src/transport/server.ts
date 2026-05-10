@@ -6,6 +6,7 @@ import type { Command, CommandKind } from "../application/commands.js";
 import type { CIBabysitterService } from "../application/ci-babysitter-service.js";
 import type { QualityGateService } from "../application/quality-gate-service.js";
 import type { CompletionDispatcher } from "../application/completion-dispatcher.js";
+import type { LocalFinalizeService } from "../application/local-finalize-service.js";
 import type { ContinueTaskService } from "../application/continue-task-service.js";
 import type { MergeService } from "../application/merge-service.js";
 import { MergeServiceError } from "../application/merge-service.js";
@@ -34,6 +35,7 @@ export interface ServerDeps {
   ciBabysitter?: CIBabysitterService;
   qualityGateService?: QualityGateService;
   completionDispatcher?: CompletionDispatcher;
+  localFinalizeService?: LocalFinalizeService;
   pushService?: PushService;
   subscriptions?: SubscriptionRepository;
   vapidPublicKey?: string;
@@ -129,6 +131,7 @@ export function createServer(deps: ServerDeps): Hono {
     deps.ciBabysitter?.attach(workflow.id);
     deps.qualityGateService?.attach(workflow.id);
     deps.completionDispatcher?.attach(workflow.id);
+    deps.localFinalizeService?.attach(workflow.id);
     deps.observability?.attach(workflow.id);
     return c.json(workflow, 201);
   });
@@ -145,6 +148,16 @@ export function createServer(deps: ServerDeps): Hono {
       return c.json({ code: "not_found", message: "workflow not found", details: {} }, 404);
     }
     return c.json(workflow);
+  });
+
+  app.delete("/workflows/:id", async (c) => {
+    const workflowId = c.req.param("id");
+    const workflow = await repo.get(workflowId);
+    if (!workflow) {
+      return c.json({ code: "not_found", message: "workflow not found", details: {} }, 404);
+    }
+    await repo.delete(workflowId);
+    return c.newResponse(null, 204);
   });
 
   app.post("/commands", async (c) => {
