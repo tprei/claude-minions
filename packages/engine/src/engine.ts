@@ -176,7 +176,9 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       promise: undefined as unknown as Promise<void>,
     };
     activeOrchestrators.add(entry);
-    const orch = new RunOrchestrator({ ...deps, signal: controller.signal, log: log.child({ component: "run-orchestrator", workflowId: deps.workflowId, taskId: deps.taskId }) });
+    const persistTranscript = deps.persistTranscript ?? ((occurredAt, providerEvent) =>
+      repo.appendTranscript(deps.workflowId, deps.runId, occurredAt, providerEvent));
+    const orch = new RunOrchestrator({ ...deps, persistTranscript, signal: controller.signal, log: log.child({ component: "run-orchestrator", workflowId: deps.workflowId, taskId: deps.taskId }) });
     entry.promise = orch
       .run()
       .catch((err) => log.child({ component: "run-orchestrator" }).error("run-orchestrator error", { error: (err as Error).message }))
