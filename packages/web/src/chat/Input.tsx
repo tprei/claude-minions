@@ -1,14 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { slashCommands } from "./slashCommands.js";
 import { AutocompletePopover } from "./autocomplete.js";
-import { FileMentionPopover } from "./FileMentionPopover.js";
-import { currentMentionToken, replaceMentionToken, type MentionToken } from "./mentions.js";
 import { AttachmentBar, useAttachments, type Attachment } from "./attachments.js";
 import { startListening, stopListening, isVoiceSupported, type VoiceSession } from "./voice.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { cx } from "../util/classnames.js";
-import { useRootStore } from "../store/root.js";
-import { listRepoFiles } from "../transport/rest.js";
 import type { SlashCommand } from "./slashCommands.js";
 
 interface Props {
@@ -19,12 +15,6 @@ interface Props {
   hint?: string;
   running?: boolean;
   onStop?: () => void | Promise<void>;
-  repoId?: string;
-}
-
-interface MentionState {
-  token: MentionToken;
-  results: string[];
 }
 
 function matchSlash(value: string) {
@@ -49,70 +39,21 @@ function parseSlashCommand(value: string): { cmd: SlashCommand; args: string[] }
   return { cmd, args: parts.slice(1) };
 }
 
-export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hint, running, onStop, repoId }: Props) {
+export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hint, running, onStop }: Props) {
   const [value, setValue] = useState("");
-  const [caret, setCaret] = useState(0);
   const [autocompleteIdx, setAutocompleteIdx] = useState(0);
-  const [mention, setMention] = useState<MentionState | null>(null);
-  const [mentionIdx, setMentionIdx] = useState(0);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const voiceRef = useRef<VoiceSession | null>(null);
   const [listening, setListening] = useState(false);
   const voiceEnabled = useFeature("voice-input");
   const { attachments, setAttachments, onPaste, onDrop, clear: clearAttachments } = useAttachments();
-  const conn = useRootStore((s) => s.getActiveConnection());
 
   const matches = matchSlash(value) ?? [];
   const showAutocomplete = matches.length > 0;
-  const showMention = !showAutocomplete && mention !== null && mention.results.length > 0;
 
   useEffect(() => {
     setAutocompleteIdx(0);
   }, [value]);
-
-  useEffect(() => {
-    if (!conn || !repoId) {
-      setMention(null);
-      return;
-    }
-    const token = currentMentionToken(value, caret);
-    if (!token) {
-      setMention(null);
-      return;
-    }
-    let cancelled = false;
-    listRepoFiles(conn, repoId, { q: token.query, limit: 50 })
-      .then((res) => {
-        if (!cancelled) {
-          setMention({ token, results: res.items });
-          setMentionIdx(0);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setMention(null);
-      });
-    return () => { cancelled = true; };
-  }, [value, caret, conn, repoId]);
-
-  const applyMention = useCallback(
-    (path: string) => {
-      if (!mention) return;
-      const next = replaceMentionToken(value, mention.token, "@" + path);
-      setValue(next.value);
-      setCaret(next.caret);
-      setMention(null);
-      const ta = textareaRef.current;
-      if (ta) {
-        queueMicrotask(() => {
-          ta.focus();
-          ta.setSelectionRange(next.caret, next.caret);
-        });
-      }
-    },
-    [mention, value],
-  );
 
   const submit = useCallback(async () => {
     const trimmed = value.trim();
@@ -130,29 +71,6 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
   }, [value, attachments, onSubmit, onSlashCommand, clearAttachments]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (showMention && mention) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setMentionIdx((i) => Math.min(i + 1, mention.results.length - 1));
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setMentionIdx((i) => Math.max(i - 1, 0));
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setMention(null);
-        return;
-      }
-      if (e.key === "Tab" || e.key === "Enter") {
-        e.preventDefault();
-        const picked = mention.results[mentionIdx];
-        if (picked) applyMention(picked);
-        return;
-      }
-    }
     if (showAutocomplete) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -213,9 +131,6 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
       onDragOver={(e) => e.preventDefault()}
     >
       <AttachmentBar attachments={attachments} onChange={setAttachments} />
-      {uploadError && (
-        <div className="px-3 pt-1 text-xs text-red-700 dark:text-red-400">Upload failed: {uploadError}</div>
-      )}
       {showAutocomplete && (
         <div className="absolute bottom-full left-0 right-0 px-3 pb-1 z-50">
           <AutocompletePopover
@@ -226,27 +141,14 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
           />
         </div>
       )}
-      {showMention && mention && (
-        <div className="absolute bottom-full left-0 right-0 px-3 pb-1 z-50">
-          <FileMentionPopover
-            paths={mention.results}
-            activeIndex={mentionIdx}
-            onSelect={applyMention}
-            onClose={() => setMention(null)}
-          />
-        </div>
-      )}
       <div className="flex items-end gap-2 px-3 py-2">
         <textarea
           ref={textareaRef}
           value={value}
           onChange={(e) => {
             setValue(e.target.value);
-            setCaret(e.target.selectionStart ?? e.target.value.length);
           }}
           onKeyDown={handleKeyDown}
-          onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
-          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onPaste={onPaste}
           placeholder={placeholder ?? "Message… (/ for commands, Shift+Enter for newline)"}
           disabled={disabled}
@@ -290,13 +192,13 @@ export function ChatInput({ onSubmit, onSlashCommand, disabled, placeholder, hin
         <button
           type="button"
           onClick={() => void submit()}
-          disabled={disabled || uploading || (!value.trim() && attachments.length === 0)}
+          disabled={disabled || (!value.trim() && attachments.length === 0)}
           className={cx(
             "btn-primary shrink-0 text-xs",
-            (disabled || uploading || (!value.trim() && attachments.length === 0)) && "opacity-50 cursor-not-allowed",
+            (disabled || (!value.trim() && attachments.length === 0)) && "opacity-50 cursor-not-allowed",
           )}
         >
-          {uploading ? "Uploading…" : running ? "Queue" : "Send"}
+          {running ? "Queue" : "Send"}
         </button>
       </div>
       {hint && (
