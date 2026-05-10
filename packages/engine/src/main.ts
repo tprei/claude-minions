@@ -47,10 +47,11 @@ async function main(): Promise<void> {
   const vapidPrivate = optional("MWF_VAPID_PRIVATE_KEY");
   const vapidSubject = optional("MWF_VAPID_SUBJECT");
 
+  const qualityDisabled = process.env["MWF_QUALITY_DISABLED"] === "1";
   const config: EngineConfig = {
     dbPath,
     providerFactory,
-    qualityPlugin: new ExecQualityPlugin(runner),
+    ...(qualityDisabled ? {} : { qualityPlugin: new ExecQualityPlugin(runner) }),
     logLevel: parseLevel(process.env["MWF_LOG_LEVEL"]),
   };
 

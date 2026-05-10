@@ -29,6 +29,7 @@ services:
       MWF_PWA_DIR: /app/packages/web/dist
       HOME: /data/home
       MWF_LOG_LEVEL: info
+      MWF_QUALITY_DISABLED: "1"
     ports:
       - "3949:8787"
     volumes:
