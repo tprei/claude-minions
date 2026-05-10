@@ -160,20 +160,18 @@ export function DagNodeComponent({ data }: NodeProps<DagNodeData>) {
         <span className="text-[10px] opacity-70">{STATUS_LABEL[task.executionStatus]}</span>
       </div>
       <div className="mt-1 flex items-center gap-2">
-        {task.sessionId && (
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              goToSession(task.id);
-            }}
-            data-testid="dag-node-session-link"
-            className="nodrag nopan text-[10px] underline opacity-60 hover:opacity-100 cursor-pointer"
-          >
-            view
-          </button>
-        )}
+        <button
+          type="button"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            goToSession(task.id);
+          }}
+          data-testid="dag-node-session-link"
+          className="nodrag nopan text-[10px] underline opacity-60 hover:opacity-100 cursor-pointer"
+        >
+          view
+        </button>
         {canRetry && onRequestRetry && (
           <button
             type="button"
@@ -228,6 +226,7 @@ interface DagCanvasFlowProps {
   breakpoint: Breakpoint;
   onMove: OnMove;
   onNodeDoubleClick: (event: React.MouseEvent, node: Node) => void;
+  onNodeClick: (event: React.MouseEvent, node: Node) => void;
 }
 
 function DagCanvasFlow({
@@ -238,6 +237,7 @@ function DagCanvasFlow({
   breakpoint,
   onMove,
   onNodeDoubleClick,
+  onNodeClick,
 }: DagCanvasFlowProps) {
   const rf = useReactFlow();
   const isMobile = breakpoint === "mobile";
@@ -255,6 +255,7 @@ function DagCanvasFlow({
       defaultViewport={isMobile ? undefined : defaultViewport}
       onInit={(instance) => instance.fitView({ padding: 0.15, duration: 0 })}
       onMove={onMove}
+      onNodeClick={onNodeClick}
       onNodeDoubleClick={onNodeDoubleClick}
       proOptions={{ hideAttribution: true }}
     >
@@ -376,6 +377,7 @@ function DagCanvasInner({ workflow, connectionId, breakpoint }: CanvasProps) {
           defaultViewport={defaultViewport}
           breakpoint={breakpoint}
           onMove={handleMove}
+          onNodeClick={handleNodeDoubleClick}
           onNodeDoubleClick={handleNodeDoubleClick}
         />
       </ReactFlowProvider>
