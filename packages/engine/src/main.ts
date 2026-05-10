@@ -3,6 +3,7 @@ import { ClaudeCodeProvider } from "./plugins/providers/claude-code.js";
 import { CodexProvider } from "./plugins/providers/codex.js";
 import { TmuxRuntimeBackend } from "./plugins/tmux/tmux-runtime.js";
 import { ExecQualityPlugin } from "./plugins/quality/exec-quality-plugin.js";
+import { StubQualityPlugin } from "./plugins/quality/stub-quality-plugin.js";
 import { HostCommandRunner } from "./plugins/runners/host-command-runner.js";
 import { DockerCommandRunner } from "./plugins/runners/docker-command-runner.js";
 import { createEngine, type EngineConfig } from "./engine.js";
@@ -51,7 +52,7 @@ async function main(): Promise<void> {
   const config: EngineConfig = {
     dbPath,
     providerFactory,
-    ...(qualityDisabled ? {} : { qualityPlugin: new ExecQualityPlugin(runner) }),
+    qualityPlugin: qualityDisabled ? new StubQualityPlugin() : new ExecQualityPlugin(runner),
     logLevel: parseLevel(process.env["MWF_LOG_LEVEL"]),
   };
 
