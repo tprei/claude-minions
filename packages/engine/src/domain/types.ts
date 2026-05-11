@@ -57,7 +57,7 @@ export interface Contract {
   expectedArtifacts: string[];
 }
 
-export type ArtifactKind = "branch" | "commit" | "patch" | "pr" | "quality-report" | "ci-report";
+export type ArtifactKind = "branch" | "commit" | "patch" | "pr" | "quality-report" | "ci-report" | "conflict";
 
 // A piece of evidence the task produced (a branch, a PR url, a CI report).
 // Artifacts accumulate on the task and are passed to downstream tasks via
