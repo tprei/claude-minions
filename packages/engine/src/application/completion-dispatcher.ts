@@ -115,7 +115,11 @@ export class CompletionDispatcher {
     if (!workflow || !task) return;
     if (task.executionStatus !== "finalizing") return;
 
-    if (!workflow.policy.autoLand) return;
+    // Always open the PR on completion — that's pure observability. autoLand
+    // only governs whether the engine *merges* the PR after CI passes (which
+    // is the CIBabysitterService's job, gated separately). Previously this
+    // checked `!autoLand` here and bailed, trapping every task in finalizing
+    // forever with no UI signal that anything was wrong.
     if (signal.aborted) return;
 
     try {

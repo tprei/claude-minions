@@ -93,7 +93,7 @@ describe("CompletionDispatcher", () => {
     expect(mergeService.openOnly).not.toHaveBeenCalled();
   });
 
-  it("task in finalizing + autoLand:false → no-op", async () => {
+  it("task in finalizing + autoLand:false → still opens PR (autoLand only gates merging, not opening)", async () => {
     const repo = makeRepo();
     await makeWorkflowInFinalizing(repo, false);
     const mergeService = makeMergeService();
@@ -105,7 +105,7 @@ describe("CompletionDispatcher", () => {
     await new Promise((r) => setTimeout(r, 50));
     ctrl.abort();
 
-    expect(mergeService.openOnly).not.toHaveBeenCalled();
+    expect(mergeService.openOnly).toHaveBeenCalledTimes(1);
   });
 
   it("task in finalizing + autoLand:true → calls openOnly", async () => {
