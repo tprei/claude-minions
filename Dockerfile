@@ -61,7 +61,15 @@ COPY --from=builder /app/packages/web/dist            packages/web/dist
 RUN pnpm install --prod --frozen-lockfile
 
 # Non-root user: claude-code refuses --dangerously-skip-permissions when running as root.
-RUN useradd -u 10001 -m -s /bin/bash minion \
+# UID/GID default to a high range for prod; dev compose overrides to match the host user
+# so bind-mounting ~/.claude shares tokens between host and container (rotations stay in sync).
+ARG MINION_UID=10001
+ARG MINION_GID=10001
+# Drop the base image's `node` user (UID 1000) if we'd collide with it.
+RUN if getent passwd $MINION_UID >/dev/null; then userdel -r "$(getent passwd $MINION_UID | cut -d: -f1)"; fi \
+ && if getent group $MINION_GID >/dev/null; then groupdel "$(getent group $MINION_GID | cut -d: -f1)"; fi \
+ && groupadd -g $MINION_GID minion \
+ && useradd -u $MINION_UID -g $MINION_GID -m -s /bin/bash minion \
  && mkdir -p /data/workspace /data/home \
  && chown -R minion:minion /app /data
 USER minion

@@ -27,6 +27,8 @@ services:
     image: minions/engine:dev
     container_name: minions-dev
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       MWF_PORT: 8787
       MWF_DB_PATH: /data/engine.db
