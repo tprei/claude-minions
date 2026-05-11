@@ -8,7 +8,7 @@ import { applyCommand } from "./application/commands.js";
 import { ContinueTaskService } from "./application/continue-task-service.js";
 import { RetryTaskService } from "./application/retry-task-service.js";
 import { createRecoveryService } from "./application/recovery-service.js";
-import { NoopRestackExecutor } from "./application/restack-executor.js";
+import { GitWorktreeRestackExecutor, NoopRestackExecutor } from "./application/restack-executor.js";
 import type { RestackExecutor } from "./application/restack-executor.js";
 import { RunOrchestrator } from "./application/run-orchestrator.js";
 import type { RunOrchestratorDeps } from "./application/run-orchestrator.js";
@@ -141,7 +141,6 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
 
   const dataDir = config.dataDir ?? `${dirname(config.dbPath)}/sessions`;
   const runtime = config.runtime ?? new StubRuntimeBackend();
-  const executor = config.executor ?? new NoopRestackExecutor();
   const now = config.now ?? (() => new Date().toISOString());
   const staleReadyMs = config.staleReadyMs ?? 5 * 60 * 1000;
   const staleGateMs = config.staleGateMs ?? 30 * 60 * 1000;
@@ -162,6 +161,15 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     });
   } else {
     workspace = new StubWorkspaceBackend();
+  }
+
+  let executor: RestackExecutor;
+  if (config.executor !== undefined) {
+    executor = config.executor;
+  } else if (workspace instanceof GitWorktreeWorkspaceBackend && sharedGitClient !== undefined) {
+    executor = new GitWorktreeRestackExecutor({ gitClient: sharedGitClient, workspace, now });
+  } else {
+    executor = new NoopRestackExecutor();
   }
 
   const vapid = vapidEarly;
