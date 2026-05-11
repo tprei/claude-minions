@@ -4,6 +4,7 @@ import {
   TmuxClient,
   TmuxError,
   TmuxNoSuchSessionError,
+  TmuxServerNotRunningError,
 } from "../../../src/plugins/tmux/tmux-client.js";
 
 vi.mock("node:child_process");
@@ -113,6 +114,19 @@ describe("TmuxClient", () => {
   it("killSession maps no-such-session stderr to TmuxNoSuchSessionError", async () => {
     spawnMock.mockReturnValue(makeMockProc("", "no such session", 1));
     await expect(client.killSession("gone-session")).rejects.toThrow(TmuxNoSuchSessionError);
+  });
+
+  it("maps 'no server running' stderr to TmuxServerNotRunningError, not TmuxNoSuchSessionError", async () => {
+    spawnMock.mockReturnValue(makeMockProc("", "no server running on /tmp/tmux-1000/default", 1));
+    const err = await client.sessionExists("any").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TmuxServerNotRunningError);
+    expect(err).not.toBeInstanceOf(TmuxNoSuchSessionError);
+  });
+
+  it("maps 'error connecting' stderr to TmuxServerNotRunningError", async () => {
+    spawnMock.mockReturnValue(makeMockProc("", "error connecting to /tmp/tmux-1000/default (No such file or directory)", 1));
+    const err = await client.sessionExists("any").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TmuxServerNotRunningError);
   });
 
   it("non-zero exit without known pattern throws TmuxError with stdout/stderr/exitCode", async () => {

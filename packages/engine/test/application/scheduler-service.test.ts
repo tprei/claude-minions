@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SchedulerService } from "../../src/application/scheduler-service.js";
 import { RetryTaskService } from "../../src/application/retry-task-service.js";
+import { ContinueTaskService } from "../../src/application/continue-task-service.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
-import { createWorkflow } from "../../src/domain/workflow.js";
+import { createSingleTaskWorkflow, createWorkflow } from "../../src/domain/workflow.js";
 import { StubProviderPlugin } from "../../src/plugins/providers/stub.js";
+import { StubRuntimeBackend } from "../../src/plugins/stub-runtime.js";
 import { StubWorkspaceBackend } from "../../src/plugins/workspace/stub-workspace.js";
 import { silentLogger } from "../test-helpers.js";
 import type { RuntimeAttachOptions, RuntimeBackend, RuntimeOutputChunk, RuntimeStartResult, RuntimeStartSpec } from "../../src/plugins/runtime-backend.js";
@@ -11,6 +13,7 @@ import type { RuntimeProbeState } from "../../src/application/recovery.js";
 import type { ProviderEvent } from "../../src/plugins/provider-plugin.js";
 import { RunOrchestrator } from "../../src/application/run-orchestrator.js";
 import { applyCommand } from "../../src/application/commands.js";
+import type { NodeRun } from "../../src/domain/runs.js";
 
 const NOW = "2026-05-10T00:00:00.000Z";
 const now = () => NOW;
@@ -167,6 +170,156 @@ describe("SchedulerService", () => {
       expect(successStatuses.has(finalWf?.graph["tA"]?.executionStatus ?? "")).toBe(true);
       expect(successStatuses.has(finalWf?.graph["tB"]?.executionStatus ?? "")).toBe(true);
       expect(successStatuses.has(finalWf?.graph["tC"]?.executionStatus ?? "")).toBe(true);
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it("re-dispatches recovered pending task via resume path when prior run has providerSessionRef", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const runtime = new StubRuntimeBackend();
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "new-ref" };
+    const provider = new StubProviderPlugin({ frames: [[finalEvent]] });
+    const resumeSpy = vi.spyOn(provider, "resume");
+    const prepareSpy = vi.spyOn(provider, "prepare");
+    const controller = new AbortController();
+
+    try {
+      // Seed a workflow whose single task was running, then got recovered (sessionId cleared,
+      // status back to "pending"), with the prior run's providerSessionRef preserved on the
+      // closed run. This is exactly the state boot recovery leaves a task in after detecting
+      // a dead tmux session.
+      const wf = createSingleTaskWorkflow("wf-resume", { title: "T", prompt: "P" }, now);
+      await repo.save(wf, []);
+      await applyCommand(repo, {
+        kind: "transition-task",
+        workflowId: "wf-resume",
+        transition: { kind: "mark-ready", taskId: "wf-resume:task", now: NOW },
+      });
+      await applyCommand(repo, {
+        kind: "transition-task",
+        workflowId: "wf-resume",
+        transition: { kind: "mark-running", taskId: "wf-resume:task", sessionId: "s-old", now: NOW },
+      });
+      await applyCommand(repo, {
+        kind: "transition-task",
+        workflowId: "wf-resume",
+        transition: { kind: "recover-task", taskId: "wf-resume:task", now: NOW },
+      });
+
+      // Inject providerSessionRef on the prior (closed) run — captured before the runtime died.
+      const wfCurrent = await repo.get("wf-resume");
+      const task = wfCurrent!.graph["wf-resume:task"]!;
+      const patchedRun: NodeRun = { ...task.runs[0]!, providerSessionRef: "prior-ref" };
+      await repo.save({
+        ...wfCurrent!,
+        version: wfCurrent!.version + 1,
+        graph: { "wf-resume:task": { ...task, runs: [patchedRun] } },
+      }, []);
+
+      const dispatchModes: Array<"retry" | "continue"> = [];
+      const retryService = new RetryTaskService({
+        repo,
+        applyCommand: (cmd) => applyCommand(repo, cmd),
+        providerFactory: () => provider,
+        runtime,
+        workspace: new StubWorkspaceBackend(),
+        now,
+        spawnOrchestrator: () => { dispatchModes.push("retry"); },
+      });
+      const continueService = new ContinueTaskService({
+        repo,
+        applyCommand: (cmd) => applyCommand(repo, cmd),
+        providerFactory: () => provider,
+        runtime,
+        workspace: new StubWorkspaceBackend(),
+        now,
+        spawnOrchestrator: () => { dispatchModes.push("continue"); },
+      });
+
+      const schedulerService = new SchedulerService({
+        repo,
+        retry: retryService,
+        continueService,
+        log: silentLogger(),
+        signal: controller.signal,
+      });
+
+      schedulerService.attach("wf-resume");
+
+      // Wait until the task is dispatched (via either path)
+      const deadline = Date.now() + 2000;
+      while (dispatchModes.length === 0 && Date.now() < deadline) {
+        await new Promise<void>((r) => setTimeout(r, 10));
+      }
+
+      expect(dispatchModes).toEqual(["continue"]);
+      expect(resumeSpy).toHaveBeenCalledOnce();
+      expect(resumeSpy).toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "prior-ref" }));
+      expect(prepareSpy).not.toHaveBeenCalled();
+
+      // The new run carries the resumed providerSessionRef.
+      const wfAfter = await repo.get("wf-resume");
+      const taskAfter = wfAfter!.graph["wf-resume:task"]!;
+      const openRun = taskAfter.runs.find((r) => r.endedAt === undefined);
+      expect(openRun?.providerSessionRef).toBe("prior-ref");
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it("re-dispatches pending task without prior providerSessionRef via retry (fresh) path", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const runtime = new StubRuntimeBackend();
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "fresh-ref" };
+    const provider = new StubProviderPlugin({ frames: [[finalEvent]] });
+    const resumeSpy = vi.spyOn(provider, "resume");
+    const prepareSpy = vi.spyOn(provider, "prepare");
+    const controller = new AbortController();
+
+    try {
+      const wf = createSingleTaskWorkflow("wf-fresh", { title: "T", prompt: "P" }, now);
+      await repo.save(wf, []);
+      // Pending task with no prior runs at all → should use retry (fresh).
+
+      const dispatchModes: Array<"retry" | "continue"> = [];
+      const retryService = new RetryTaskService({
+        repo,
+        applyCommand: (cmd) => applyCommand(repo, cmd),
+        providerFactory: () => provider,
+        runtime,
+        workspace: new StubWorkspaceBackend(),
+        now,
+        spawnOrchestrator: () => { dispatchModes.push("retry"); },
+      });
+      const continueService = new ContinueTaskService({
+        repo,
+        applyCommand: (cmd) => applyCommand(repo, cmd),
+        providerFactory: () => provider,
+        runtime,
+        workspace: new StubWorkspaceBackend(),
+        now,
+        spawnOrchestrator: () => { dispatchModes.push("continue"); },
+      });
+
+      const schedulerService = new SchedulerService({
+        repo,
+        retry: retryService,
+        continueService,
+        log: silentLogger(),
+        signal: controller.signal,
+      });
+
+      schedulerService.attach("wf-fresh");
+
+      const deadline = Date.now() + 2000;
+      while (dispatchModes.length === 0 && Date.now() < deadline) {
+        await new Promise<void>((r) => setTimeout(r, 10));
+      }
+
+      expect(dispatchModes).toEqual(["retry"]);
+      expect(prepareSpy).toHaveBeenCalledOnce();
+      expect(resumeSpy).not.toHaveBeenCalled();
     } finally {
       controller.abort();
     }

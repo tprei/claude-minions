@@ -306,6 +306,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     const schedulerService = new SchedulerService({
       repo,
       retry: retryTaskService,
+      continueService: serverDeps.continueTaskService,
       log: log.child({ component: "scheduler" }),
       signal: schedulerAbort.signal,
     });

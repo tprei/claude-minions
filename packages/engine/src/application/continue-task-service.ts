@@ -65,11 +65,12 @@ export class ContinueTaskService {
 
     // Allow continuing from any state where the agent has finished and there's
     // still meaningful work the user can ask for: needs-review (manual review
-    // pending) and pr-open (PR exists, push more commits to update it).
-    const RESUMABLE_STATES = new Set(["needs-review", "pr-open"]);
+    // pending), pr-open (PR exists, push more commits to update it), or pending
+    // (task recovered from a dead runtime and awaiting re-dispatch).
+    const RESUMABLE_STATES = new Set(["needs-review", "pr-open", "pending"]);
     if (!RESUMABLE_STATES.has(task.executionStatus)) {
       throw new DomainError("invalid_transition",
-        `continue-task requires task in needs-review or pr-open, got ${task.executionStatus}`,
+        `continue-task requires task in needs-review, pr-open, or pending, got ${task.executionStatus}`,
         { taskId, currentStatus: task.executionStatus });
     }
 
@@ -77,6 +78,14 @@ export class ContinueTaskService {
       throw new DomainError("invalid_transition",
         `task stack is ${task.stackStatus}; must be clean before continue`,
         { taskId, stackStatus: task.stackStatus });
+    }
+
+    if (task.executionStatus === "pending") {
+      await applyCommand({
+        kind: "transition-task",
+        workflowId,
+        transition: { kind: "mark-ready", taskId, now: now() },
+      });
     }
 
     const handle = await workspace.create({
