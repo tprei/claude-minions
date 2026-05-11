@@ -1,15 +1,16 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "tsBuildInfoFile": "./dist/.tsbuildinfo",
-    "lib": ["ES2022"],
-    "types": ["node"]
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "types": ["vitest/globals"]
   },
-  "references": [
-    { "path": "../shared" }
-  ],
-  "include": ["src/**/*"],
-  "exclude": ["dist", "node_modules"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }

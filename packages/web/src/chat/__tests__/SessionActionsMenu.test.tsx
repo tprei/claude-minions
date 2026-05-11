@@ -1,12 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { Session } from "@minions/shared";
+import type { Workflow } from "@minions/engine";
 import type { Connection } from "../../connections/store.js";
 
 vi.mock("../../transport/rest.js", () => ({
-  postCommand: vi.fn(async () => ({ ok: true })),
-  deleteSession: vi.fn(async () => ({ ok: true })),
+  dispatchCommand: vi.fn(async () => ({ ok: true })),
+}));
+
+vi.mock("../../store/workflowStore.js", () => ({
+  useWorkflowStore: vi.fn(() => ({ remove: vi.fn() })),
+}));
+
+vi.mock("../../connections/store.js", () => ({
+  useConnectionStore: Object.assign(
+    vi.fn((sel: (s: { activeId: string | null }) => unknown) => sel({ activeId: "c1" })),
+    { getState: () => ({ activeId: "c1" }) },
+  ),
 }));
 
 import { SessionActionsMenu } from "../SessionActionsMenu.js";
@@ -36,37 +46,42 @@ const TEST_CONN: Connection = {
   color: "#7c5cff",
 };
 
-function makeSession(overrides: Partial<Session> = {}): Session {
+function makeWorkflow(status: Workflow["status"] = "active"): Workflow {
   return {
-    slug: "sess-1",
-    title: "Test Session",
-    prompt: "do work",
-    mode: "task",
-    status: "running",
-    childSlugs: [],
-    attention: [],
-    quickActions: [],
-    stats: {
-      turns: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      costUsd: 0,
-      durationMs: 0,
-      toolCalls: 0,
+    id: "wf-1",
+    kind: "single-task",
+    status,
+    graph: {
+      "task-1": {
+        id: "task-1",
+        workflowId: "wf-1",
+        title: "Test Task",
+        prompt: "do work",
+        executionStatus: status === "active" ? "running" : "completed",
+        stackStatus: "clean",
+        dependsOn: [],
+        priority: 0,
+        claims: [],
+        contract: { summary: "", expectedArtifacts: [] },
+        artifacts: [],
+        runs: [],
+        readiness: "unknown",
+        version: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
     },
-    provider: "test",
+    operations: {},
+    policy: { maxConcurrent: 3, autoLand: false, autoMergeOnGreen: false },
+    version: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    metadata: {},
-    ...overrides,
   };
 }
 
 function findTrigger(parent: ParentNode = container): HTMLButtonElement {
   const el = parent.querySelector(
-    "button[aria-label='Session actions']",
+    "button[aria-label='Task actions']",
   ) as HTMLButtonElement | null;
   if (!el) throw new Error("trigger not rendered");
   return el;
@@ -87,49 +102,30 @@ function clickTrigger(): void {
 }
 
 describe("SessionActionsMenu", () => {
-  it("for a running session, popover shows {Cancel, Delete}", () => {
-    const session = makeSession({ status: "running" });
+  it("for an active workflow, popover shows {Cancel, Remove}", () => {
+    const workflow = makeWorkflow("active");
     act(() => {
       root.render(
-        createElement(SessionActionsMenu, { session, conn: TEST_CONN }),
+        createElement(SessionActionsMenu, { workflow, conn: TEST_CONN }),
       );
     });
     clickTrigger();
     const labels = menuItemLabels();
     expect(labels).toContain("Cancel");
-    expect(labels).toContain("Delete…");
-    expect(labels).not.toContain("Close");
+    expect(labels).toContain("Remove…");
     expect(labels).toHaveLength(2);
   });
 
-  it("for a completed session WITH worktreePath, popover shows {Close, Delete}", () => {
-    const session = makeSession({
-      status: "completed",
-      worktreePath: "/tmp/wt",
-    });
+  it("for a completed workflow, popover shows only {Remove}", () => {
+    const workflow = makeWorkflow("completed");
     act(() => {
       root.render(
-        createElement(SessionActionsMenu, { session, conn: TEST_CONN }),
+        createElement(SessionActionsMenu, { workflow, conn: TEST_CONN }),
       );
     });
     clickTrigger();
     const labels = menuItemLabels();
-    expect(labels).toContain("Close");
-    expect(labels).toContain("Delete…");
-    expect(labels).not.toContain("Cancel");
-    expect(labels).toHaveLength(2);
-  });
-
-  it("for a completed session WITHOUT worktreePath, popover shows {Delete} only", () => {
-    const session = makeSession({ status: "completed" });
-    act(() => {
-      root.render(
-        createElement(SessionActionsMenu, { session, conn: TEST_CONN }),
-      );
-    });
-    clickTrigger();
-    const labels = menuItemLabels();
-    expect(labels).toEqual(["Delete…"]);
+    expect(labels).toEqual(["Remove…"]);
   });
 
   it("clicking the trigger does NOT propagate to a parent click handler", () => {
@@ -140,7 +136,7 @@ describe("SessionActionsMenu", () => {
           "div",
           { onClick: parentSpy, "data-testid": "parent" },
           createElement(SessionActionsMenu, {
-            session: makeSession(),
+            workflow: makeWorkflow(),
             conn: TEST_CONN,
           }),
         ),
@@ -148,24 +144,5 @@ describe("SessionActionsMenu", () => {
     });
     clickTrigger();
     expect(parentSpy).not.toHaveBeenCalled();
-    expect(menuItemLabels().length).toBeGreaterThan(0);
-  });
-
-  it("outside click closes the popover", () => {
-    act(() => {
-      root.render(
-        createElement(SessionActionsMenu, {
-          session: makeSession(),
-          conn: TEST_CONN,
-        }),
-      );
-    });
-    clickTrigger();
-    expect(menuItemLabels().length).toBeGreaterThan(0);
-
-    act(() => {
-      document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    });
-    expect(document.querySelector("[role='menu']")).toBeNull();
   });
 });

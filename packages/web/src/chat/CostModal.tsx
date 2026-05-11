@@ -1,35 +1,28 @@
 import type { ReactElement } from "react";
-import type { Session } from "@minions/shared";
+import type { Workflow } from "@minions/engine";
 import { Modal } from "../components/Modal.js";
 
 interface Props {
-  session: Session;
+  workflow: Workflow;
   onClose: () => void;
 }
 
-function formatUsd(n: number): string {
-  return `$${n.toFixed(2)}`;
-}
-
-export function CostModal({ session, onClose }: Props): ReactElement {
-  const costUsd = session.stats?.costUsd ?? 0;
-  const budget = session.costBudgetUsd ?? null;
-  const pctText =
-    budget !== null && budget > 0
-      ? `${Math.round((costUsd / budget) * 100)}%`
-      : "no budget set";
+export function CostModal({ workflow, onClose }: Props): ReactElement {
+  const taskCount = Object.keys(workflow.graph).length;
 
   return (
-    <Modal open onClose={onClose} title="Session cost">
+    <Modal open onClose={onClose} title="Workflow info">
       <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm">
-        <dt className="text-fg-subtle">Cost</dt>
-        <dd className="font-mono text-fg" data-testid="cost-value">{formatUsd(costUsd)}</dd>
-        <dt className="text-fg-subtle">Budget</dt>
-        <dd className="font-mono text-fg" data-testid="cost-budget">
-          {budget !== null ? formatUsd(budget) : "—"}
-        </dd>
-        <dt className="text-fg-subtle">Used</dt>
-        <dd className="font-mono text-fg" data-testid="cost-pct">{pctText}</dd>
+        <dt className="text-fg-subtle">Workflow ID</dt>
+        <dd className="font-mono text-fg text-xs truncate">{workflow.id}</dd>
+        <dt className="text-fg-subtle">Kind</dt>
+        <dd className="font-mono text-fg">{workflow.kind}</dd>
+        <dt className="text-fg-subtle">Status</dt>
+        <dd className="font-mono text-fg">{workflow.status}</dd>
+        <dt className="text-fg-subtle">Tasks</dt>
+        <dd className="font-mono text-fg">{taskCount}</dd>
+        <dt className="text-fg-subtle">Version</dt>
+        <dd className="font-mono text-fg">{workflow.version}</dd>
       </dl>
     </Modal>
   );

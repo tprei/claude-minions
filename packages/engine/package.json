@@ -3,41 +3,36 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "bin": {
-    "minions-engine": "./dist/cli.js",
-    "minions-supervise": "./dist/bin/supervise.js"
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
-    "dev": "NODE_OPTIONS=--max-old-space-size=8192 tsx watch src/cli.ts",
-    "start": "node dist/cli.js",
-    "supervise": "node dist/bin/supervise.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pretest": "rm -rf dist",
-    "test": "find src -type f -name '*.test.ts' -print0 | xargs -0 node --import tsx --test --test-reporter=spec"
-  },
-  "dependencies": {
-    "@fastify/cors": "^10.0.1",
-    "@fastify/multipart": "^9.0.1",
-    "@fastify/static": "^8.0.3",
-    "@minions/shared": "workspace:*",
-    "adm-zip": "^0.5.17",
-    "better-sqlite3": "^11.5.0",
-    "chokidar": "^4.0.1",
-    "fastify": "^5.1.0",
-    "nanoid": "^5.0.9",
-    "p-limit": "^6.1.0",
-    "p-queue": "^8.0.1",
-    "simple-git": "^3.27.0",
-    "web-push": "^3.6.7"
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "tsx src/main.ts",
+    "dev": "MWF_DB_PATH=${MWF_DB_PATH:-/tmp/engine-port-dev.db} MWF_PORT=${MWF_PORT:-3000} MWF_DATA_DIR=${MWF_DATA_DIR:-/tmp/engine-port-data} tsx watch src/main.ts",
+    "smoke": "rm -f /tmp/engine-port-smoke.db && tsx scripts/smoke.ts"
   },
   "devDependencies": {
-    "@types/adm-zip": "^0.5.8",
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.10.0",
     "@types/web-push": "^3.6.4",
-    "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "jsdom": "^29.1.1",
+    "pngjs": "^7.0.0",
+    "typescript": "^6.0.3",
+    "vite": "^6.0.0",
+    "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.9.0",
+    "hono": "^4.12.17",
+    "tsx": "^4.20.6",
+    "web-push": "^3.6.7"
   }
 }

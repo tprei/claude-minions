@@ -24,7 +24,7 @@ export interface UseApiMutationOptions<TArgs, TResult> {
 function toMutationError(err: unknown): MutationError {
   if (err instanceof ApiError) {
     return {
-      code: err.error,
+      code: err.code,
       message: err.message,
       status: err.status,
       detail: err.detail,

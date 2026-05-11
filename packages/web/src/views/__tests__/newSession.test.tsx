@@ -1,18 +1,91 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { Session, VersionInfo } from "@minions/shared";
+import type { VersionInfo } from "@minions/shared";
+import type { Workflow } from "@minions/engine";
 import { NewSessionView } from "../newSession.js";
 import { useConnectionStore } from "../../connections/store.js";
 import { useVersionStore } from "../../store/version.js";
-import { useSessionStore } from "../../store/sessionStore.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const { createWorkflowMock, planWorkflowMock } = vi.hoisted(() => ({
+  createWorkflowMock: vi.fn(async (_conn: unknown, _spec: unknown): Promise<Workflow> => ({
+    id: "wf-new",
+    kind: "single-task",
+    status: "active",
+    graph: {
+      "task-1": {
+        id: "task-1",
+        workflowId: "wf-new",
+        title: "t",
+        prompt: "p",
+        executionStatus: "pending",
+        stackStatus: "clean",
+        dependsOn: [],
+        priority: 0,
+        claims: [],
+        contract: { summary: "", expectedArtifacts: [] },
+        artifacts: [],
+        runs: [],
+        readiness: "unknown",
+        version: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    },
+    operations: {},
+    policy: { maxConcurrent: 3, autoLand: false, autoMergeOnGreen: false },
+    version: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  })),
+  planWorkflowMock: vi.fn(),
+}));
+
+vi.mock("../../transport/rest.js", () => {
+  class ApiError extends Error {
+    code: string;
+    status: number;
+    detail: undefined;
+    constructor(status: number, body: { code: string; message: string }) {
+      super(body.message);
+      this.name = "ApiError";
+      this.code = body.code;
+      this.status = status;
+    }
+  }
+  return {
+    createWorkflow: createWorkflowMock,
+    apiFetch: vi.fn(),
+    ApiError,
+    planWorkflow: planWorkflowMock,
+  };
+});
+
+vi.mock("../../store/workflowStore.js", () => ({
+  useWorkflowStore: Object.assign(
+    vi.fn(() => ({})),
+    { getState: () => ({ upsert: vi.fn() }) },
+  ),
+}));
+
+vi.mock("../../routing/urlState.js", () => ({
+  setUrlState: vi.fn(),
+}));
 
 let container: HTMLDivElement;
 let root: Root;
 
 const CONN_ID = "conn-test";
+
+const TEST_CONN = {
+  id: CONN_ID,
+  label: "Test",
+  baseUrl: "http://localhost:9999",
+  token: "tok",
+  color: "#7c5cff",
+};
 
 function makeVersionInfo(): VersionInfo {
   return {
@@ -22,10 +95,7 @@ function makeVersionInfo(): VersionInfo {
     featuresPending: [],
     provider: "test",
     providers: ["test"],
-    repos: [
-      { id: "repo-1", label: "repo-1" },
-      { id: "repo-2", label: "repo-2" },
-    ],
+    repos: [],
     startedAt: new Date().toISOString(),
   };
 }
@@ -38,155 +108,189 @@ function setReactValue(el: HTMLInputElement | HTMLTextAreaElement, value: string
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function makeSession(slug: string): Session {
-  return {
-    slug,
-    title: "t",
-    prompt: "p",
-    mode: "task",
-    status: "pending",
-    childSlugs: [],
-    attention: [],
-    quickActions: [],
-    stats: {
-      turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
-      cacheCreationTokens: 0, costUsd: 0, durationMs: 0, toolCalls: 0,
-    },
-    provider: "test",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    metadata: {},
-  };
-}
+const PLAN_RESPONSE = {
+  spec: {
+    id: "wf-plan-1",
+    kind: "single-task",
+    tasks: [{ id: "t-plan-1", title: "Planned task", prompt: "do something useful here" }],
+  },
+};
 
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  useConnectionStore.setState({ activeId: CONN_ID });
+  createWorkflowMock.mockClear();
+  // Re-set planWorkflow implementation after clearMocks resets it
+  planWorkflowMock.mockResolvedValue(PLAN_RESPONSE);
+  useConnectionStore.setState({ activeId: CONN_ID, connections: [TEST_CONN], _hydrated: true });
   useVersionStore.getState().setVersion(CONN_ID, makeVersionInfo());
 });
 
 afterEach(() => {
   act(() => root.unmount());
   document.body.removeChild(container);
-  useConnectionStore.setState({ activeId: null });
-  useVersionStore.setState({ byConnection: new Map() });
-  useSessionStore.setState({ byConnection: new Map() });
+  useConnectionStore.setState({ activeId: null, connections: [] });
+  useVersionStore.setState({ byConnection: new Map(), workflowVersions: new Map() });
 });
 
 async function flush(): Promise<void> {
   await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
   });
 }
 
-function makeApi(postReturn: Session) {
-  const post = vi.fn(async (_path: string, _body: unknown) => postReturn as unknown);
+function makeApi() {
   return {
     get: vi.fn(),
-    post,
+    post: vi.fn(),
     patch: vi.fn(),
     del: vi.fn(),
   };
 }
 
-function getInput(label: string): HTMLInputElement {
-  const labels = Array.from(container.querySelectorAll("label")) as HTMLLabelElement[];
-  const found = labels.find((l) => l.textContent?.includes(label));
-  if (!found) throw new Error(`label not found: ${label}`);
-  const input = found.parentElement?.querySelector("input, textarea") as HTMLInputElement | null;
-  if (!input) throw new Error(`input not found for label ${label}`);
-  return input;
-}
-
-describe("NewSessionView budget field", () => {
-  it("submits costBudgetUsd when budget input is filled", async () => {
-    const api = makeApi(makeSession("new-1"));
+describe("NewSessionView", () => {
+  it("renders the prompt textarea and submit button", async () => {
     act(() => {
-      root.render(createElement(NewSessionView, { api }));
+      root.render(createElement(NewSessionView, { api: makeApi() }));
     });
     await flush();
 
-    act(() => {
-      setReactValue(getInput("Prompt"), "do something useful");
-      setReactValue(getInput("Budget"), "2.5");
-    });
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement | null;
+    expect(textarea).not.toBeNull();
 
-    const form = container.querySelector("form") as HTMLFormElement;
-    await act(async () => {
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-    await flush();
-
-    expect(api.post).toHaveBeenCalledTimes(1);
-    expect(api.post.mock.calls[0]![0]).toBe("/api/sessions");
-    const body = api.post.mock.calls[0]![1] as Record<string, unknown>;
-    expect(body.costBudgetUsd).toBe(2.5);
+    const submit = container.querySelector("button[type='submit']") as HTMLButtonElement | null;
+    expect(submit).not.toBeNull();
   });
 
-  it("defaults repoId to filterRepo when it matches a known repo", async () => {
-    const api = makeApi(makeSession("new-3"));
+  it("shows the plan preview modal when planWorkflow succeeds", async () => {
+
     act(() => {
-      root.render(createElement(NewSessionView, { api, filterRepo: "repo-2" }));
+      root.render(createElement(NewSessionView, { api: makeApi() }));
     });
     await flush();
 
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
     act(() => {
-      setReactValue(getInput("Prompt"), "do another thing");
+      setReactValue(textarea, "do something useful here");
+    });
+
+    const planRadio = container.querySelector("input[type='radio'][value='plan']") as HTMLInputElement;
+    expect(planRadio).not.toBeNull();
+    await act(async () => {
+      planRadio.click();
     });
 
     const form = container.querySelector("form") as HTMLFormElement;
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      // Let planWorkflow mock resolve (microtask) + state update
+      for (let i = 0; i < 20; i++) await Promise.resolve();
     });
+    // Extra flush for React re-render after state update
     await flush();
 
-    const body = api.post.mock.calls[0]![1] as Record<string, unknown>;
-    expect(body.repoId).toBe("repo-2");
+    // Verify planWorkflow was called
+    expect(planWorkflowMock).toHaveBeenCalledTimes(1);
+
+    // Modal should be open — use vi.waitFor to poll for the button (React re-render is async)
+    await vi.waitFor(() => {
+      const buttons = Array.from(container.querySelectorAll("button"));
+      const confirm = buttons.find((b) => b.textContent?.includes("Confirm"));
+      expect(confirm).toBeDefined();
+    }, { timeout: 2000, interval: 10 });
   });
 
-  it("falls back to first repo when filterRepo is null", async () => {
-    const api = makeApi(makeSession("new-4"));
+  it("calls createWorkflow when the plan modal is confirmed", async () => {
     act(() => {
-      root.render(createElement(NewSessionView, { api, filterRepo: null }));
+      root.render(createElement(NewSessionView, { api: makeApi() }));
     });
     await flush();
 
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
     act(() => {
-      setReactValue(getInput("Prompt"), "do another thing");
+      setReactValue(textarea, "do something useful here");
+    });
+
+    const planRadio = container.querySelector("input[type='radio'][value='plan']") as HTMLInputElement;
+    expect(planRadio).not.toBeNull();
+    await act(async () => {
+      planRadio.click();
     });
 
     const form = container.querySelector("form") as HTMLFormElement;
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      // Let planWorkflow mock resolve (microtask) + state update
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    });
+    // Extra flush for React re-render after state update
+    await flush();
+
+    // Click "Confirm & dispatch"
+    const allButtons = Array.from(container.querySelectorAll("button"));
+    const confirmDispatch = allButtons.find((b) => b.textContent?.includes("Confirm"));
+    expect(confirmDispatch).toBeDefined();
+
+    await act(async () => {
+      confirmDispatch!.click();
+      for (let i = 0; i < 20; i++) await Promise.resolve();
     });
     await flush();
 
-    const body = api.post.mock.calls[0]![1] as Record<string, unknown>;
-    expect(body.repoId).toBe("repo-1");
+    expect(createWorkflowMock).toHaveBeenCalledTimes(1);
+    const [, spec] = createWorkflowMock.mock.calls[0]! as [unknown, { tasks: { prompt: string }[] }];
+    expect(spec.tasks[0]?.prompt).toBe("do something useful here");
   });
 
-  it("omits costBudgetUsd when blank", async () => {
-    const api = makeApi(makeSession("new-2"));
+  it("submitting in think mode creates a think-thread workflow with no mergeTarget", async () => {
     act(() => {
-      root.render(createElement(NewSessionView, { api }));
+      root.render(createElement(NewSessionView, { api: makeApi() }));
     });
     await flush();
 
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
     act(() => {
-      setReactValue(getInput("Prompt"), "do another thing");
+      setReactValue(textarea, "what does the planner do exactly");
+    });
+
+    const thinkRadio = container.querySelector("input[type='radio'][value='think']") as HTMLInputElement;
+    expect(thinkRadio).not.toBeNull();
+    await act(async () => {
+      thinkRadio.click();
     });
 
     const form = container.querySelector("form") as HTMLFormElement;
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      for (let i = 0; i < 20; i++) await Promise.resolve();
     });
     await flush();
 
-    expect(api.post).toHaveBeenCalledTimes(1);
-    const body = api.post.mock.calls[0]![1] as Record<string, unknown>;
-    expect("costBudgetUsd" in body).toBe(false);
+    expect(planWorkflowMock).not.toHaveBeenCalled();
+    expect(createWorkflowMock).toHaveBeenCalledTimes(1);
+    const [, spec] = createWorkflowMock.mock.calls[0]! as [unknown, {
+      kind: string;
+      tasks: { prompt: string; mergeTarget?: string }[];
+    }];
+    expect(spec.kind).toBe("think-thread");
+    expect(spec.tasks[0]?.prompt).toBe("what does the planner do exactly");
+    expect(spec.tasks[0]?.mergeTarget).toBeUndefined();
+  });
+
+  it("disables submit when prompt is too short", async () => {
+    act(() => {
+      root.render(createElement(NewSessionView, { api: makeApi() }));
+    });
+    await flush();
+
+    const submit = container.querySelector("button[type='submit']") as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    act(() => {
+      setReactValue(textarea, "hi");
+    });
+    expect(submit.disabled).toBe(true);
   });
 });

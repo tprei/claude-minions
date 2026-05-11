@@ -1,77 +1,136 @@
+/**
+ * Migrated from sessionStore transcript merge tests.
+ *
+ * The transcript concept (SSE text streaming) has no direct analog in the
+ * engine-next Workflow domain — provider events arrive as WorkflowEvents of
+ * kind "provider-event" and are not accumulated in the workflow store.
+ * This file now tests delta-application ordering on the workflowStore,
+ * which is the closest analog to the old sequence-ordered transcript merge.
+ */
 import { describe, it, expect, beforeEach } from "vitest";
-import { useSessionStore } from "../sessionStore.js";
-import type { TranscriptEvent } from "../../types.js";
+import type { Workflow, TaskNode, WorkflowEvent } from "@minions/engine";
+import { useWorkflowStore } from "../workflowStore.js";
 
-const SLUG = "demo";
 const CONN = "conn-1";
+const WF_ID = "wf-demo";
 
-function makeEvent(seq: number, text: string): TranscriptEvent {
+function makeTask(id: string): TaskNode {
+  const now = "2026-05-01T00:00:00.000Z";
   return {
-    kind: "assistant_text",
-    id: `e${seq}-${text}`,
-    sessionSlug: SLUG,
-    seq,
-    turn: 0,
-    timestamp: "2026-01-01T00:00:00Z",
-    text,
+    id,
+    workflowId: WF_ID,
+    title: id,
+    prompt: `do ${id}`,
+    dependsOn: [],
+    executionStatus: "pending",
+    stackStatus: "clean",
+    priority: 0,
+    claims: [],
+    contract: { summary: id, expectedArtifacts: [] },
+    artifacts: [],
+    runs: [],
+    readiness: "unknown",
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
-function transcript(): TranscriptEvent[] {
-  return useSessionStore.getState().byConnection.get(CONN)?.transcripts.get(SLUG) ?? [];
+function makeWorkflow(tasks: TaskNode[]): Workflow {
+  const now = "2026-05-01T00:00:00.000Z";
+  const graph: Record<string, TaskNode> = {};
+  for (const t of tasks) graph[t.id] = t;
+  return {
+    id: WF_ID,
+    kind: "manual-dag",
+    status: "active",
+    graph,
+    operations: {},
+    policy: { maxConcurrent: 3, autoLand: false, autoMergeOnGreen: false },
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
-describe("sessionStore transcript merge-by-seq", () => {
+function taskTransition(
+  taskId: string,
+  toExec: TaskNode["executionStatus"],
+  taskVersion: number,
+): WorkflowEvent {
+  return {
+    cursor: taskVersion,
+    workflowId: WF_ID,
+    occurredAt: "2026-05-01T01:00:00.000Z",
+    kind: "task-transitioned",
+    payload: {
+      taskId,
+      fromExecutionStatus: "pending",
+      toExecutionStatus: toExec,
+      fromStackStatus: "clean",
+      toStackStatus: "clean",
+      taskVersion,
+    },
+  };
+}
+
+describe("workflowStore delta ordering and version gating", () => {
   beforeEach(() => {
-    useSessionStore.setState({ byConnection: new Map() });
+    useWorkflowStore.setState({ byConnection: new Map() });
   });
 
-  it("appendTranscriptEvent appends in seq order on the fast path", () => {
-    const store = useSessionStore.getState();
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(1, "a"));
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(2, "b"));
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(3, "c"));
-    expect(transcript().map(e => e.seq)).toEqual([1, 2, 3]);
+  it("applies sequential transitions in order", () => {
+    const wf = makeWorkflow([makeTask("t1"), makeTask("t2")]);
+    useWorkflowStore.getState().replaceAll(CONN, [wf]);
+
+    useWorkflowStore.getState().applyEvent(CONN, taskTransition("t1", "ready", 2));
+    useWorkflowStore.getState().applyEvent(CONN, taskTransition("t1", "running", 3));
+
+    const stored = useWorkflowStore.getState().byConnection.get(CONN)?.get(WF_ID);
+    expect(stored?.graph["t1"]?.executionStatus).toBe("running");
+    expect(stored?.graph["t1"]?.version).toBe(3);
   });
 
-  it("appendTranscriptEvent dedupes by seq when an event repeats", () => {
-    const store = useSessionStore.getState();
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(1, "a"));
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(2, "b"));
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(2, "b-dup"));
-    const seqs = transcript().map(e => e.seq);
-    expect(seqs).toEqual([1, 2]);
+  it("ignores a stale event (version lower than task version)", () => {
+    const task = makeTask("t1");
+    const wf = makeWorkflow([{ ...task, version: 5, executionStatus: "running" }]);
+    useWorkflowStore.getState().replaceAll(CONN, [wf]);
+
+    useWorkflowStore.getState().applyEvent(CONN, taskTransition("t1", "failed", 2));
+
+    const stored = useWorkflowStore.getState().byConnection.get(CONN)?.get(WF_ID);
+    expect(stored?.graph["t1"]?.executionStatus).toBe("running");
+    expect(stored?.graph["t1"]?.version).toBe(5);
   });
 
-  it("appendTranscriptEvent reorders if an out-of-order event arrives", () => {
-    const store = useSessionStore.getState();
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(1, "a"));
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(3, "c"));
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(2, "b"));
-    expect(transcript().map(e => e.seq)).toEqual([1, 2, 3]);
+  it("applies a newer transition after a stale one is ignored", () => {
+    const task = makeTask("t1");
+    const wf = makeWorkflow([{ ...task, version: 3, executionStatus: "running" }]);
+    useWorkflowStore.getState().replaceAll(CONN, [wf]);
+
+    useWorkflowStore.getState().applyEvent(CONN, taskTransition("t1", "failed", 2));
+    useWorkflowStore.getState().applyEvent(CONN, taskTransition("t1", "completed", 4));
+
+    const stored = useWorkflowStore.getState().byConnection.get(CONN)?.get(WF_ID);
+    expect(stored?.graph["t1"]?.executionStatus).toBe("completed");
+    expect(stored?.graph["t1"]?.version).toBe(4);
   });
 
-  it("setTranscript merges existing + new events and dedupes by seq", () => {
-    const store = useSessionStore.getState();
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(1, "a"));
-    store.appendTranscriptEvent(CONN, SLUG, makeEvent(2, "b"));
-    store.setTranscript(CONN, SLUG, [
-      makeEvent(2, "b-2"),
-      makeEvent(3, "c"),
-      makeEvent(4, "d"),
-    ]);
-    const seqs = transcript().map(e => e.seq);
-    expect(seqs).toEqual([1, 2, 3, 4]);
-    expect(new Set(seqs).size).toBe(seqs.length);
-  });
+  it("workflow-status-changed and task-transitioned can interleave", () => {
+    const wf = makeWorkflow([makeTask("t1")]);
+    useWorkflowStore.getState().replaceAll(CONN, [wf]);
 
-  it("setTranscript on empty store sorts a shuffled batch by seq", () => {
-    const store = useSessionStore.getState();
-    store.setTranscript(CONN, SLUG, [
-      makeEvent(3, "c"),
-      makeEvent(1, "a"),
-      makeEvent(2, "b"),
-    ]);
-    expect(transcript().map(e => e.seq)).toEqual([1, 2, 3]);
+    useWorkflowStore.getState().applyEvent(CONN, taskTransition("t1", "completed", 2));
+    useWorkflowStore.getState().applyEvent(CONN, {
+      cursor: 3,
+      workflowId: WF_ID,
+      occurredAt: "2026-05-01T02:00:00.000Z",
+      kind: "workflow-status-changed",
+      payload: { fromStatus: "active", toStatus: "completed" },
+    });
+
+    const stored = useWorkflowStore.getState().byConnection.get(CONN)?.get(WF_ID);
+    expect(stored?.graph["t1"]?.executionStatus).toBe("completed");
+    expect(stored?.status).toBe("completed");
   });
 });

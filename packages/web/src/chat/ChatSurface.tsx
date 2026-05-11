@@ -1,20 +1,18 @@
-import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { Session, SessionStatus } from "@minions/shared";
-import { useSessionStore, EMPTY_SESSIONS, EMPTY_TRANSCRIPTS } from "../store/sessionStore.js";
+import { useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { Workflow, TaskNode } from "@minions/engine";
+import type { CIPollResultPayload } from "@minions/engine";
+import type { TranscriptEvent } from "@minions/shared";
+import { useWorkflowStore, EMPTY_WORKFLOWS } from "../store/workflowStore.js";
 import { useRootStore } from "../store/root.js";
-import { postCommand, postMessage, getDiff, getCheckpoints, getScreenshots, getTranscript, deleteSession } from "../transport/rest.js";
+import { dispatchCommand, listTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
-import { Diff } from "../components/Diff.js";
+import { connectWorkflowSse } from "../transport/sse.js";
+import { providerEventToTranscript } from "../transcript/providerEventToTranscript.js";
+import type { Connection } from "../connections/store.js";
 import { Button } from "../components/Button.js";
-import { type Tab } from "./Tabs.js";
 import { ChatInput } from "./Input.js";
 import { HelpModal } from "./HelpModal.js";
 import { CostModal } from "./CostModal.js";
-import { ExecutePlanModal } from "./ExecutePlanModal.js";
-import { QuickActions } from "./quickActions.js";
-import { RecoveryFooter } from "./RecoveryFooter.js";
-import { PRPanel } from "./PRPanel.js";
-import { CancelSessionDialog } from "./cancelSession.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { Sheet } from "../components/Sheet.js";
 import { ResizeHandle } from "../components/ResizeHandle.js";
@@ -26,24 +24,8 @@ import type { SlashCommand, SlashContext, SlashUiResult } from "./slashCommands.
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { useConnectionStore } from "../connections/store.js";
-import type { Attachment } from "./attachments.js";
-import type { Command, WorkspaceDiff, Checkpoint, Screenshot } from "@minions/shared";
 import { getLayout, setLayout, subscribe as subscribePanelLayout } from "../util/panelLayout.js";
-
-const SURFACE_TABS: Tab[] = [
-  { id: "transcript", label: "Transcript" },
-  { id: "diff", label: "Diff" },
-  { id: "pr", label: "PR" },
-  { id: "checkpoints", label: "Checkpoints" },
-  { id: "screenshots", label: "Screenshots" },
-  { id: "dag", label: "DAG status" },
-];
-
-const CANCELLABLE_STATUSES: ReadonlySet<SessionStatus> = new Set([
-  "pending",
-  "running",
-  "waiting_input",
-]);
+import { STATUS_LABEL } from "../views/statusToVisual.js";
 
 const MIN_WIDTH = 80;
 const MAX_WIDTH = 720;
@@ -61,8 +43,6 @@ export interface SlashUiHandlers {
   openConfig: () => void;
   openHelp: () => void;
   openCost: () => void;
-  openExecutePlan: () => void;
-  setActiveTab: (id: string) => void;
 }
 
 export function dispatchSlashUi(action: SlashUiResult["action"], h: SlashUiHandlers): void {
@@ -74,468 +54,24 @@ export function dispatchSlashUi(action: SlashUiResult["action"], h: SlashUiHandl
     h.openCost();
     return;
   }
-  if (action === "diff") {
-    h.setActiveTab("diff");
-    return;
-  }
   if (action === "config") {
     h.openConfig();
     return;
   }
-  if (action === "execute-plan") {
-    h.openExecutePlan();
-    return;
-  }
   if (!h.activeId) return;
   const { sessionSlug, query } = parseUrl();
-  const view = action === "loops" ? "loops" : "doctor";
-  setUrlState({ connectionId: h.activeId, view, sessionSlug, query });
+  setUrlState({ connectionId: h.activeId, view: "dag", sessionSlug, query });
 }
 
-function useSessionTranscript(session: Session) {
-  const conn = useRootStore((s) => s.getActiveConnection());
-  const transcripts = useSessionStore(
-    (s) => (conn ? s.byConnection.get(conn.id)?.transcripts ?? EMPTY_TRANSCRIPTS : EMPTY_TRANSCRIPTS),
-  );
-  const setTranscript = useSessionStore((s) => s.setTranscript);
-  const slug = session.slug;
-  const hasLoaded = transcripts.has(slug);
-
-  useEffect(() => {
-    if (!conn || hasLoaded) return;
-    let cancelled = false;
-    getTranscript(conn, slug)
-      .then((d) => { if (!cancelled) setTranscript(conn.id, slug, d.items); })
-      .catch(() => { if (!cancelled) setTranscript(conn.id, slug, []); });
-    return () => { cancelled = true; };
-  }, [conn, slug, hasLoaded, setTranscript]);
-
-  return transcripts.get(slug) ?? [];
+/** Tab type for the surface tablist. */
+interface Tab {
+  id: string;
+  label: string;
 }
 
-function DiffPanel({ session }: { session: Session }) {
-  const [diff, setDiff] = useState<WorkspaceDiff | null>(null);
-  const [loading, setLoading] = useState(true);
-  const conn = useRootStore((s) => s.getActiveConnection());
-
-  useEffect(() => {
-    if (!conn) return;
-    setLoading(true);
-    getDiff(conn, session.slug)
-      .then((d) => setDiff(d))
-      .catch(() => setDiff(null))
-      .finally(() => setLoading(false));
-  }, [session.slug, conn]);
-
-  if (loading) return <div className="flex items-center justify-center h-full"><Spinner /></div>;
-  if (!diff) return <div className="p-4 text-sm text-fg-subtle">No diff available.</div>;
-  return (
-    <div className="p-4 overflow-auto flex-1">
-      <Diff text={diff.patch} />
-    </div>
-  );
-}
-
-function CheckpointsPanel({ session }: { session: Session }) {
-  const [items, setItems] = useState<Checkpoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const conn = useRootStore((s) => s.getActiveConnection());
-
-  useEffect(() => {
-    if (!conn) return;
-    setLoading(true);
-    getCheckpoints(conn, session.slug)
-      .then((d) => setItems(d.items))
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
-  }, [session.slug, conn]);
-
-  if (loading) return <div className="flex items-center justify-center h-full"><Spinner /></div>;
-  return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-2">
-      {items.length === 0 && <p className="text-sm text-fg-subtle">No checkpoints.</p>}
-      {items.map((c) => (
-        <div key={c.id} className="card p-3 text-sm">
-          <div className="text-fg font-mono text-xs">{c.id.slice(0, 8)}</div>
-          <div className="text-fg-muted mt-0.5">{c.message}</div>
-          <div className="text-fg-subtle text-xs mt-1">turn {c.turn}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function AuthedImage({ session, filename }: { session: Session; filename: string }) {
-  const conn = useRootStore((s) => s.getActiveConnection());
-  const [src, setSrc] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
-    if (!conn) return;
-    let cancelled = false;
-    let blobUrl: string | null = null;
-    const url = `${conn.baseUrl.replace(/\/$/, "")}/api/sessions/${session.slug}/screenshots/${encodeURIComponent(filename)}`;
-    fetch(url, { headers: { Authorization: `Bearer ${conn.token}` } })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        if (cancelled) return;
-        blobUrl = URL.createObjectURL(blob);
-        setSrc(blobUrl);
-      })
-      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); });
-    return () => {
-      cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
-  }, [conn, session.slug, filename]);
-  if (err) return <div className="text-xs text-err p-2 border border-border rounded">load failed: {err}</div>;
-  if (!src) return <div className="text-xs text-fg-subtle p-2 border border-border rounded animate-pulse">loading…</div>;
-  return <img src={src} alt={filename} className="rounded border border-border w-full" />;
-}
-
-function ScreenshotsPanel({ session }: { session: Session }) {
-  const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
-  const [loading, setLoading] = useState(true);
-  const conn = useRootStore((s) => s.getActiveConnection());
-
-  useEffect(() => {
-    if (!conn) return;
-    setLoading(true);
-    getScreenshots(conn, session.slug)
-      .then((d) => setScreenshots(d.items))
-      .catch(() => setScreenshots([]))
-      .finally(() => setLoading(false));
-  }, [session.slug, conn]);
-
-  if (loading) return <div className="flex items-center justify-center h-full"><Spinner /></div>;
-  return (
-    <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-      {screenshots.length === 0 && <p className="text-sm text-fg-subtle col-span-2">No screenshots.</p>}
-      {screenshots.map((s) => (
-        <div key={s.filename} className="flex flex-col gap-1">
-          <AuthedImage session={session} filename={s.filename} />
-          <span className="text-[10px] font-mono text-fg-subtle truncate" title={s.filename}>{s.filename}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DagStatusPanel({ session }: { session: Session }) {
-  const activeId = useConnectionStore((s) => s.activeId);
-
-  if (!session.dagId) {
-    return <div className="p-4 text-sm text-fg-subtle">No DAG linked to this session.</div>;
-  }
-  return (
-    <div className="p-4 text-sm text-fg-muted">
-      <div>DAG: <span className="font-mono text-fg-muted">{session.dagId}</span></div>
-      {session.dagNodeId && (
-        <div className="mt-1">Node: <span className="font-mono text-fg-muted">{session.dagNodeId}</span></div>
-      )}
-      <button
-        type="button"
-        onClick={() => {
-          if (!activeId) return;
-          const { sessionSlug, query } = parseUrl();
-          setUrlState({ connectionId: activeId, view: "dag", sessionSlug, query: { ...query, dag: session.dagId ?? "" } });
-        }}
-        className="btn mt-3 text-xs"
-      >
-        Open DAG canvas →
-      </button>
-    </div>
-  );
-}
-
-const PR_STATE_PILL: Record<"open" | "closed" | "merged", string> = {
-  open: "bg-emerald-900/40 text-emerald-300",
-  merged: "bg-purple-900/40 text-purple-300",
-  closed: "bg-bg-elev text-fg-muted",
-};
-
-export function BudgetMeterPill({ costUsd, cap }: { costUsd: number; cap: number }) {
-  const safeCost = costUsd > 0 ? costUsd : 0;
-  const ratio = cap > 0 ? safeCost / cap : 0;
-  const widthPct = Math.min(100, ratio * 100);
-  const tone = ratio >= 1 ? "bg-err" : ratio >= 0.8 ? "bg-warn" : "bg-accent";
-  const textTone = ratio >= 1 ? "text-err" : ratio >= 0.8 ? "text-warn" : "text-fg-muted";
-  return (
-    <span
-      data-testid="budget-meter"
-      className={cx("pill bg-bg-elev font-mono relative overflow-hidden", textTone)}
-      title={`cost ${safeCost.toFixed(2)} of ${cap.toFixed(2)} USD cap`}
-    >
-      <span
-        aria-hidden="true"
-        className={cx("absolute left-0 bottom-0 h-0.5 transition-[width]", tone)}
-        style={{ width: `${widthPct}%` }}
-      />
-      ${safeCost.toFixed(2)} / ${cap.toFixed(2)}
-    </span>
-  );
-}
-
-function OperationalHeader({
-  session,
-  onClose,
-  onOpenExecutePlan,
-}: {
-  session: Session;
-  onClose: () => void;
-  onOpenExecutePlan: () => void;
-}) {
-  const conn = useRootStore((s) => s.getActiveConnection());
-  const [landing, setLanding] = useState(false);
-  const [landError, setLandError] = useState<string | null>(null);
-  const [cancelOpen, setCancelOpen] = useState(false);
-  const [closeOpen, setCloseOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-
-  function navTo(view: "list" | "dag", slug?: string | null, dagId?: string) {
-    const activeId = useConnectionStore.getState().activeId;
-    if (!activeId) return;
-    const { query } = parseUrl();
-    const nextQuery = dagId ? { ...query, dag: dagId } : query;
-    setUrlState({ connectionId: activeId, view, sessionSlug: slug ?? null, query: nextQuery });
-  }
-
-  const isShipStack =
-    session.mode === "ship" &&
-    !!session.shipStage &&
-    (session.shipStage === "dag" ||
-      session.shipStage === "verify" ||
-      session.shipStage === "done");
-
-  const canLand =
-    !!conn &&
-    !isShipStack &&
-    session.status === "completed" &&
-    !!session.branch &&
-    !session.pr;
-
-  const canLandStack = !!conn && isShipStack;
-
-  const canCancel = !!conn && CANCELLABLE_STATUSES.has(session.status);
-  const canClose = !!conn && !CANCELLABLE_STATUSES.has(session.status) && !!session.worktreePath;
-  const canDelete = !!conn;
-
-  const handleLand = async () => {
-    if (!conn || landing) return;
-    setLanding(true);
-    setLandError(null);
-    try {
-      await postCommand(conn, {
-        kind: "land",
-        sessionSlug: session.slug,
-        strategy: "squash",
-        force: false,
-      });
-    } catch (e) {
-      setLandError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLanding(false);
-    }
-  };
-
-  const handleLandStack = async () => {
-    if (!conn || landing) return;
-    setLanding(true);
-    setLandError(null);
-    try {
-      await postCommand(conn, {
-        kind: "stack",
-        sessionSlug: session.slug,
-        action: "land-all",
-      });
-    } catch (e) {
-      setLandError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLanding(false);
-    }
-  };
-
-  const shortParent = session.parentSlug ? session.parentSlug.slice(0, 8) : null;
-  return (
-    <div className="flex flex-col gap-1 px-3 py-2 border-b border-border">
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-sm font-medium text-fg truncate flex-1">{session.title}</span>
-        {session.mode === "think" && (
-          <button
-            type="button"
-            onClick={onOpenExecutePlan}
-            className="btn text-xs px-2 py-1"
-            title="Execute this think thread's plan in a new session"
-          >
-            Execute plan
-          </button>
-        )}
-        {canLand && (
-          <button
-            type="button"
-            onClick={() => void handleLand()}
-            disabled={landing}
-            className={cx("btn-primary text-xs px-2 py-1", landing && "opacity-50 cursor-not-allowed")}
-            title={`Land branch ${session.branch} (squash)`}
-          >
-            {landing ? "Landing…" : "Land"}
-          </button>
-        )}
-        {canLandStack && (
-          <button
-            type="button"
-            onClick={() => void handleLandStack()}
-            disabled={landing}
-            className={cx("btn-primary text-xs px-2 py-1", landing && "opacity-50 cursor-not-allowed")}
-            title="Land all DAG-task PRs in topological order"
-          >
-            {landing ? "Queuing…" : "Land stack"}
-          </button>
-        )}
-        {canCancel && (
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => setCancelOpen(true)}
-            title="Cancel session"
-          >
-            Cancel
-          </Button>
-        )}
-        {canClose && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCloseOpen(true)}
-            title="Close (cancel + remove worktree, keep history)"
-          >
-            Close
-          </Button>
-        )}
-        {canDelete && (
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => setDeleteOpen(true)}
-            title="Delete session permanently"
-          >
-            Delete
-          </Button>
-        )}
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-fg-subtle hover:text-fg-muted text-lg leading-none"
-          title="Close (return to list)"
-        >
-          ×
-        </button>
-      </div>
-      {conn && (
-        <CancelSessionDialog
-          open={cancelOpen}
-          onClose={() => setCancelOpen(false)}
-          sessions={[{ slug: session.slug, title: session.title }]}
-          conn={conn}
-        />
-      )}
-      {conn && (
-        <ConfirmDialog
-          open={closeOpen}
-          onClose={() => setCloseOpen(false)}
-          title="Close session"
-          body={`Cancel ${session.title} (${session.slug}) and remove its worktree on disk? Transcript and history are preserved.`}
-          confirmLabel="Close session"
-          variant="danger"
-          onConfirm={async () => {
-            await postCommand(conn, { kind: "close", sessionSlug: session.slug, removeWorktree: true });
-          }}
-        />
-      )}
-      {conn && (
-        <ConfirmDialog
-          open={deleteOpen}
-          onClose={() => setDeleteOpen(false)}
-          title="Delete session"
-          body={`Permanently delete ${session.title} (${session.slug})? This removes the session row, transcript, screenshots, checkpoints, worktree on disk, and uploads. Cannot be undone.`}
-          confirmLabel="Delete session"
-          variant="danger"
-          onConfirm={async () => {
-            await deleteSession(conn, session.slug);
-            const activeIdNow = useConnectionStore.getState().activeId;
-            if (activeIdNow) {
-              const { query } = parseUrl();
-              setUrlState({ connectionId: activeIdNow, view: "list", sessionSlug: null, query });
-            }
-          }}
-        />
-      )}
-      {landError && (
-        <p className="text-[10px] text-err truncate" title={landError}>
-          Land failed: {landError}
-        </p>
-      )}
-      <div className="flex items-center flex-wrap gap-1.5 text-[10px]">
-        <span className="pill bg-bg-elev text-fg-muted font-mono">{session.mode}</span>
-        {session.shipStage && (
-          <span className="pill bg-purple-900/40 text-purple-300">stage:{session.shipStage}</span>
-        )}
-        {session.branch && (
-          <span className="pill bg-bg-elev text-fg-subtle font-mono truncate max-w-[180px]" title={session.branch}>
-            ⎇ {session.branch}
-          </span>
-        )}
-        {session.pr && (
-          <a
-            href={session.pr.url}
-            target="_blank"
-            rel="noreferrer"
-            className={cx("pill font-mono hover:underline", PR_STATE_PILL[session.pr.state])}
-            title={session.pr.title}
-          >
-            PR #{session.pr.number} · {session.pr.state}{session.pr.draft ? " (draft)" : ""}
-          </a>
-        )}
-        {session.attention && session.attention.length > 0 && (
-          <span className="pill bg-amber-900/40 text-amber-300" title={session.attention.map((a) => a.kind).join(", ")}>
-            ⚠ {session.attention.length}
-          </span>
-        )}
-        {session.costBudgetUsd !== undefined && session.costBudgetUsd > 0 && (
-          <BudgetMeterPill costUsd={session.stats.costUsd} cap={session.costBudgetUsd} />
-        )}
-        {shortParent && (
-          <button
-            type="button"
-            onClick={() => navTo("list", session.parentSlug)}
-            className="pill bg-bg-elev text-fg-subtle hover:text-fg font-mono"
-            title={`parent: ${session.parentSlug}`}
-          >
-            ↑ {shortParent}
-          </button>
-        )}
-        {session.dagId && (
-          <button
-            type="button"
-            onClick={() => navTo("dag", null, session.dagId)}
-            className="pill bg-indigo-900/40 text-indigo-300 hover:underline font-mono"
-            title={`DAG ${session.dagId}`}
-          >
-            DAG
-          </button>
-        )}
-        {session.childSlugs && session.childSlugs.length > 0 && (
-          <span className="pill bg-bg-elev text-fg-subtle">↓ {session.childSlugs.length}</span>
-        )}
-        {session.modelHint && (
-          <span className="pill bg-bg-elev text-fg-subtle font-mono truncate max-w-[140px]" title={session.modelHint}>
-            {session.modelHint}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
+const SURFACE_TABS: Tab[] = [
+  { id: "transcript", label: "Transcript" },
+];
 
 interface SurfaceTablistProps {
   tabs: Tab[];
@@ -570,7 +106,7 @@ function SurfaceTablist({ tabs, active, onChange }: SurfaceTablistProps) {
   );
 
   return (
-    <div role="tablist" aria-label="Session surface" className="flex flex-wrap border-b border-border">
+    <div role="tablist" aria-label="Task surface" className="flex flex-wrap border-b border-border">
       {tabs.map((tab, idx) => {
         const isActive = active === tab.id;
         return (
@@ -601,24 +137,229 @@ function SurfaceTablist({ tabs, active, onChange }: SurfaceTablistProps) {
   );
 }
 
+function ArtifactPill({ artifact }: { artifact: TaskNode["artifacts"][number] }) {
+  const ref = artifact.ref;
+  if (artifact.kind === "pr" && /^https?:\/\//.test(ref)) {
+    const match = ref.match(/\/pull\/(\d+)/);
+    const label = match ? `PR #${match[1]}` : "PR";
+    return (
+      <a
+        href={ref}
+        target="_blank"
+        rel="noreferrer"
+        className="pill bg-indigo-900/40 text-indigo-300 hover:underline font-mono"
+        title={ref}
+      >
+        {label} ↗
+      </a>
+    );
+  }
+  if (artifact.kind === "quality-report") {
+    let summary = "QG ?";
+    try {
+      const parsed = JSON.parse(ref) as { overallStatus?: string; checks?: unknown[] };
+      const status = parsed.overallStatus ?? "?";
+      const count = parsed.checks?.length ?? 0;
+      summary = status === "passed"
+        ? `QG ✓ ${count}`
+        : status === "failed"
+        ? `QG ✗ ${count}`
+        : `QG ${status}`;
+    } catch { /* fall back to default */ }
+    return (
+      <span
+        className="pill bg-bg-elev text-fg-subtle font-mono"
+        title={ref}
+      >
+        {summary}
+      </span>
+    );
+  }
+  if (artifact.kind === "patch") {
+    return (
+      <span className="pill bg-bg-elev text-fg-subtle font-mono" title={ref}>
+        patch
+      </span>
+    );
+  }
+  return (
+    <span
+      className="pill bg-bg-elev text-fg-subtle font-mono truncate max-w-[180px]"
+      title={ref}
+    >
+      {artifact.kind}: {ref.slice(0, 40)}
+    </span>
+  );
+}
+
+const CI_POLL_VISIBLE_STATUSES = new Set(["pr-open", "ci-pending", "needs-review"]);
+
+function CIPollPill({ payload }: { payload: CIPollResultPayload }) {
+  const symbol =
+    payload.overallStatus === "success"
+      ? "✓"
+      : payload.overallStatus === "failure"
+        ? "✗"
+        : "⏳";
+  const tone =
+    payload.overallStatus === "success"
+      ? "bg-emerald-900/40 text-emerald-300"
+      : payload.overallStatus === "failure"
+        ? "bg-red-900/40 text-red-300"
+        : "bg-bg-elev text-fg-muted";
+  const breakdown = payload.checks
+    .map((c) => `${c.name} [${c.status}${c.conclusion ? ` / ${c.conclusion}` : ""}]`)
+    .join("\n");
+  return (
+    <span className={cx("pill font-mono", tone)} title={breakdown || "no checks"}>
+      CI {symbol} {payload.checks.length}
+    </span>
+  );
+}
+
+function WorkflowHeader({
+  workflow,
+  task,
+  ciPoll,
+  onClose,
+}: {
+  workflow: Workflow;
+  task: TaskNode;
+  ciPoll: CIPollResultPayload | undefined;
+  onClose: () => void;
+}) {
+  const conn = useRootStore((s) => s.getActiveConnection());
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const activeId = useConnectionStore((s) => s.activeId);
+
+  const canCancel = workflow.status === "active" &&
+    (task.executionStatus === "running" || task.executionStatus === "ready" || task.executionStatus === "pending");
+
+  const handleCancel = useCallback(async (): Promise<void> => {
+    if (!conn) return;
+    await dispatchCommand(conn, {
+      kind: "transition-task",
+      workflowId: workflow.id,
+      transition: {
+        kind: "cancel",
+        taskId: task.id,
+        now: new Date().toISOString(),
+      },
+    });
+  }, [conn, workflow.id, task.id]);
+
+  const goToDag = useCallback(() => {
+    if (!activeId) return;
+    const { view, query } = parseUrl();
+    setUrlState({ connectionId: activeId, view: "dag", sessionSlug: null, query: { ...query, dag: workflow.id } });
+  }, [activeId, workflow.id]);
+
+  const isMultiTask = Object.keys(workflow.graph).length > 1;
+
+  return (
+    <div className="flex flex-col gap-1 px-3 py-2 border-b border-border">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-sm font-medium text-fg truncate flex-1">{task.title}</span>
+        {canCancel && (
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => setCancelOpen(true)}
+            title="Cancel task"
+          >
+            Cancel
+          </Button>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-fg-subtle hover:text-fg-muted text-lg leading-none"
+          title="Close (return to list)"
+        >
+          ×
+        </button>
+      </div>
+      {canCancel && (
+        <ConfirmDialog
+          open={cancelOpen}
+          onClose={() => setCancelOpen(false)}
+          onConfirm={handleCancel}
+          title="Cancel task"
+          body={<p>Cancel this task? The agent will be stopped.</p>}
+          confirmLabel="Cancel"
+          variant="danger"
+        />
+      )}
+      <div className="flex items-center flex-wrap gap-1.5 text-[10px]">
+        <span className="pill bg-bg-elev text-fg-muted font-mono">{workflow.kind}</span>
+        <span className="pill bg-bg-elev text-fg-muted">{STATUS_LABEL[task.executionStatus]}</span>
+        {task.stackStatus !== "clean" && (
+          <span className="pill bg-amber-900/40 text-amber-300">{task.stackStatus}</span>
+        )}
+        {task.artifacts.map((a, i) => (
+          <ArtifactPill key={i} artifact={a} />
+        ))}
+        {ciPoll !== undefined && CI_POLL_VISIBLE_STATUSES.has(task.executionStatus) && (
+          <CIPollPill payload={ciPoll} />
+        )}
+        {isMultiTask && (
+          <button
+            type="button"
+            onClick={goToDag}
+            className="pill bg-indigo-900/40 text-indigo-300 hover:underline font-mono"
+            title="Open DAG view"
+          >
+            DAG
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface PanelProps {
-  session: Session;
+  workflow: Workflow;
+  task: TaskNode;
   activeTab: string;
   onTabChange: (id: string) => void;
   onClose: () => void;
   onOpenConfig?: () => void;
   onOpenHelp: () => void;
   onOpenCost: () => void;
-  onOpenExecutePlan: () => void;
 }
 
 const NOOP = (): void => {};
 
-function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, onOpenHelp, onOpenCost, onOpenExecutePlan }: PanelProps) {
-  const events = useSessionTranscript(session);
+function SurfacePanel({
+  workflow,
+  task,
+  activeTab,
+  onTabChange,
+  onClose,
+  onOpenConfig,
+  onOpenHelp,
+  onOpenCost,
+}: PanelProps) {
   const conn = useRootStore((s) => s.getActiveConnection());
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const tabPanelRef = useRef<HTMLDivElement | null>(null);
+  const [ciPollByTask, setCiPollByTask] = useState<Record<string, CIPollResultPayload>>({});
+
+  useEffect(() => {
+    if (!conn) return;
+    const sseConn = connectWorkflowSse(conn, workflow.id, {
+      onEvent(e) {
+        if (e.kind !== "ci-poll-result") return;
+        const payload = e.payload;
+        setCiPollByTask((prev) => ({ ...prev, [payload.taskId]: payload }));
+      },
+    });
+    return () => {
+      sseConn.close();
+    };
+  }, [conn, workflow.id]);
+
+  const ciPoll = useMemo(() => ciPollByTask[task.id], [ciPollByTask, task.id]);
 
   useEffect(() => {
     if (!isMobile) return;
@@ -665,80 +406,67 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
   const handleSlashCommand = useCallback(
     async (cmd: SlashCommand, args: string[]) => {
       if (!conn) return;
-      const ctx: SlashContext = { sessionSlug: session.slug, dagId: session.dagId };
+      const ctx: SlashContext = { sessionSlug: task.id, dagId: workflow.id };
       const result = cmd.build(args, ctx);
-      if (result.kind === "command") {
-        await postCommand(conn, result.payload);
-      } else if (result.kind === "message") {
-        await postMessage(conn, { prompt: args.join(" "), mode: result.payload.mode });
-      } else if (result.kind === "ui") {
+      if (result.kind === "ui") {
         dispatchSlashUi(result.action, {
           activeId: useConnectionStore.getState().activeId,
           openConfig: onOpenConfig ?? NOOP,
           openHelp: onOpenHelp,
           openCost: onOpenCost,
-          openExecutePlan: onOpenExecutePlan,
-          setActiveTab: onTabChange,
         });
       }
     },
-    [session, conn, onOpenConfig, onOpenHelp, onOpenCost, onOpenExecutePlan, onTabChange],
+    [task.id, workflow.id, conn, onOpenConfig, onOpenHelp, onOpenCost],
   );
 
-  const isResumableThink =
-    session.mode === "think" &&
-    (session.status === "completed" || session.status === "failed");
+  const isActive = task.executionStatus === "running" || task.executionStatus === "ready";
+  const isTerminal = ["completed", "pr-open", "merged", "failed", "cancelled"].includes(task.executionStatus);
 
+  const [replyError, setReplyError] = useState<string | null>(null);
   const handleSubmit = useCallback(
-    async (text: string, attachments: Attachment[]) => {
+    async (text: string) => {
       if (!conn) return;
-      const uploaded = attachments
-        .filter((a) => a.url)
-        .map((a) => ({ name: a.name, mimeType: a.mimeType, url: a.url! }));
-      await postCommand(conn, {
-        kind: "reply",
-        sessionSlug: session.slug,
-        text,
-        ...(uploaded.length > 0 ? { attachments: uploaded } : {}),
-      });
-      if (isResumableThink) {
-        await postCommand(conn, { kind: "resume-session", sessionSlug: session.slug });
+      setReplyError(null);
+      try {
+        await dispatchCommand(conn, {
+          kind: "continue-task",
+          workflowId: workflow.id,
+          taskId: task.id,
+          prompt: text,
+        });
+      } catch (err) {
+        // Engine rejects continue-task in non-resumable states (e.g. finalizing,
+        // merged). Surface the rejection to the user instead of silently dropping.
+        setReplyError(err instanceof Error ? err.message : "Reply failed.");
       }
     },
-    [session.slug, conn, isResumableThink],
-  );
-
-  const handleRecoveryAction = useCallback(
-    async (cmd: Command) => {
-      if (!conn) throw new Error("No active connection");
-      await postCommand(conn, cmd);
-    },
-    [conn],
+    [task.id, workflow.id, conn],
   );
 
   const handleStop = useCallback(async () => {
     if (!conn) return;
-    await postCommand(conn, { kind: "stop", sessionSlug: session.slug });
-  }, [conn, session.slug]);
+    await dispatchCommand(conn, {
+      kind: "transition-task",
+      workflowId: workflow.id,
+      transition: {
+        kind: "cancel",
+        taskId: task.id,
+        now: new Date().toISOString(),
+      },
+    });
+  }, [conn, workflow.id, task.id]);
 
-  const inputDisabled =
-    !conn ||
-    (!isResumableThink &&
-      (session.status === "completed" ||
-        session.status === "cancelled" ||
-        session.status === "failed"));
-  const isRunning = session.status === "running";
+  const inputDisabled = !conn || isTerminal;
   const inputPlaceholder = inputDisabled
-    ? `Session ${session.status}.`
-    : isResumableThink
-      ? "Ask for more research…"
-      : isRunning
-        ? "Reply queues to land mid-turn…"
-        : undefined;
+    ? `Task ${task.executionStatus}.`
+    : isActive
+      ? "Reply queues mid-run…"
+      : undefined;
 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
-      <OperationalHeader session={session} onClose={onClose} onOpenExecutePlan={onOpenExecutePlan} />
+      <WorkflowHeader workflow={workflow} task={task} ciPoll={ciPoll} onClose={onClose} />
       <SurfaceTablist tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
       <div
         ref={tabPanelRef}
@@ -746,25 +474,184 @@ function SurfacePanel({ session, activeTab, onTabChange, onClose, onOpenConfig, 
         aria-labelledby={`surface-tab-${activeTab}`}
         className="flex-1 min-h-0 flex flex-col overflow-hidden"
       >
-        {activeTab === "transcript" && <Transcript events={events} />}
-        {activeTab === "diff" && <DiffPanel session={session} />}
-        {activeTab === "pr" && <PRPanel session={session} />}
-        {activeTab === "checkpoints" && <CheckpointsPanel session={session} />}
-        {activeTab === "screenshots" && <ScreenshotsPanel session={session} />}
-        {activeTab === "dag" && <DagStatusPanel session={session} />}
+        {activeTab === "transcript" && (
+          <TranscriptPanel task={task} workflowId={workflow.id} conn={conn} />
+        )}
       </div>
-      <QuickActions session={session} />
-      <RecoveryFooter session={session} onAction={handleRecoveryAction} />
+      {replyError && (
+        <div className="px-3 py-1.5 text-xs bg-red-900/40 text-red-300 border-t border-red-900/60">
+          {replyError}
+        </div>
+      )}
       <ChatInput
         onSubmit={handleSubmit}
         onSlashCommand={handleSlashCommand}
         disabled={inputDisabled}
         placeholder={inputPlaceholder}
-        hint={isRunning ? "(injected mid-turn)" : undefined}
-        running={isRunning}
+        hint={isActive ? "(injected mid-run)" : undefined}
+        running={isActive}
         onStop={handleStop}
-        repoId={session.repoId}
       />
+    </div>
+  );
+}
+
+function transcriptEventFingerprint(e: TranscriptEvent): string {
+  // Fingerprint built from properties common across all TranscriptEvent kinds.
+  // Two events at the same timestamp + same kind + same first 200 chars of
+  // any text field are treated as duplicates (seed-overlap with SSE).
+  const anyEvent = e as unknown as Record<string, unknown>;
+  const text =
+    typeof anyEvent["text"] === "string"
+      ? (anyEvent["text"] as string).slice(0, 200)
+      : typeof anyEvent["summary"] === "string"
+        ? (anyEvent["summary"] as string).slice(0, 200)
+        : typeof anyEvent["name"] === "string"
+          ? (anyEvent["name"] as string)
+          : "";
+  return `${e.timestamp}|${e.kind}|${text}`;
+}
+
+function mergeSeededWithLive(
+  seeded: TranscriptEvent[],
+  prev: TranscriptEvent[],
+): TranscriptEvent[] {
+  if (prev.length === 0) return seeded;
+  const seen = new Set(seeded.map(transcriptEventFingerprint));
+  const liveOnly = prev.filter((e) => !seen.has(transcriptEventFingerprint(e)));
+  if (liveOnly.length === 0) return seeded;
+  // Concatenate; the persisted store is a strict prefix of SSE in the engine,
+  // so live-only entries are by construction newer.
+  return [...seeded, ...liveOnly];
+}
+
+function TranscriptPanel({
+  task,
+  workflowId,
+  conn,
+}: {
+  task: TaskNode;
+  workflowId: string;
+  conn: Connection | null;
+}) {
+  const hasRuns = task.runs.length > 0;
+  const [events, setEvents] = useState<TranscriptEvent[]>([]);
+
+  // Reset transcript when the active task or workflow changes
+  const taskKey = `${workflowId}:${task.id}`;
+
+  useEffect(() => {
+    setEvents([]);
+  }, [taskKey]);
+
+  // Seed transcript from persisted store when a run is available.
+  // Use scalar deps (conn?.id/baseUrl) so unstable conn object refs from the
+  // store don't churn the effect and trap hydrating=true forever.
+  const latestRunId = task.runs[0]?.id;
+  const connId = conn?.id;
+  const connBaseUrl = conn?.baseUrl;
+  const connToken = conn?.token;
+  const runsCount = task.runs.length;
+  useEffect(() => {
+    if (!conn || !latestRunId) return;
+    let cancelled = false;
+    listTranscript(conn, workflowId, latestRunId)
+      .then(({ transcript }) => {
+        if (cancelled) return;
+        const seeded = transcript.flatMap((entry) => {
+          const te = providerEventToTranscript(entry.providerEvent, task.id, runsCount, entry.occurredAt);
+          return te !== null ? [te] : [];
+        });
+        // Merge instead of replace: persisted store is authoritative for events
+        // it knows about, SSE-appended events (newer than the latest seeded one
+        // OR not represented in seeded) are preserved. Without this, an effect
+        // re-fire — triggered by snapshot refetch → workflow re-reference →
+        // runsCount churn — wipes any SSE event delivered in the meantime,
+        // forcing the user to refresh to see live progress.
+        setEvents((prev) => mergeSeededWithLive(seeded, prev));
+      })
+      .catch(() => {
+        // Don't blow away any SSE-appended events on fetch failure.
+        if (!cancelled) setEvents((prev) => prev);
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connId, connBaseUrl, connToken, workflowId, task.id, latestRunId, runsCount]);
+
+  useEffect(() => {
+    if (!conn) return;
+
+    const sseConn = connectWorkflowSse(conn, workflowId, {
+      onEvent(e) {
+        if (e.kind !== "provider-event") return;
+        if (e.payload.taskId !== task.id) return;
+        const transcriptEvent = providerEventToTranscript(
+          e.payload.providerEvent,
+          task.id,
+          runsCount,
+          e.occurredAt,
+        );
+        if (transcriptEvent !== null) {
+          setEvents((prev) => [...prev, transcriptEvent]);
+        }
+      },
+    });
+
+    return () => {
+      sseConn.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connId, connBaseUrl, connToken, workflowId, task.id, runsCount]);
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      {!hasRuns ? (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center">
+            <Spinner size="sm" />
+            <p className="text-xs text-fg-subtle mt-2">Waiting for task to start…</p>
+          </div>
+        </div>
+      ) : (
+        <Transcript events={events} />
+      )}
+      <TaskDetailsCollapsible task={task} />
+    </div>
+  );
+}
+
+function TaskDetailsCollapsible({ task }: { task: TaskNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="p-3 space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1 text-xs text-fg-subtle font-medium hover:text-fg-muted"
+        aria-expanded={open}
+      >
+        <span className="inline-block w-3">{open ? "▾" : "▸"}</span>
+        Task details
+      </button>
+      {open && (
+        <>
+          <div className="card p-3 text-xs space-y-1">
+            <div className="text-fg-muted font-medium">{task.title}</div>
+            <div className="text-fg-subtle whitespace-pre-wrap break-words">{task.prompt}</div>
+          </div>
+          {task.runs.length > 0 && (
+            <div className="text-xs text-fg-subtle font-medium mt-2">Runs ({task.runs.length})</div>
+          )}
+          {task.runs.map((run, i) => (
+            <div key={i} className="card p-2 text-xs space-y-0.5">
+              <div className="flex justify-between text-fg-subtle">
+                <span className="font-mono">{run.id?.slice(0, 12) ?? `run-${i}`}</span>
+                <span>{run.terminalReason ?? "in progress"}</span>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -783,17 +670,27 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
   const [activeTab, setActiveTab] = useState("transcript");
   const [helpOpen, setHelpOpen] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
-  const [executePlanOpen, setExecutePlanOpen] = useState(false);
   const [width, setWidth] = useState<number>(() => {
     const stored = getLayout(CHAT_PANEL);
     return stored ? clampWidth(stored.size) : DEFAULT_WIDTH;
   });
   const activeId = useConnectionStore((s) => s.activeId);
-  const sessionsMap = useSessionStore(
-    (s) => (activeId ? s.byConnection.get(activeId)?.sessions ?? EMPTY_SESSIONS : EMPTY_SESSIONS),
+  const workflowsMap = useWorkflowStore(
+    (s) => (activeId ? s.byConnection.get(activeId) ?? EMPTY_WORKFLOWS : EMPTY_WORKFLOWS),
   );
 
-  const session = sessionSlug ? sessionsMap.get(sessionSlug) : undefined;
+  const { workflow, task } = (() => {
+    if (!sessionSlug) return { workflow: undefined, task: undefined };
+    const direct = workflowsMap.get(sessionSlug);
+    if (direct) {
+      return { workflow: direct, task: Object.values(direct.graph)[0] };
+    }
+    for (const wf of workflowsMap.values()) {
+      const t = wf.graph[sessionSlug];
+      if (t) return { workflow: wf, task: t };
+    }
+    return { workflow: undefined, task: undefined };
+  })();
 
   useEffect(() => {
     setLayout(CHAT_PANEL, { size: width, collapsed: !open });
@@ -831,34 +728,31 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
   }, []);
   useSwipeToDismiss(primaryRef, closeToList, { direction: "right", threshold: 80 });
 
-  if (!session) return null;
+  if (!workflow || !task) return null;
 
   const modals = (
     <>
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
-      {costOpen && <CostModal session={session} onClose={() => setCostOpen(false)} />}
-      <ExecutePlanModal
-        open={executePlanOpen}
-        onClose={() => setExecutePlanOpen(false)}
-        parentSession={session}
-      />
+      {costOpen && <CostModal workflow={workflow} onClose={() => setCostOpen(false)} />}
     </>
   );
+
+  const panelProps: PanelProps = {
+    workflow,
+    task,
+    activeTab,
+    onTabChange: setActiveTab,
+    onOpenConfig,
+    onOpenHelp: () => setHelpOpen(true),
+    onOpenCost: () => setCostOpen(true),
+    onClose: closeToList,
+  };
 
   if (primary) {
     return (
       <>
         <div ref={primaryRef} className="flex-1 min-w-0 min-h-0 flex flex-col bg-bg-soft">
-          <SurfacePanel
-            session={session}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            onClose={closeToList}
-            onOpenConfig={onOpenConfig}
-            onOpenHelp={() => setHelpOpen(true)}
-            onOpenCost={() => setCostOpen(true)}
-            onOpenExecutePlan={() => setExecutePlanOpen(true)}
-          />
+          <SurfacePanel {...panelProps} />
         </div>
         {modals}
       </>
@@ -882,18 +776,9 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
   if (isMobile) {
     return (
       <>
-        <Sheet open={open} onClose={() => setOpen(false)} title={session.title}>
+        <Sheet open={open} onClose={() => setOpen(false)} title={task.title}>
           <div className="h-[80dvh] flex flex-col">
-            <SurfacePanel
-              session={session}
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
-              onClose={() => setOpen(false)}
-              onOpenConfig={onOpenConfig}
-              onOpenHelp={() => setHelpOpen(true)}
-              onOpenCost={() => setCostOpen(true)}
-              onOpenExecutePlan={() => setExecutePlanOpen(true)}
-            />
+            <SurfacePanel {...panelProps} onClose={() => setOpen(false)} />
           </div>
         </Sheet>
         {modals}
@@ -909,16 +794,7 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
       >
         <ResizeHandle onDrag={handleDrag} />
         <div className="flex-1 min-w-0 flex flex-col">
-          <SurfacePanel
-            session={session}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            onClose={() => setOpen(false)}
-            onOpenConfig={onOpenConfig}
-            onOpenHelp={() => setHelpOpen(true)}
-            onOpenCost={() => setCostOpen(true)}
-            onOpenExecutePlan={() => setExecutePlanOpen(true)}
-          />
+          <SurfacePanel {...panelProps} onClose={() => setOpen(false)} />
         </div>
       </div>
       {modals}

@@ -18,9 +18,9 @@ flock -n 9 || { echo "[$(ts)] another redeploy in progress; skip" >>"$LOG"; exit
 
 cd "$REPO"
 
-# Source MINIONS_TOKEN from .env.deploy if not already in env.
-if [ -z "${MINIONS_TOKEN:-}" ] && [ -f "$REPO/.env.deploy" ]; then
-  MINIONS_TOKEN="$(grep -E '^MINIONS_TOKEN=' "$REPO/.env.deploy" | head -1 | cut -d= -f2- || true)"
+# Source MWF_TOKEN from .env.deploy if not already in env.
+if [ -z "${MWF_TOKEN:-}" ] && [ -f "$REPO/.env.deploy" ]; then
+  MWF_TOKEN="$(grep -E '^MWF_TOKEN=' "$REPO/.env.deploy" | head -1 | cut -d= -f2- || true)"
 fi
 
 git fetch --quiet origin main
@@ -31,20 +31,20 @@ if [ "$LOCAL" = "$REMOTE" ]; then
   exit 0
 fi
 
-# Drain check: refuse to rebuild while any session is `running`. The next cron
-# tick (5 min later) retries. Skipped silently if the engine is unreachable
+# Drain check: refuse to rebuild while any workflow task is `running`. The next
+# cron tick (5 min later) retries. Skipped silently if the engine is unreachable
 # (first install, or already crashed) or if jq is missing — neither is a
 # reason to block forever.
-if [ -n "${MINIONS_TOKEN:-}" ] && command -v jq >/dev/null 2>&1; then
+if [ -n "${MWF_TOKEN:-}" ] && command -v jq >/dev/null 2>&1; then
   RUNNING_COUNT=$(
-    curl -fsS -m 5 -H "Authorization: Bearer $MINIONS_TOKEN" \
-      "$ENGINE_URL/api/sessions" 2>/dev/null \
-      | jq -r '(.items // .)[] | select(.status == "running") | .slug' 2>/dev/null \
+    curl -fsS -m 5 -H "Authorization: Bearer $MWF_TOKEN" \
+      "$ENGINE_URL/workflows" 2>/dev/null \
+      | jq -r '.[] | select(.status == "running") | .id' 2>/dev/null \
       | wc -l \
       || echo 0
   )
   if [ "$RUNNING_COUNT" -gt 0 ]; then
-    echo "[$(ts)] deferring redeploy: $RUNNING_COUNT session(s) running" >>"$LOG"
+    echo "[$(ts)] deferring redeploy: $RUNNING_COUNT workflow(s) running" >>"$LOG"
     exit 0
   fi
 fi

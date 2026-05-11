@@ -1,0 +1,61 @@
+# Local-dev variant of docker-compose.yml. Brings up the engine in a container,
+# pointed at the claude-minions repo on the host so agents can edit it.
+#
+# Usage:
+#   mkdir -p .docker-dev/data .docker-dev/repo
+#   git clone https://github.com/tprei/claude-minions.git .docker-dev/repo   # OR symlink your working copy
+#   UID=$(id -u) GID=$(id -g) docker compose -f docker-compose.dev.yml up --build
+#
+# The UID/GID env vars make the container's user match yours so the bind-mounted
+# ~/.claude is readable+writable by both sides; without them the build defaults
+# to 10001 and claude inside the container can't read host-owned credentials.
+#
+# First time: authenticate claude inside the container.
+#   docker exec -it minions-dev claude /login
+#
+# Then visit http://localhost:3949/health (the engine), and in the PWA add a
+# connection pointing at http://localhost:3949 with no token.
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MINION_UID: "${UID:-1000}"
+        MINION_GID: "${GID:-1000}"
+    image: minions/engine:dev
+    container_name: minions-dev
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MWF_PORT: 8787
+      MWF_DB_PATH: /data/engine.db
+      MWF_DATA_DIR: /data/sessions
+      MWF_REPO_PATH: /repo
+      MWF_WORKSPACE_ROOT: /data/workspace
+      MWF_PWA_DIR: /app/packages/web/dist
+      HOME: /data/home
+      MWF_LOG_LEVEL: info
+      MWF_QUALITY_DISABLED: "1"
+      MWF_GITHUB_BASE_BRANCH: engine-port
+      # Alias for `gh` CLI inside agent sessions; reads the same token as the
+      # engine. Without this, the first `gh` call in an agent's session fails
+      # with "Please run gh auth login" until the agent reimports the env var.
+      GH_TOKEN: ${MWF_GITHUB_TOKEN}
+    ports:
+      - "3949:8787"
+    volumes:
+      # Engine state: sqlite + worktrees. Excludes /data/home so .claude bind-mount wins.
+      - ./.docker-dev/data:/data
+      # Share host's claude auth directly so token refreshes on either side stay in sync.
+      - ${HOME}/.claude:/data/home/.claude
+      # The repo the agents will work in. Bind-mount your local working copy.
+      - ./.docker-dev/repo:/repo
+    healthcheck:
+      test: ["CMD","node","-e","require('http').get('http://127.0.0.1:8787/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

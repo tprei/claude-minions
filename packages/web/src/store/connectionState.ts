@@ -1,108 +1,100 @@
 import type { Connection } from "../connections/store.js";
-import { connectSse } from "../transport/sse.js";
-import { getSessions, getDags, getVersion, getRuntimeConfig } from "../transport/rest.js";
+import { connectWorkflowSse } from "../transport/sse.js";
+import { listWorkflows } from "../transport/rest.js";
 import { loadSnapshot, saveSnapshot } from "../transport/snapshotCache.js";
-import { useSessionStore } from "./sessionStore.js";
-import { useDagStore } from "./dagStore.js";
-import { useResourceStore } from "./resourceStore.js";
-import { useMemoryStore } from "./memoryStore.js";
+import { useWorkflowStore } from "./workflowStore.js";
 import { useVersionStore } from "./version.js";
-import { useRuntimeStore } from "./runtimeStore.js";
+import type { SseConnection } from "../transport/sse.js";
+import type { Workflow } from "@minions/engine";
 
-async function refetch(conn: Connection, isDisposed: () => boolean): Promise<void> {
-  const [sessionsEnv, dagsEnv] = await Promise.all([
-    getSessions(conn),
-    getDags(conn),
-  ]);
-  if (isDisposed()) return;
-  const sessions = sessionsEnv.items;
-  const dags = dagsEnv.items;
-  useSessionStore.getState().replaceAll(conn.id, sessions);
-  useDagStore.getState().replaceAll(conn.id, dags);
-  await saveSnapshot(conn.id, { sessions, dags });
+async function refetch(conn: Connection, isDisposed: () => boolean): Promise<Workflow[]> {
+  const workflows = await listWorkflows(conn, { includeCompleted: true });
+  if (isDisposed()) return [];
+  useWorkflowStore.getState().replaceAll(conn.id, workflows);
+  useVersionStore.getState().seedFromWorkflows(
+    conn.id,
+    workflows.map((w) => ({ workflowId: w.id, version: w.version })),
+  );
+  await saveSnapshot(conn.id, { workflows });
+  return workflows;
 }
 
 export async function refetchConnection(conn: Connection): Promise<void> {
   await refetch(conn, () => false);
 }
 
-async function fetchVersion(conn: Connection, isDisposed: () => boolean): Promise<void> {
-  try {
-    const info = await getVersion(conn);
-    if (isDisposed()) return;
-    useVersionStore.getState().setVersion(conn.id, info);
-  } catch {
-    // non-fatal — features will be empty
-  }
-}
-
-async function fetchRuntime(conn: Connection, isDisposed: () => boolean): Promise<void> {
-  try {
-    const res = await getRuntimeConfig(conn);
-    if (isDisposed()) return;
-    useRuntimeStore.getState().replace(conn.id, res.schema, res.values, res.effective);
-  } catch {
-    // non-fatal — runtime indicator will simply stay absent
-  }
-}
-
-// TODO(T54): once the vitest harness lands, add coverage that detaches a
-// connection while init() is mid-flight (snapshot load, version fetch, and
-// onReconnect refetch) and asserts no entries remain in session/dag/version
-// stores for that conn.id.
+// TODO(T54): add coverage for attach/dispose races.
 export function attachConnection(conn: Connection, delayMs = 0): () => void {
   let disposed = false;
   let disposeTimer: ReturnType<typeof setTimeout> | null = null;
-  let sseConn: ReturnType<typeof connectSse> | null = null;
+  // Per-workflow SSE connections, keyed by workflowId.
+  const sseConns = new Map<string, SseConnection>();
   const isDisposed = (): boolean => disposed;
+
+  function teardownSse(): void {
+    for (const c of sseConns.values()) c.close();
+    sseConns.clear();
+  }
+
+  function openSseForWorkflows(workflows: Workflow[]): void {
+    if (disposed) return;
+
+    // Close SSE for workflows no longer present.
+    for (const [wid, sseConn] of sseConns) {
+      if (!workflows.some((w) => w.id === wid)) {
+        sseConn.close();
+        sseConns.delete(wid);
+      }
+    }
+
+    // Open SSE for new workflows.
+    for (const workflow of workflows) {
+      if (sseConns.has(workflow.id)) continue;
+      const sseConn = connectWorkflowSse(conn, workflow.id, {
+        onEvent(event) {
+          if (disposed) return;
+          useWorkflowStore.getState().applyEvent(conn.id, event);
+          const w = useWorkflowStore.getState().byConnection.get(conn.id)?.get(event.workflowId);
+          if (w) {
+            useVersionStore.getState().setWorkflowVersion(conn.id, w.id, w.version);
+          }
+        },
+        async onReconnect() {
+          if (disposed) return;
+          try {
+            const fresh = await refetch(conn, isDisposed);
+            openSseForWorkflows(fresh);
+          } catch {
+            // non-fatal — next onReconnect will retry
+          }
+        },
+      });
+      sseConns.set(workflow.id, sseConn);
+    }
+  }
 
   async function init(): Promise<void> {
     const snapshot = await loadSnapshot(conn.id);
     if (disposed) return;
     if (snapshot) {
-      useSessionStore.getState().replaceAll(conn.id, snapshot.sessions);
-      useDagStore.getState().replaceAll(conn.id, snapshot.dags);
+      useWorkflowStore.getState().replaceAll(conn.id, snapshot.workflows);
+      useVersionStore.getState().seedFromWorkflows(
+        conn.id,
+        snapshot.workflows.map((w) => ({ workflowId: w.id, version: w.version })),
+      );
     }
 
-    // Always force a fresh REST fetch on attach. The snapshot may be empty
-    // (first attach for this connection / cache cleared) or stale (engine
-    // produced new sessions/dags while the tab was closed). Without this,
-    // fresh data only arrives via SSE's onReconnect callback, which races
-    // the user's first navigation — they can land on a DAG view and see
-    // "No DAGs available" before SSE has finished opening.
+    // Always force a fresh REST fetch on attach so stale snapshots don't
+    // persist across engine restarts.
+    let workflows: Workflow[] = snapshot?.workflows ?? [];
     try {
-      await refetch(conn, isDisposed);
+      workflows = await refetch(conn, isDisposed);
     } catch {
-      // non-fatal — SSE onReconnect will retry on first connect
+      // non-fatal — snapshot data remains; SSE onReconnect will retry
     }
-
-    await fetchVersion(conn, isDisposed);
-    await fetchRuntime(conn, isDisposed);
 
     if (disposed) return;
-
-    sseConn = connectSse(conn, {
-      onSessionCreated(e) { useSessionStore.getState().upsertSession(conn.id, e.session); },
-      onSessionUpdated(e) { useSessionStore.getState().upsertSession(conn.id, e.session); },
-      onSessionDeleted(e) { useSessionStore.getState().removeSession(conn.id, e.slug); },
-      onDagCreated(e) { useDagStore.getState().upsert(conn.id, e.dag); },
-      onDagUpdated(e) { useDagStore.getState().upsert(conn.id, e.dag); },
-      onDagDeleted(e) { useDagStore.getState().remove(conn.id, e.id); },
-      onDagNodeUpdated(e) { useDagStore.getState().upsertNode(conn.id, e.dagId, e.node); },
-      onTranscriptEvent(e) {
-        useSessionStore.getState().appendTranscriptEvent(conn.id, e.sessionSlug, e.event);
-      },
-      onResource(e) { useResourceStore.getState().push(conn.id, e.snapshot); },
-      onMemoryProposed(e) { useMemoryStore.getState().upsert(conn.id, e.memory); },
-      onMemoryUpdated(e) { useMemoryStore.getState().upsert(conn.id, e.memory); },
-      onMemoryReviewed(e) { useMemoryStore.getState().upsert(conn.id, e.memory); },
-      onMemoryDeleted(e) { useMemoryStore.getState().remove(conn.id, e.id); },
-      async onReconnect() {
-        if (disposed) return;
-        await refetch(conn, isDisposed);
-        await fetchRuntime(conn, isDisposed);
-      },
-    });
+    openSseForWorkflows(workflows);
   }
 
   if (delayMs > 0) {
@@ -119,7 +111,7 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
       clearTimeout(disposeTimer);
       disposeTimer = null;
     }
-    sseConn?.close();
-    sseConn = null;
+    teardownSse();
   };
 }
+

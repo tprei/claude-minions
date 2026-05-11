@@ -85,10 +85,10 @@ claude-minions/
 
 ### Error model
 - Engine errors thrown as `EngineError` with `code` (`bad_request | not_found | conflict | unauthorized | forbidden | internal | upstream`). HTTP layer maps to status codes.
-- Web treats every non-2xx as `ApiError` (shape from `@minions/shared`).
+- Web treats every non-2xx as `ApiError` (shape from `@minions/shared`, the HTTP transport type package).
 
 ### Logging
-- One tiny logger (`logger.ts`) — `info|warn|error|debug` with structured fields, level from `MINIONS_LOG_LEVEL`. No third-party logger dep.
+- One tiny logger (`logger.ts`) — `info|warn|error|debug` with structured fields, level from `MWF_LOG_LEVEL`. No third-party logger dep.
 
 ### Time
 - ISO-8601 strings on the wire. `new Date().toISOString()`.
@@ -296,7 +296,7 @@ Completion handlers register on session_updated where `status` transitions to a 
 ## Sub-agent rules
 
 - Edit only files inside the directories you were assigned. If your task requires touching a sibling subsystem, expose a thin interface and leave the impl to the owner.
-- Always import shared types from `@minions/shared`. Never duplicate type definitions.
+- Import HTTP transport types from `@minions/shared`. Import engine domain types from `@minions/engine`. Never duplicate type definitions.
 - Always use `.js` extension on internal imports.
 - Always use `cwd`-aware `simple-git` calls; never assume process cwd.
 - Default exports are forbidden; use named exports.

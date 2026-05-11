@@ -1,6 +1,6 @@
 # claude-minions
 
-A self-hostable, self-driving multi-agent coding orchestrator. One long-running engine spawns coding-agent CLIs in isolated git worktrees, persists their conversations, and exposes the whole machine over a small REST + SSE surface. A Vite-built PWA renders the live state and lets an operator drive the system. A separate sidecar process watches everything and proactively spawns sub-sessions to handle the issues it flags.
+A self-hostable, self-driving multi-agent coding orchestrator. One long-running engine spawns coding-agent CLIs in isolated git worktrees, persists their conversations, and exposes the whole machine over a small REST + SSE surface. A Vite-built PWA renders the live state and lets an operator drive the system.
 
 The whole thing dogfoods itself: every commit on the `main` history below `phase 4` was written by a session running through this engine.
 
@@ -21,10 +21,9 @@ claude-minions/
     architecture.md               original wire-format and subsystem layout
     deploy.md                     mini-PC walkthrough including HTTPS via Caddy
   packages/
-    shared/                       wire-format types — see "Wire format" below
+    shared/                       HTTP wire-format types (sessions, transcript events, commands)
     engine/                       long-running HTTP service (the orchestrator)
     web/                          single-page PWA (the operator console)
-    sidecar/                      separate process: watcher + rules engine
 ```
 
 ## What the engine does
@@ -37,7 +36,7 @@ A single Node process (`packages/engine`) that:
    - `.repos/<id>.git` — bare clone cache
    - `<session-slug>/` — per-session git worktree
    - `home/<provider>/` — agent CLI auth dir (mountable)
-2. Exposes REST + SSE on `MINIONS_PORT` (default 8787) with bearer auth.
+2. Exposes REST + SSE on `MWF_PORT` (default 3000; set to 8787 in production) with bearer auth.
 3. Spawns coding-agent subprocesses (`claude` CLI by default; `mock` for dev/CI), parses their NDJSON streaming output into typed transcript events, persists them, and broadcasts via SSE.
 4. Wraps each session's worktree with: bare clone cache, hardlinked deps cache, asset injection (instructions / AGENTS.md / CLAUDE.md / `.cursor/rules/`).
 5. Schedules DAG nodes, ship-pipeline stages, loops, and N-way variant + judge runs.
@@ -80,18 +79,6 @@ A single Node process (`packages/engine`) that:
 Views: list, kanban, DAG canvas (ReactFlow + dagre), staged ship pipeline. Chat surface as a resizable side panel (desktop) / bottom sheet (mobile) with tabs for transcript / diff / PR / checkpoints / screenshots / DAG status. Drawers for memory, runtime config (auto-rendered from the engine's schema), audit log, resource snapshots. PWA polish: service worker, install prompt, web-push opt-in, offline detection, theme toggle (light/dark/system via CSS variables), QR scanner for one-tap connection import.
 
 The transcript renderer groups consecutive tool_call / tool_result events into collapsible blocks with kind icons + bold verb + content preview + status pill (the conductor.build pattern).
-
-## What the sidecar does
-
-`packages/sidecar` is a small standalone Node process that subscribes to the engine's REST + SSE and runs a rules engine over sessions, transcripts, and audit events. Five built-in rules:
-
-- `stuckWaitingInput` — pokes sessions sitting in `waiting_input` for too long.
-- `uncommittedCompleted` — backstops sessions that completed without committing their worktree changes.
-- `failedCiNoFix` — spawns a fix-CI sub-session on PR check failures (parallel safety net to the engine's CI babysitter).
-- `landReady` — logs (or auto-lands when `MINIONS_SIDECAR_AUTO_LAND=true`) sessions whose readiness is green.
-- `dagStaleReady` — watchdog for DAG nodes that have been ready for too long without spawning.
-
-Adding a rule: new file under `packages/sidecar/src/rules/`, add to `rules/index.ts`. Each rule is a `{ id, init?, onSessionUpdated?, onTranscriptEvent?, onAuditEvent?, tick? }`.
 
 ## Wire format
 
@@ -156,25 +143,19 @@ GET    /api/events                              SSE; auth via ?token=
 git clone https://github.com/tprei/claude-minions.git
 cd claude-minions
 pnpm install
-pnpm --filter @minions/shared run build
 
-cp .env.local.example .env.local                 # edit MINIONS_TOKEN
-mkdir -p .dev-workspace
-cat > .dev-workspace/repos.json <<'JSON'
-[{"id":"self","label":"claude-minions","remote":"https://github.com/<you>/<your-repo>.git","defaultBranch":"main"}]
-JSON
+cp .env.local.example .env.local                 # edit MWF_TOKEN and MWF_DB_PATH
 
-bin/engine.sh                                    # engine on :8787
+bin/engine.sh                                    # engine on :3000 (MWF_PORT)
 pnpm --filter @minions/web run dev               # PWA on :5173
-pnpm --filter @minions/sidecar run dev           # optional: watcher process
 
-# Open http://localhost:5173/, add a connection (http://127.0.0.1:8787 + the token).
+# Open http://localhost:5173/, add a connection (http://127.0.0.1:3000 + the token).
 ```
 
 Common operations once running:
 
 ```bash
-TOKEN=$(grep '^MINIONS_TOKEN=' .env.local | cut -d= -f2)
+TOKEN=$(grep '^MWF_TOKEN=' .env.local | cut -d= -f2)
 
 # Spawn a task session
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -191,40 +172,35 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
   http://127.0.0.1:8787/api/commands
 ```
 
-## GitHub App setup
+## GitHub setup
 
-The engine prefers App auth (short-lived installation tokens, scoped permissions, GitHub-side merge through `gh pr merge`). Three env vars in `.env.local`:
+Set in `.env.local`:
 
 ```
-MINIONS_GH_APP_ID=<Client ID, e.g. Iv23...>      # also accepts numeric App ID
-MINIONS_GH_APP_PRIVATE_KEY=/abs/path/to/app.pem
-MINIONS_GH_APP_INSTALLATION_ID=<numeric>
+MWF_GITHUB_TOKEN=<personal access token or GitHub App installation token>
+MWF_GITHUB_REPO_OWNER=<owner>
+MWF_GITHUB_REPO_NAME=<repo>
+MWF_GITHUB_BASE_BRANCH=main   # optional, defaults to main
 ```
-
-App permissions: Contents R/W, Pull requests R/W, Checks R, Metadata R, Actions R. No webhook needed for the current flow. When the env vars are unset the engine falls back to the host's `gh` CLI auth.
 
 ## Configuration
 
 | Env var | What | Default |
 |---|---|---|
-| `MINIONS_TOKEN` | Bearer for REST + SSE | `changeme` |
-| `MINIONS_HOST` | Bind | `0.0.0.0` |
-| `MINIONS_PORT` | Listen | `8787` |
-| `MINIONS_WORKSPACE` | sqlite + bare clones + worktrees | `./workspace` |
-| `MINIONS_PROVIDER` | `claude-code` or `mock` | `mock` |
-| `MINIONS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` | `info` |
-| `MINIONS_CORS_ORIGINS` | CSV of allowed origins | `http://localhost:5173` |
-| `MINIONS_SERVE_WEB` | `true` to serve `MINIONS_WEB_DIST` from `/` | unset |
-| `MINIONS_WEB_DIST` | Path to built PWA | unset |
-| `MINIONS_VAPID_PUBLIC` / `_PRIVATE` / `_SUBJECT` | web-push (optional) | unset |
-| `MINIONS_GH_APP_ID` / `_PRIVATE_KEY` / `_INSTALLATION_ID` | GitHub App (preferred) | unset |
-| `GITHUB_TOKEN` | PAT fallback when App vars unset | unset |
-| `MINIONS_LOOP_TICK_SEC` | Loop scheduler tick | `5` |
-| `MINIONS_RESOURCE_SAMPLE_SEC` | Resource snapshot interval | `2` |
-| `MINIONS_SSE_PING_SEC` | SSE keepalive | `25` |
-| `MINIONS_LOOP_RESERVED_INTERACTIVE` | Slots reserved for operator-initiated sessions | `4` |
-
-Plus `<workspace>/repos.json` for repo bindings (replaces the old `MINIONS_REPOS` env JSON).
+| `MWF_TOKEN` | Bearer for REST + SSE | required |
+| `MWF_HOST` | Bind address | `0.0.0.0` |
+| `MWF_PORT` | Listen port | `3000` |
+| `MWF_DB_PATH` | SQLite database path | required |
+| `MWF_DATA_DIR` | tmux sessions + log dir | optional |
+| `MWF_WORKSPACE_ROOT` | git worktree root | optional |
+| `MWF_REPO_PATH` | single-repo mode: path to a local repo | optional |
+| `MWF_PROVIDER` | `claude-code` or `codex` | `claude-code` |
+| `MWF_LOG_LEVEL` | `debug` / `info` / `warn` / `error` | `info` |
+| `MWF_PWA_DIR` | Path to built PWA (serves from `/`) | optional |
+| `MWF_VAPID_PUBLIC_KEY` / `MWF_VAPID_PRIVATE_KEY` / `MWF_VAPID_SUBJECT` | web-push (optional) | unset |
+| `MWF_GITHUB_TOKEN` | GitHub PAT or App token | optional |
+| `MWF_GITHUB_REPO_OWNER` / `MWF_GITHUB_REPO_NAME` | Target repo | optional |
+| `MWF_GITHUB_BASE_BRANCH` | Default base branch | `main` |
 
 Live overrides via `PATCH /api/config/runtime` (schema returned by `GET /api/config/runtime`):
 

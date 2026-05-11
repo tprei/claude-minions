@@ -84,7 +84,7 @@ export function AppLayout({ header, sidebar, main, chatSurface, isSessionOpen = 
   const sidebarNode = sidebar({ closeMobile });
   const view = parseUrl().view;
   const chatPrimary =
-    Boolean(chatSurface) && isSessionOpen && view !== "dag" && !(isMobile && view === "new");
+    Boolean(chatSurface) && isSessionOpen && !(isMobile && view === "new");
 
   return (
     <div ref={rootRef} className="h-full flex flex-col bg-bg overflow-hidden">

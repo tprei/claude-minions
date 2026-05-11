@@ -1,74 +1,110 @@
+/**
+ * Migrated from dagStore. The DAG concept has been unified into Workflow.
+ * Tests here verify upsert and remove operations on the workflowStore
+ * since useDagStore is now a re-export alias of useWorkflowStore.
+ */
 import { describe, it, expect, beforeEach } from "vitest";
-import type { DAG, DAGNode, DagNodeCiSummary } from "@minions/shared";
-import { useDagStore } from "../dagStore.js";
+import type { Workflow, TaskNode } from "@minions/engine";
+import { useWorkflowStore } from "../workflowStore.js";
 
 const CONN = "conn-1";
 
-function makeNode(id: string, overrides: Partial<DAGNode> = {}): DAGNode {
+function makeTask(id: string, workflowId: string): TaskNode {
+  const now = "2026-05-01T00:00:00.000Z";
   return {
     id,
+    workflowId,
     title: id,
     prompt: `do ${id}`,
-    status: "pending",
     dependsOn: [],
-    metadata: {},
-    ...overrides,
-  };
-}
-
-function makeDag(id: string, nodes: DAGNode[]): DAG {
-  const now = "2026-04-30T00:00:00.000Z";
-  return {
-    id,
-    title: "t",
-    goal: "g",
-    nodes,
+    executionStatus: "pending",
+    stackStatus: "clean",
+    priority: 0,
+    claims: [],
+    contract: { summary: id, expectedArtifacts: [] },
+    artifacts: [],
+    runs: [],
+    readiness: "unknown",
+    version: 1,
     createdAt: now,
     updatedAt: now,
-    status: "active",
-    metadata: {},
   };
 }
 
-describe("useDagStore.upsertNode", () => {
+function makeWorkflow(id: string, tasks: TaskNode[]): Workflow {
+  const now = "2026-05-01T00:00:00.000Z";
+  const graph: Record<string, TaskNode> = {};
+  for (const t of tasks) graph[t.id] = t;
+  return {
+    id,
+    kind: "single-task",
+    status: "active",
+    graph,
+    operations: {},
+    policy: { maxConcurrent: 3, autoLand: false, autoMergeOnGreen: false },
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+describe("useWorkflowStore.upsert / remove", () => {
   beforeEach(() => {
-    useDagStore.setState({ byConnection: new Map() });
+    useWorkflowStore.setState({ byConnection: new Map() });
   });
 
-  it("patches a node in place when present", () => {
-    const dag = makeDag("dag1", [makeNode("a"), makeNode("b")]);
-    useDagStore.getState().replaceAll(CONN, [dag]);
-
-    const summary: DagNodeCiSummary = {
-      state: "failing",
-      counts: { passed: 0, failed: 1, pending: 0 },
-      checks: [{ name: "test", bucket: "fail" }],
-      prNumber: 7,
-      prUrl: "https://x.test/pull/7",
-      updatedAt: "2026-04-30T01:00:00.000Z",
-    };
-
-    const updated = makeNode("b", { ciSummary: summary });
-    useDagStore.getState().upsertNode(CONN, "dag1", updated);
-
-    const stored = useDagStore.getState().byConnection.get(CONN)?.get("dag1");
-    expect(stored).toBeDefined();
-    expect(stored?.nodes.length).toBe(2);
-    expect(stored?.nodes[0]?.ciSummary ?? null).toBeNull();
-    expect(stored?.nodes[1]?.ciSummary).toEqual(summary);
+  it("upsert adds a workflow", () => {
+    const wf = makeWorkflow("wf1", [makeTask("t1", "wf1")]);
+    useWorkflowStore.getState().upsert(CONN, wf);
+    expect(useWorkflowStore.getState().byConnection.get(CONN)?.get("wf1")).toEqual(wf);
   });
 
-  it("is a no-op when the dag is unknown", () => {
-    useDagStore.getState().upsertNode(CONN, "missing", makeNode("a"));
-    const slice = useDagStore.getState().byConnection.get(CONN);
-    expect(slice?.get("missing")).toBeUndefined();
+  it("remove deletes a workflow", () => {
+    const wf = makeWorkflow("wf1", [makeTask("t1", "wf1")]);
+    useWorkflowStore.getState().upsert(CONN, wf);
+    useWorkflowStore.getState().remove(CONN, "wf1");
+    expect(useWorkflowStore.getState().byConnection.get(CONN)?.get("wf1")).toBeUndefined();
   });
 
-  it("is a no-op when the node id is not in the dag", () => {
-    const dag = makeDag("dag1", [makeNode("a")]);
-    useDagStore.getState().replaceAll(CONN, [dag]);
-    useDagStore.getState().upsertNode(CONN, "dag1", makeNode("z"));
-    const stored = useDagStore.getState().byConnection.get(CONN)?.get("dag1");
-    expect(stored?.nodes.map((n) => n.id)).toEqual(["a"]);
+  it("remove on unknown id is a no-op", () => {
+    const wf = makeWorkflow("wf1", [makeTask("t1", "wf1")]);
+    useWorkflowStore.getState().upsert(CONN, wf);
+    useWorkflowStore.getState().remove(CONN, "missing");
+    expect(useWorkflowStore.getState().byConnection.get(CONN)?.size).toBe(1);
+  });
+
+  it("applyEvent task-transitioned patches a task in place", () => {
+    const task = makeTask("t1", "wf1");
+    const wf = makeWorkflow("wf1", [task]);
+    useWorkflowStore.getState().replaceAll(CONN, [wf]);
+
+    useWorkflowStore.getState().applyEvent(CONN, {
+      cursor: 1,
+      workflowId: "wf1",
+      occurredAt: "2026-05-01T01:00:00.000Z",
+      kind: "task-transitioned",
+      payload: {
+        taskId: "t1",
+        fromExecutionStatus: "pending",
+        toExecutionStatus: "running",
+        fromStackStatus: "clean",
+        toStackStatus: "clean",
+        taskVersion: 2,
+      },
+    });
+
+    const stored = useWorkflowStore.getState().byConnection.get(CONN)?.get("wf1");
+    expect(stored?.graph["t1"]?.executionStatus).toBe("running");
+  });
+
+  it("applyEvent is a no-op when the workflow is unknown", () => {
+    useWorkflowStore.getState().applyEvent(CONN, {
+      cursor: 1,
+      workflowId: "missing",
+      occurredAt: "2026-05-01T01:00:00.000Z",
+      kind: "workflow-status-changed",
+      payload: { fromStatus: "active", toStatus: "completed" },
+    });
+    expect(useWorkflowStore.getState().byConnection.get(CONN)).toBeUndefined();
   });
 });
