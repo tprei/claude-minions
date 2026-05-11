@@ -594,24 +594,43 @@ function TranscriptPanel({
       ) : (
         <Transcript events={events} />
       )}
-      <div className="p-3 space-y-2">
-        <div className="text-xs text-fg-subtle font-medium">Task details</div>
-        <div className="card p-3 text-xs space-y-1">
-          <div className="text-fg-muted font-medium">{task.title}</div>
-          <div className="text-fg-subtle whitespace-pre-wrap break-words">{task.prompt}</div>
-        </div>
-        {task.runs.length > 0 && (
-          <div className="text-xs text-fg-subtle font-medium mt-2">Runs ({task.runs.length})</div>
-        )}
-        {task.runs.map((run, i) => (
-          <div key={i} className="card p-2 text-xs space-y-0.5">
-            <div className="flex justify-between text-fg-subtle">
-              <span className="font-mono">{run.id?.slice(0, 12) ?? `run-${i}`}</span>
-              <span>{run.terminalReason ?? "in progress"}</span>
-            </div>
+      <TaskDetailsCollapsible task={task} />
+    </div>
+  );
+}
+
+function TaskDetailsCollapsible({ task }: { task: TaskNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="p-3 space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1 text-xs text-fg-subtle font-medium hover:text-fg-muted"
+        aria-expanded={open}
+      >
+        <span className="inline-block w-3">{open ? "▾" : "▸"}</span>
+        Task details
+      </button>
+      {open && (
+        <>
+          <div className="card p-3 text-xs space-y-1">
+            <div className="text-fg-muted font-medium">{task.title}</div>
+            <div className="text-fg-subtle whitespace-pre-wrap break-words">{task.prompt}</div>
           </div>
-        ))}
-      </div>
+          {task.runs.length > 0 && (
+            <div className="text-xs text-fg-subtle font-medium mt-2">Runs ({task.runs.length})</div>
+          )}
+          {task.runs.map((run, i) => (
+            <div key={i} className="card p-2 text-xs space-y-0.5">
+              <div className="flex justify-between text-fg-subtle">
+                <span className="font-mono">{run.id?.slice(0, 12) ?? `run-${i}`}</span>
+                <span>{run.terminalReason ?? "in progress"}</span>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
