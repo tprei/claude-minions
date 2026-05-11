@@ -77,6 +77,7 @@ describe("ContinueTaskService", () => {
       prompt: "please continue",
       taskId: "wf-1:task",
       workflowId: "wf-1",
+      workflowKind: "single-task",
     });
 
     const task = result.workflow.graph["wf-1:task"]!;

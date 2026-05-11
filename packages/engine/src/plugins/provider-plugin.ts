@@ -1,4 +1,4 @@
-import type { Artifact } from "../domain/types.js";
+import type { Artifact, WorkflowKind } from "../domain/types.js";
 
 export interface ProviderCapabilities {
   resume: boolean;
@@ -14,6 +14,7 @@ export interface ProviderPrepareSpec {
   workflowId: string;
   prompt: string;
   dependencyArtifacts: Artifact[];
+  workflowKind?: WorkflowKind;
 }
 
 export interface ProviderResumeSpec {
@@ -21,6 +22,7 @@ export interface ProviderResumeSpec {
   workflowId: string;
   sessionRef: string;
   prompt: string;
+  workflowKind?: WorkflowKind;
 }
 
 export interface ProviderInvocation {

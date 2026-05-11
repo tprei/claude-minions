@@ -83,7 +83,7 @@ export class RetryTaskService {
 
     try {
       const provider = providerFactory();
-      const invocation = await provider.prepare({ taskId, workflowId, prompt, dependencyArtifacts: depArtifacts });
+      const invocation = await provider.prepare({ taskId, workflowId, prompt, dependencyArtifacts: depArtifacts, workflowKind: workflow.kind });
       const startSpec: { taskId: string; workflowId: string; command: string[]; env?: Record<string, string>; workspacePath?: string } = {
         taskId,
         workflowId,

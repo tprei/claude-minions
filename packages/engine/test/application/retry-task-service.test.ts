@@ -80,6 +80,7 @@ describe("RetryTaskService", () => {
       workflowId: "wf-1",
       prompt: "start fresh",
       dependencyArtifacts: [],
+      workflowKind: "single-task",
     });
     expect(resumeSpy).not.toHaveBeenCalled();
 

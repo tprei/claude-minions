@@ -36,8 +36,35 @@ If your task is purely investigatory — analysis, audit, design, planning, rese
 USER TASK:
 `;
 
+  static readonly THINK_PREAMBLE = `You are operating in THINK mode — a strictly read-only research session. Your job is to think deeply and research the codebase and any relevant external sources as much as needed before answering the user's question. You are not making changes.
+
+Rules:
+- DO read files, grep, glob, and search the web — gather as much context as you need.
+- DO reason carefully, weigh trade-offs, and produce a thorough, well-supported answer.
+- You MAY dispatch read-only sub-agents (the Agent/Task tool) for parallel research.
+- DO NOT edit, write, or create files. DO NOT run shell commands. DO NOT modify the repository or any system state.
+- There is no commit step. Your final assistant message IS the deliverable.
+
+USER QUESTION:
+`;
+
+  static readonly THINK_ALLOWED_TOOLS = "Read,Grep,Glob,WebSearch,WebFetch,NotebookRead,TodoWrite,Task";
+  static readonly THINK_DISALLOWED_TOOLS = "Edit,Write,NotebookEdit,Bash";
+
   async prepare(spec: ProviderPrepareSpec): Promise<ProviderInvocation> {
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
+    if (spec.workflowKind === "think-thread") {
+      const wrapped = `${ClaudeCodeProvider.THINK_PREAMBLE}${spec.prompt}`;
+      return {
+        command: [
+          "claude", "-p", wrapped,
+          "--output-format", "stream-json", "--verbose",
+          "--allowedTools", ClaudeCodeProvider.THINK_ALLOWED_TOOLS,
+          "--disallowedTools", ClaudeCodeProvider.THINK_DISALLOWED_TOOLS,
+        ],
+        providerType: "claude-code",
+      };
+    }
     const wrapped = `${ClaudeCodeProvider.COMMIT_PREAMBLE}${spec.prompt}`;
     return {
       command: ["claude", "-p", wrapped, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
@@ -47,6 +74,18 @@ USER TASK:
 
   async resume(spec: ProviderResumeSpec): Promise<ProviderInvocation> {
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
+    if (spec.workflowKind === "think-thread") {
+      return {
+        command: [
+          "claude", "-p", spec.prompt,
+          "--resume", spec.sessionRef,
+          "--output-format", "stream-json", "--verbose",
+          "--allowedTools", ClaudeCodeProvider.THINK_ALLOWED_TOOLS,
+          "--disallowedTools", ClaudeCodeProvider.THINK_DISALLOWED_TOOLS,
+        ],
+        providerType: "claude-code",
+      };
+    }
     return {
       command: ["claude", "-p", spec.prompt, "--resume", spec.sessionRef, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
       providerType: "claude-code",

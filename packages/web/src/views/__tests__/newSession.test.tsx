@@ -175,12 +175,11 @@ describe("NewSessionView", () => {
       setReactValue(textarea, "do something useful here");
     });
 
-    // Planner is opt-in via checkbox (default off). Check it so planWorkflow runs.
-    const plannerCheckbox = Array.from(container.querySelectorAll("input[type='checkbox']"))
-      .find((c) => c.parentElement?.textContent?.includes("Plan with agent")) as HTMLInputElement | undefined;
-    if (plannerCheckbox && !plannerCheckbox.checked) {
-      act(() => { plannerCheckbox.click(); });
-    }
+    const planRadio = container.querySelector("input[type='radio'][value='plan']") as HTMLInputElement;
+    expect(planRadio).not.toBeNull();
+    await act(async () => {
+      planRadio.click();
+    });
 
     const form = container.querySelector("form") as HTMLFormElement;
     await act(async () => {
@@ -213,12 +212,11 @@ describe("NewSessionView", () => {
       setReactValue(textarea, "do something useful here");
     });
 
-    // Planner is opt-in via checkbox (default off). Check it so planWorkflow runs.
-    const plannerCheckbox = Array.from(container.querySelectorAll("input[type='checkbox']"))
-      .find((c) => c.parentElement?.textContent?.includes("Plan with agent")) as HTMLInputElement | undefined;
-    if (plannerCheckbox && !plannerCheckbox.checked) {
-      act(() => { plannerCheckbox.click(); });
-    }
+    const planRadio = container.querySelector("input[type='radio'][value='plan']") as HTMLInputElement;
+    expect(planRadio).not.toBeNull();
+    await act(async () => {
+      planRadio.click();
+    });
 
     const form = container.querySelector("form") as HTMLFormElement;
     await act(async () => {
@@ -243,6 +241,41 @@ describe("NewSessionView", () => {
     expect(createWorkflowMock).toHaveBeenCalledTimes(1);
     const [, spec] = createWorkflowMock.mock.calls[0]! as [unknown, { tasks: { prompt: string }[] }];
     expect(spec.tasks[0]?.prompt).toBe("do something useful here");
+  });
+
+  it("submitting in think mode creates a think-thread workflow with no mergeTarget", async () => {
+    act(() => {
+      root.render(createElement(NewSessionView, { api: makeApi() }));
+    });
+    await flush();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    act(() => {
+      setReactValue(textarea, "what does the planner do exactly");
+    });
+
+    const thinkRadio = container.querySelector("input[type='radio'][value='think']") as HTMLInputElement;
+    expect(thinkRadio).not.toBeNull();
+    await act(async () => {
+      thinkRadio.click();
+    });
+
+    const form = container.querySelector("form") as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    });
+    await flush();
+
+    expect(planWorkflowMock).not.toHaveBeenCalled();
+    expect(createWorkflowMock).toHaveBeenCalledTimes(1);
+    const [, spec] = createWorkflowMock.mock.calls[0]! as [unknown, {
+      kind: string;
+      tasks: { prompt: string; mergeTarget?: string }[];
+    }];
+    expect(spec.kind).toBe("think-thread");
+    expect(spec.tasks[0]?.prompt).toBe("what does the planner do exactly");
+    expect(spec.tasks[0]?.mergeTarget).toBeUndefined();
   });
 
   it("disables submit when prompt is too short", async () => {

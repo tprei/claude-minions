@@ -281,6 +281,49 @@ describe("ClaudeCodeProvider", () => {
         provider.prepare({ taskId: "t1", workflowId: "wf1", prompt: "   ", dependencyArtifacts: [] }),
       ).rejects.toThrow("prompt must be non-empty");
     });
+
+    it("think-thread: wraps prompt with read-only research preamble, drops commit preamble, restricts tools", async () => {
+      const inv = await provider.prepare({
+        taskId: "t1",
+        workflowId: "wf1",
+        prompt: "why does feature X exist",
+        dependencyArtifacts: [],
+        workflowKind: "think-thread",
+      });
+      expect(inv.command[0]).toBe("claude");
+      expect(inv.command[1]).toBe("-p");
+      const passedPrompt = inv.command[2]!;
+      expect(passedPrompt).toContain("THINK mode");
+      expect(passedPrompt).toContain("read-only");
+      expect(passedPrompt).toContain("DO NOT");
+      expect(passedPrompt).toContain("USER QUESTION:");
+      expect(passedPrompt).toContain("why does feature X exist");
+      expect(passedPrompt).not.toContain("git add -A");
+      expect(passedPrompt).not.toContain("git commit");
+      expect(inv.command).not.toContain("--dangerously-skip-permissions");
+      const allowedIdx = inv.command.indexOf("--allowedTools");
+      expect(allowedIdx).toBeGreaterThan(-1);
+      const allowedList = inv.command[allowedIdx + 1]!;
+      const allowed = new Set(allowedList.split(","));
+      expect(allowed.has("Read")).toBe(true);
+      expect(allowed.has("Grep")).toBe(true);
+      expect(allowed.has("Glob")).toBe(true);
+      expect(allowed.has("WebSearch")).toBe(true);
+      expect(allowed.has("WebFetch")).toBe(true);
+      expect(allowed.has("Task")).toBe(true);
+      expect(allowed.has("Edit")).toBe(false);
+      expect(allowed.has("Write")).toBe(false);
+      expect(allowed.has("Bash")).toBe(false);
+      expect(allowed.has("NotebookEdit")).toBe(false);
+      const disallowedIdx = inv.command.indexOf("--disallowedTools");
+      expect(disallowedIdx).toBeGreaterThan(-1);
+      const disallowedList = inv.command[disallowedIdx + 1]!;
+      const disallowed = new Set(disallowedList.split(","));
+      expect(disallowed.has("Edit")).toBe(true);
+      expect(disallowed.has("Write")).toBe(true);
+      expect(disallowed.has("NotebookEdit")).toBe(true);
+      expect(disallowed.has("Bash")).toBe(true);
+    });
   });
 
   describe("resume", () => {
@@ -307,6 +350,21 @@ describe("ClaudeCodeProvider", () => {
       await expect(
         provider.resume({ taskId: "t1", workflowId: "wf1", sessionRef: "abc-uuid", prompt: "  " }),
       ).rejects.toThrow("prompt must be non-empty");
+    });
+
+    it("think-thread: drops --dangerously-skip-permissions and adds tool allow/disallow lists", async () => {
+      const inv = await provider.resume({
+        taskId: "t1",
+        workflowId: "wf1",
+        sessionRef: "abc-uuid",
+        prompt: "follow up question",
+        workflowKind: "think-thread",
+      });
+      expect(inv.command).not.toContain("--dangerously-skip-permissions");
+      expect(inv.command).toContain("--allowedTools");
+      expect(inv.command).toContain("--disallowedTools");
+      expect(inv.command).toContain("--resume");
+      expect(inv.command).toContain("abc-uuid");
     });
   });
 
