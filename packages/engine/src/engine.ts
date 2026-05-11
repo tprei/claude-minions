@@ -31,6 +31,7 @@ import { TokenBucket } from "./plugins/github/rate-limiter.js";
 import { GitHubClient } from "./plugins/github/github-client.js";
 import { GitHubScmPlugin } from "./plugins/github/github-scm-plugin.js";
 import { MergeService } from "./application/merge-service.js";
+import { LandWorkflowService } from "./application/land-workflow-service.js";
 import { LocalFinalizeService } from "./application/local-finalize-service.js";
 import { CIBabysitterService } from "./application/ci-babysitter-service.js";
 import { QualityGateService } from "./application/quality-gate-service.js";
@@ -348,6 +349,12 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       baseBranch: config.githubBaseBranch ?? "main",
       now,
       log: log.child({ component: "merge" }),
+    });
+
+    serverDeps.landWorkflowService = new LandWorkflowService({
+      repo,
+      mergeService: serverDeps.mergeService,
+      log: log.child({ component: "land-workflow" }),
     });
 
     if (config.providerFactory && serverDeps.continueTaskService && ghClient) {
