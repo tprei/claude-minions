@@ -73,10 +73,13 @@ async function main(): Promise<void> {
     config.runtime = new TmuxRuntimeBackend(tmuxConfig);
   }
 
+  // baseBranch is used by LocalFinalizeService whether or not GitHub is configured,
+  // so it must live outside the github-credentials gate.
+  if (githubBaseBranch !== undefined) config.githubBaseBranch = githubBaseBranch;
+
   if (githubToken !== undefined && githubOwner !== undefined && githubRepoName !== undefined) {
     config.githubToken = githubToken;
     config.githubRepo = { owner: githubOwner, repo: githubRepoName };
-    if (githubBaseBranch !== undefined) config.githubBaseBranch = githubBaseBranch;
   }
 
   if (vapidPublic !== undefined && vapidPrivate !== undefined && vapidSubject !== undefined) {
