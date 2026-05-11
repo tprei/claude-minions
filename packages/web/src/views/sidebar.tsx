@@ -1,8 +1,10 @@
-import { type ReactElement } from "react";
+import { useMemo, type ReactElement } from "react";
 import { useConnectionStore } from "../connections/store.js";
+import { useWorkflowStore, EMPTY_WORKFLOWS } from "../store/workflowStore.js";
 import { setUrlState } from "../routing/urlState.js";
 import { parseUrl, type ViewKind } from "../routing/parseUrl.js";
 import { cx } from "../util/classnames.js";
+import { isRunning, isWaiting, isCompleted, isFailed } from "./statusToVisual.js";
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed";
 type FilterMode = "all" | "task" | "dag-task";
@@ -50,6 +52,29 @@ export function Sidebar({
   onNavigate,
 }: SidebarProps): ReactElement {
   const activeId = useConnectionStore(s => s.activeId);
+  const workflowsMap = useWorkflowStore(s =>
+    activeId ? s.byConnection.get(activeId) ?? EMPTY_WORKFLOWS : EMPTY_WORKFLOWS,
+  );
+
+  const statusCounts = useMemo<Record<FilterStatus, number>>(() => {
+    const counts: Record<FilterStatus, number> = {
+      all: 0,
+      running: 0,
+      waiting_input: 0,
+      completed: 0,
+      failed: 0,
+    };
+    for (const workflow of workflowsMap.values()) {
+      for (const task of Object.values(workflow.graph)) {
+        counts.all++;
+        if (isRunning(task.executionStatus)) counts.running++;
+        else if (isWaiting(task.executionStatus)) counts.waiting_input++;
+        else if (isCompleted(task.executionStatus)) counts.completed++;
+        else if (isFailed(task.executionStatus)) counts.failed++;
+      }
+    }
+    return counts;
+  }, [workflowsMap]);
 
   function navigate(view: ViewKind): void {
     if (!activeId) return;
@@ -98,20 +123,40 @@ export function Sidebar({
 
       <div className="px-2">
         <p className="text-xs text-fg-subtle uppercase tracking-wider px-2 py-1">Status</p>
-        {STATUS_FILTERS.map(f => (
-          <button
-            key={f.value}
-            onClick={() => onFilterStatus(f.value)}
-            className={cx(
-              "w-full flex items-center justify-between gap-2 text-left px-2 py-2 md:py-1 min-h-10 md:min-h-0 rounded text-xs transition-colors",
-              filterStatus === f.value
-                ? "text-fg bg-bg-elev"
-                : "text-fg-subtle hover:text-fg-muted",
-            )}
-          >
-            <span>{f.label}</span>
-          </button>
-        ))}
+        {STATUS_FILTERS.map(f => {
+          const count = statusCounts[f.value];
+          const isActive = filterStatus === f.value;
+          const emphasize =
+            !isActive && count > 0 && (f.value === "waiting_input" || f.value === "failed");
+          return (
+            <button
+              key={f.value}
+              onClick={() => onFilterStatus(f.value)}
+              className={cx(
+                "w-full flex items-center justify-between gap-2 text-left px-2 py-2 md:py-1 min-h-10 md:min-h-0 rounded text-xs transition-colors",
+                isActive ? "text-fg bg-bg-elev" : "text-fg-subtle hover:text-fg-muted",
+              )}
+            >
+              <span>{f.label}</span>
+              <span
+                className={cx(
+                  "tabular-nums text-[10px] px-1.5 py-0.5 rounded",
+                  count === 0
+                    ? "text-fg-subtle/60"
+                    : emphasize
+                      ? f.value === "failed"
+                        ? "text-red-300 bg-red-900/40"
+                        : "text-amber-300 bg-amber-900/30"
+                      : isActive
+                        ? "text-fg bg-bg"
+                        : "text-fg-muted bg-bg-elev/60",
+                )}
+              >
+                {count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="px-2">
