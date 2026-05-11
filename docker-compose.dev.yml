@@ -40,6 +40,10 @@ services:
       MWF_LOG_LEVEL: info
       MWF_QUALITY_DISABLED: "1"
       MWF_GITHUB_BASE_BRANCH: engine-port
+      # Alias for `gh` CLI inside agent sessions; reads the same token as the
+      # engine. Without this, the first `gh` call in an agent's session fails
+      # with "Please run gh auth login" until the agent reimports the env var.
+      GH_TOKEN: ${MWF_GITHUB_TOKEN}
     ports:
       - "3949:8787"
     volumes:

@@ -423,15 +423,23 @@ function SurfacePanel({
   const isActive = task.executionStatus === "running" || task.executionStatus === "ready";
   const isTerminal = ["completed", "pr-open", "merged", "failed", "cancelled"].includes(task.executionStatus);
 
+  const [replyError, setReplyError] = useState<string | null>(null);
   const handleSubmit = useCallback(
     async (text: string) => {
       if (!conn) return;
-      await dispatchCommand(conn, {
-        kind: "continue-task",
-        workflowId: workflow.id,
-        taskId: task.id,
-        prompt: text,
-      });
+      setReplyError(null);
+      try {
+        await dispatchCommand(conn, {
+          kind: "continue-task",
+          workflowId: workflow.id,
+          taskId: task.id,
+          prompt: text,
+        });
+      } catch (err) {
+        // Engine rejects continue-task in non-resumable states (e.g. finalizing,
+        // merged). Surface the rejection to the user instead of silently dropping.
+        setReplyError(err instanceof Error ? err.message : "Reply failed.");
+      }
     },
     [task.id, workflow.id, conn],
   );
@@ -470,6 +478,11 @@ function SurfacePanel({
           <TranscriptPanel task={task} workflowId={workflow.id} conn={conn} />
         )}
       </div>
+      {replyError && (
+        <div className="px-3 py-1.5 text-xs bg-red-900/40 text-red-300 border-t border-red-900/60">
+          {replyError}
+        </div>
+      )}
       <ChatInput
         onSubmit={handleSubmit}
         onSlashCommand={handleSlashCommand}
