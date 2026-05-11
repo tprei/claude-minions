@@ -175,6 +175,13 @@ describe("NewSessionView", () => {
       setReactValue(textarea, "do something useful here");
     });
 
+    // Planner is opt-in via checkbox (default off). Check it so planWorkflow runs.
+    const plannerCheckbox = Array.from(container.querySelectorAll("input[type='checkbox']"))
+      .find((c) => c.parentElement?.textContent?.includes("Plan with agent")) as HTMLInputElement | undefined;
+    if (plannerCheckbox && !plannerCheckbox.checked) {
+      act(() => { plannerCheckbox.click(); });
+    }
+
     const form = container.querySelector("form") as HTMLFormElement;
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -205,6 +212,13 @@ describe("NewSessionView", () => {
     act(() => {
       setReactValue(textarea, "do something useful here");
     });
+
+    // Planner is opt-in via checkbox (default off). Check it so planWorkflow runs.
+    const plannerCheckbox = Array.from(container.querySelectorAll("input[type='checkbox']"))
+      .find((c) => c.parentElement?.textContent?.includes("Plan with agent")) as HTMLInputElement | undefined;
+    if (plannerCheckbox && !plannerCheckbox.checked) {
+      act(() => { plannerCheckbox.click(); });
+    }
 
     const form = container.querySelector("form") as HTMLFormElement;
     await act(async () => {

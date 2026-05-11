@@ -138,7 +138,7 @@ describe("DagNodeComponent session link", () => {
     });
   });
 
-  it("does not render the session link when sessionId is absent", async () => {
+  it("renders the session link even when sessionId is absent (always-on view button)", async () => {
     const task = makeTask({ sessionId: undefined });
 
     await act(async () => {
@@ -157,8 +157,9 @@ describe("DagNodeComponent session link", () => {
       );
     });
 
+    // Now always rendered so completed/merged tasks can still be opened.
     expect(
       container.querySelector('[data-testid="dag-node-session-link"]'),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 });

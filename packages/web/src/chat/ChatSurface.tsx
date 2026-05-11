@@ -496,6 +496,35 @@ function SurfacePanel({
   );
 }
 
+function transcriptEventFingerprint(e: TranscriptEvent): string {
+  // Fingerprint built from properties common across all TranscriptEvent kinds.
+  // Two events at the same timestamp + same kind + same first 200 chars of
+  // any text field are treated as duplicates (seed-overlap with SSE).
+  const anyEvent = e as unknown as Record<string, unknown>;
+  const text =
+    typeof anyEvent["text"] === "string"
+      ? (anyEvent["text"] as string).slice(0, 200)
+      : typeof anyEvent["summary"] === "string"
+        ? (anyEvent["summary"] as string).slice(0, 200)
+        : typeof anyEvent["name"] === "string"
+          ? (anyEvent["name"] as string)
+          : "";
+  return `${e.timestamp}|${e.kind}|${text}`;
+}
+
+function mergeSeededWithLive(
+  seeded: TranscriptEvent[],
+  prev: TranscriptEvent[],
+): TranscriptEvent[] {
+  if (prev.length === 0) return seeded;
+  const seen = new Set(seeded.map(transcriptEventFingerprint));
+  const liveOnly = prev.filter((e) => !seen.has(transcriptEventFingerprint(e)));
+  if (liveOnly.length === 0) return seeded;
+  // Concatenate; the persisted store is a strict prefix of SSE in the engine,
+  // so live-only entries are by construction newer.
+  return [...seeded, ...liveOnly];
+}
+
 function TranscriptPanel({
   task,
   workflowId,
@@ -533,10 +562,17 @@ function TranscriptPanel({
           const te = providerEventToTranscript(entry.providerEvent, task.id, runsCount, entry.occurredAt);
           return te !== null ? [te] : [];
         });
-        setEvents(seeded);
+        // Merge instead of replace: persisted store is authoritative for events
+        // it knows about, SSE-appended events (newer than the latest seeded one
+        // OR not represented in seeded) are preserved. Without this, an effect
+        // re-fire — triggered by snapshot refetch → workflow re-reference →
+        // runsCount churn — wipes any SSE event delivered in the meantime,
+        // forcing the user to refresh to see live progress.
+        setEvents((prev) => mergeSeededWithLive(seeded, prev));
       })
       .catch(() => {
-        if (!cancelled) setEvents([]);
+        // Don't blow away any SSE-appended events on fetch failure.
+        if (!cancelled) setEvents((prev) => prev);
       });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
