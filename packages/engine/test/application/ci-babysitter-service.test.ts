@@ -558,6 +558,107 @@ describe("CIBabysitterService", () => {
     expect(listCheckRuns).toHaveBeenCalled();
   });
 
+  it("publishes ci-poll-result transient event after each successful poll", async () => {
+    const repo = makeRepo();
+    await makeTaskUpToFinalizing(repo);
+
+    const ctrl = new AbortController();
+    const listCheckRuns = vi.fn().mockResolvedValue([
+      { name: "ci/test", status: "completed", conclusion: "success", htmlUrl: "https://ci/1" } satisfies GhCheckRun,
+      { name: "ci/lint", status: "completed", conclusion: "success" } satisfies GhCheckRun,
+    ]);
+    const github = makeGithub({ listCheckRuns });
+    const continueTaskService = makeContinueTaskService();
+    const publishSpy = vi.spyOn(repo, "publishTransient");
+
+    const service = new CIBabysitterService({
+      workflowRepo: repo,
+      github,
+      repoCoords: { owner: OWNER, repo: REPO },
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      continueTaskService,
+      signal: ctrl.signal,
+      now,
+      sleep: immediateSleep,
+      cadence: FAST_CADENCE,
+      log: silentLogger(),
+    });
+
+    service.attach(WORKFLOW_ID);
+    await new Promise((r) => setImmediate(r));
+
+    await openPR(repo);
+    await new Promise((r) => setTimeout(r, 100));
+    ctrl.abort();
+
+    const ciPollCalls = publishSpy.mock.calls.filter(
+      (c) => (c[1] as { kind: string }).kind === "ci-poll-result",
+    );
+    expect(ciPollCalls.length).toBeGreaterThanOrEqual(1);
+    const [wfArg, evt] = ciPollCalls[0]!;
+    expect(wfArg).toBe(WORKFLOW_ID);
+    expect(evt.kind).toBe("ci-poll-result");
+    if (evt.kind !== "ci-poll-result") throw new Error("expected ci-poll-result");
+    expect(evt.cursor).toBe(0);
+    expect(evt.workflowId).toBe(WORKFLOW_ID);
+    expect(evt.payload.taskId).toBe(TASK_ID);
+    expect(evt.payload.prNumber).toBe(PR_NUMBER);
+    expect(evt.payload.headSha).toBe(HEAD_SHA);
+    expect(evt.payload.overallStatus).toBe("success");
+    expect(evt.payload.checks).toEqual([
+      { name: "ci/test", status: "completed", conclusion: "success", url: "https://ci/1" },
+      { name: "ci/lint", status: "completed", conclusion: "success" },
+    ]);
+  });
+
+  it("ci-poll-result reports overallStatus=pending while a check is in_progress", async () => {
+    const repo = makeRepo();
+    await makeTaskUpToFinalizing(repo);
+
+    const ctrl = new AbortController();
+    let abortAfterFirst = false;
+    const sleepFn = vi.fn().mockImplementation((_ms: number, signal: AbortSignal) => {
+      if (abortAfterFirst) return abortingSleep(999_999, signal);
+      abortAfterFirst = true;
+      return Promise.resolve();
+    });
+    const listCheckRuns = vi.fn().mockResolvedValue([
+      { name: "ci/test", status: "in_progress" } satisfies GhCheckRun,
+    ]);
+    const github = makeGithub({ listCheckRuns });
+    const continueTaskService = makeContinueTaskService();
+    const publishSpy = vi.spyOn(repo, "publishTransient");
+
+    const service = new CIBabysitterService({
+      workflowRepo: repo,
+      github,
+      repoCoords: { owner: OWNER, repo: REPO },
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      continueTaskService,
+      signal: ctrl.signal,
+      now,
+      sleep: sleepFn,
+      cadence: FAST_CADENCE,
+      log: silentLogger(),
+    });
+
+    service.attach(WORKFLOW_ID);
+    await new Promise((r) => setImmediate(r));
+
+    await openPR(repo);
+    await new Promise((r) => setTimeout(r, 100));
+    ctrl.abort();
+
+    const ciPollCalls = publishSpy.mock.calls.filter(
+      (c) => (c[1] as { kind: string }).kind === "ci-poll-result",
+    );
+    expect(ciPollCalls.length).toBeGreaterThanOrEqual(1);
+    const evt = ciPollCalls[0]![1];
+    if (evt.kind !== "ci-poll-result") throw new Error("expected ci-poll-result");
+    expect(evt.payload.overallStatus).toBe("pending");
+    expect(evt.payload.checks[0]?.status).toBe("in_progress");
+  });
+
   it("pollPR bails on 404 from listCheckRuns", async () => {
     const repo = makeRepo();
     await makeTaskUpToFinalizing(repo);

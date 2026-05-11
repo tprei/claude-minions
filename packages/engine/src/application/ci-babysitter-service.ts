@@ -1,7 +1,12 @@
-import type { WorkflowEvent } from "../domain/events.js";
+import type {
+  CIPollCheck,
+  CIPollOverallStatus,
+  CIPollResultPayload,
+  WorkflowEvent,
+} from "../domain/events.js";
 import type { Artifact } from "../domain/types.js";
 import { GitHubApiError } from "../plugins/github/github-client.js";
-import type { GitHubClient } from "../plugins/github/github-client.js";
+import type { GhCheckRun, GitHubClient } from "../plugins/github/github-client.js";
 import type { Command, CommandResult } from "./commands.js";
 import type { WorkflowRepository } from "./repository.js";
 import type { ContinueTaskService } from "./continue-task-service.js";
@@ -32,6 +37,46 @@ const DEFAULT_CADENCE: PollCadence = {
 };
 
 const FAILED_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out", "action_required", "stale"]);
+const PASSING_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
+const OVERALL_FAILURE_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out", "action_required"]);
+
+function deriveOverallStatus(runs: GhCheckRun[]): CIPollOverallStatus {
+  if (runs.length === 0) return "pending";
+  const conclusions = runs.map((r) => r.conclusion);
+  if (conclusions.some((c) => c !== undefined && OVERALL_FAILURE_CONCLUSIONS.has(c))) {
+    return "failure";
+  }
+  const allComplete = runs.every((r) => r.status === "completed");
+  if (!allComplete) return "pending";
+  if (conclusions.every((c) => c !== undefined && PASSING_CONCLUSIONS.has(c))) {
+    return "success";
+  }
+  return "pending";
+}
+
+function buildCIPollPayload(
+  taskId: string,
+  prNumber: number,
+  headSha: string,
+  runs: GhCheckRun[],
+  runId: string | undefined,
+): CIPollResultPayload {
+  const checks: CIPollCheck[] = runs.map((r) => {
+    const check: CIPollCheck = { name: r.name, status: r.status };
+    check.conclusion = r.conclusion ?? null;
+    if (r.htmlUrl !== undefined) check.url = r.htmlUrl;
+    return check;
+  });
+  const payload: CIPollResultPayload = {
+    taskId,
+    prNumber,
+    headSha,
+    overallStatus: deriveOverallStatus(runs),
+    checks,
+  };
+  if (runId !== undefined) payload.runId = runId;
+  return payload;
+}
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -254,6 +299,8 @@ export class CIBabysitterService {
 
       if (signal.aborted) return;
 
+      this.publishPollResult(workflowId, taskId, prNumber, headSha, runs, taskCurrent.runs[taskCurrent.runs.length - 1]?.id);
+
       const elapsedAfterSleep = Date.now() - startMs;
 
       if (runs.length === 0) {
@@ -291,6 +338,8 @@ export class CIBabysitterService {
           this.deps.log.error(`ci-babysitter: listCheckRuns confirmation error for task ${taskId}`, { taskId, workflowId, headSha, error: (err as Error).message });
           continue;
         }
+
+        this.publishPollResult(workflowId, taskId, prNumber, headSha, confirmedRuns, taskCurrent.runs[taskCurrent.runs.length - 1]?.id);
 
         if (confirmedRuns.length === 0 || !confirmedRuns.every((r) => r.status === "completed")) {
           lastSeenAllComplete = false;
@@ -366,6 +415,24 @@ export class CIBabysitterService {
 
       return;
     }
+  }
+
+  private publishPollResult(
+    workflowId: string,
+    taskId: string,
+    prNumber: number,
+    headSha: string,
+    runs: GhCheckRun[],
+    runId: string | undefined,
+  ): void {
+    const event: WorkflowEvent = {
+      kind: "ci-poll-result",
+      cursor: 0,
+      workflowId,
+      occurredAt: this.deps.now(),
+      payload: buildCIPollPayload(taskId, prNumber, headSha, runs, runId),
+    };
+    this.deps.workflowRepo.publishTransient(workflowId, event);
   }
 }
 

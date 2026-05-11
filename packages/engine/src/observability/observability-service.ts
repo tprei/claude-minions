@@ -56,7 +56,7 @@ export class ObservabilityService {
         if (this.deps.signal.aborted) break;
         const event = result.value;
         if (
-          (event.kind === "provider-event" || event.kind === "merge-phase") &&
+          (event.kind === "provider-event" || event.kind === "merge-phase" || event.kind === "ci-poll-result") &&
           this.deps.log.level !== "debug"
         ) continue;
         wfLog.info("workflow event", {

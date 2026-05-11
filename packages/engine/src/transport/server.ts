@@ -370,7 +370,7 @@ export function createServer(deps: ServerDeps): Hono {
           const result = await iterator.next();
           if (result.done) break;
           const event = result.value;
-          if (event.kind === "provider-event" || event.kind === "merge-phase") {
+          if (event.kind === "provider-event" || event.kind === "merge-phase" || event.kind === "ci-poll-result") {
             // omit id: so browser EventSource doesn't advance Last-Event-ID past the durable cursor
             await stream.writeSSE({ event: event.kind, data: JSON.stringify(event) });
           } else {
