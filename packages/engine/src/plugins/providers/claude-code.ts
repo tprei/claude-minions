@@ -20,11 +20,18 @@ export class ClaudeCodeProvider implements ProviderPlugin {
     sessionRefFormat: "uuid",
   };
 
-  static readonly COMMIT_PREAMBLE = `You are running inside a git worktree. After completing the work, you MUST:
+  static readonly COMMIT_PREAMBLE = `You are running inside a git worktree.
+
+If your task modifies files (code change, doc update, refactor, etc.):
   1. Run \`git add -A\` to stage every change you made.
-  2. Run \`git -c user.email=minions@local -c user.name=minions commit -m "<short summary>"\` to commit.
+  2. Commit: \`git -c user.email=minions@local -c user.name=minions commit -m "<short summary>"\`
   3. Verify with \`git log --oneline -3\`.
-Do not exit before committing. If there is nothing to commit, that is a failure — investigate why and produce a real change.
+  Do not exit before committing the changes.
+
+If your task is purely investigatory — analysis, audit, design, planning, research, code-reading — and produces no file changes:
+  - Do NOT invent throwaway files just to have something to commit. That pollutes the repo.
+  - Your findings ARE the deliverable. Present them in your final assistant message.
+  - Skip git add / git commit. Exit cleanly.
 
 USER TASK:
 `;

@@ -63,9 +63,13 @@ export class ContinueTaskService {
       throw new DomainError("invalid_transition", "no resumable session on prior run", { taskId });
     }
 
-    if (task.executionStatus !== "needs-review") {
+    // Allow continuing from any state where the agent has finished and there's
+    // still meaningful work the user can ask for: needs-review (manual review
+    // pending) and pr-open (PR exists, push more commits to update it).
+    const RESUMABLE_STATES = new Set(["needs-review", "pr-open"]);
+    if (!RESUMABLE_STATES.has(task.executionStatus)) {
       throw new DomainError("invalid_transition",
-        `continue-task requires task in needs-review, got ${task.executionStatus}`,
+        `continue-task requires task in needs-review or pr-open, got ${task.executionStatus}`,
         { taskId, currentStatus: task.executionStatus });
     }
 

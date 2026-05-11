@@ -65,7 +65,7 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
     apply: () => ({ patch: { executionStatus: "ready" } }),
   },
   "mark-running": {
-    from: ["ready", "needs-review"],
+    from: ["ready", "needs-review", "pr-open"],
     apply: (task, command) => {
       if (!command.sessionId) {
         throw new DomainError("invalid_transition", "running task requires session id", {

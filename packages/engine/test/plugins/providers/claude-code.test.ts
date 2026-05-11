@@ -249,7 +249,9 @@ describe("ClaudeCodeProvider", () => {
       expect(passedPrompt).toContain("git -c user.email=minions@local -c user.name=minions commit");
       expect(passedPrompt).toContain("git log --oneline -3");
       expect(passedPrompt).toContain("USER TASK:");
-      expect(passedPrompt).toContain("Do not exit before committing");
+      expect(passedPrompt).toContain("Do not exit before committing the changes");
+      expect(passedPrompt).toContain("purely investigatory");
+      expect(passedPrompt).toContain("Do NOT invent throwaway files");
       expect(inv.command.slice(3)).toEqual(["--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]);
       expect(inv.providerType).toBe("claude-code");
     });
