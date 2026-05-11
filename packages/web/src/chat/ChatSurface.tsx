@@ -136,6 +136,61 @@ function SurfaceTablist({ tabs, active, onChange }: SurfaceTablistProps) {
   );
 }
 
+function ArtifactPill({ artifact }: { artifact: TaskNode["artifacts"][number] }) {
+  const ref = artifact.ref;
+  if (artifact.kind === "pr" && /^https?:\/\//.test(ref)) {
+    const match = ref.match(/\/pull\/(\d+)/);
+    const label = match ? `PR #${match[1]}` : "PR";
+    return (
+      <a
+        href={ref}
+        target="_blank"
+        rel="noreferrer"
+        className="pill bg-indigo-900/40 text-indigo-300 hover:underline font-mono"
+        title={ref}
+      >
+        {label} ↗
+      </a>
+    );
+  }
+  if (artifact.kind === "quality-report") {
+    let summary = "QG ?";
+    try {
+      const parsed = JSON.parse(ref) as { overallStatus?: string; checks?: unknown[] };
+      const status = parsed.overallStatus ?? "?";
+      const count = parsed.checks?.length ?? 0;
+      summary = status === "passed"
+        ? `QG ✓ ${count}`
+        : status === "failed"
+        ? `QG ✗ ${count}`
+        : `QG ${status}`;
+    } catch { /* fall back to default */ }
+    return (
+      <span
+        className="pill bg-bg-elev text-fg-subtle font-mono"
+        title={ref}
+      >
+        {summary}
+      </span>
+    );
+  }
+  if (artifact.kind === "patch") {
+    return (
+      <span className="pill bg-bg-elev text-fg-subtle font-mono" title={ref}>
+        patch
+      </span>
+    );
+  }
+  return (
+    <span
+      className="pill bg-bg-elev text-fg-subtle font-mono truncate max-w-[180px]"
+      title={ref}
+    >
+      {artifact.kind}: {ref.slice(0, 40)}
+    </span>
+  );
+}
+
 function WorkflowHeader({
   workflow,
   task,
@@ -214,9 +269,7 @@ function WorkflowHeader({
           <span className="pill bg-amber-900/40 text-amber-300">{task.stackStatus}</span>
         )}
         {task.artifacts.map((a, i) => (
-          <span key={i} className="pill bg-bg-elev text-fg-subtle font-mono truncate max-w-[180px]" title={a.ref}>
-            {a.kind}: {a.ref.slice(0, 40)}
-          </span>
+          <ArtifactPill key={i} artifact={a} />
         ))}
         {isMultiTask && (
           <button
