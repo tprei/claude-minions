@@ -50,6 +50,7 @@ function makeScm(
       return { kind: "clean" } satisfies MergeResult;
     }),
     pushBranch: vi.fn().mockResolvedValue(undefined),
+    summarizeBranch: vi.fn().mockResolvedValue({ title: "test", commitBody: "", diffStat: "", commitCount: 1 }),
     openPullRequest: vi.fn(),
     findPullRequest: vi.fn().mockImplementation(async () => {
       const n = prCounter++;
