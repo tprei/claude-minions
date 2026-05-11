@@ -99,7 +99,7 @@ export class ContinueTaskService {
     let runtimeSessionId: string | undefined;
     try {
       const provider = providerFactory();
-      const invocation = await provider.resume({ sessionRef: priorSessionRef, prompt, taskId, workflowId });
+      const invocation = await provider.resume({ sessionRef: priorSessionRef, prompt, taskId, workflowId, workflowKind: workflow.kind });
       const startSpec: { taskId: string; workflowId: string; command: string[]; env?: Record<string, string>; workspacePath?: string } = {
         taskId,
         workflowId,

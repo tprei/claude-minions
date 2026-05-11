@@ -42,11 +42,12 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
         ? repos[0]!.id
         : NONE_REPO;
 
+  type ThreadMode = "task" | "think" | "plan";
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
   const [repoId, setRepoId] = useState<string>(defaultRepoId);
   const [baseBranch, setBaseBranch] = useState("main");
-  const [usePlanner, setUsePlanner] = useState(false);
+  const [threadMode, setThreadMode] = useState<ThreadMode>("task");
   const { attachments, setAttachments, onPaste, onDrop, clear } = useAttachments();
 
   const [submitting, setSubmitting] = useState(false);
@@ -122,14 +123,36 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
     };
   }
 
+  function makeThinkThreadSpec(): WorkflowSpec {
+    const taskId = generateId();
+    return {
+      id: generateId(),
+      kind: "think-thread",
+      tasks: [{
+        id: taskId,
+        title: effectiveTitle || trimmedPrompt.slice(0, 60),
+        prompt: trimmedPrompt,
+      }],
+      policy: { maxConcurrent: 1 },
+    };
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit || !activeId || !conn) return;
     setSubmitting(true);
     setError(null);
     try {
-      if (!usePlanner) {
+      if (threadMode === "task") {
         const spec = makeSingleTaskSpec();
+        const workflow = await createWorkflow(conn, spec);
+        useWorkflowStore.getState().upsert(activeId, workflow);
+        clear();
+        setUrlState({ connectionId: activeId, view: "list", sessionSlug: null, query: {} });
+        return;
+      }
+      if (threadMode === "think") {
+        const spec = makeThinkThreadSpec();
         const workflow = await createWorkflow(conn, spec);
         useWorkflowStore.getState().upsert(activeId, workflow);
         clear();
@@ -289,14 +312,53 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
           </div>
         )}
 
-        <label className="flex items-center gap-2 text-xs text-fg-muted cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={usePlanner}
-            onChange={e => setUsePlanner(e.target.checked)}
-          />
-          <span>Plan with agent (decompose into a DAG)</span>
-        </label>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs text-fg-muted">Thread type</label>
+          <div role="radiogroup" aria-label="Thread type" className="flex flex-col gap-1.5">
+            <label className="flex items-start gap-2 text-xs text-fg-muted cursor-pointer select-none">
+              <input
+                type="radio"
+                name="threadMode"
+                value="task"
+                checked={threadMode === "task"}
+                onChange={() => setThreadMode("task")}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="text-fg">Task</span>
+                <span className="text-fg-subtle"> — run a single agent that edits code and commits.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-xs text-fg-muted cursor-pointer select-none">
+              <input
+                type="radio"
+                name="threadMode"
+                value="think"
+                checked={threadMode === "think"}
+                onChange={() => setThreadMode("think")}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="text-fg">Think</span>
+                <span className="text-fg-subtle"> — single read-only agent for deep research; no edits, no commits.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-xs text-fg-muted cursor-pointer select-none">
+              <input
+                type="radio"
+                name="threadMode"
+                value="plan"
+                checked={threadMode === "plan"}
+                onChange={() => setThreadMode("plan")}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="text-fg">Plan</span>
+                <span className="text-fg-subtle"> — decompose into a DAG of sub-tasks.</span>
+              </span>
+            </label>
+          </div>
+        </div>
 
         <div className="flex flex-col gap-1.5">
           <label className="text-xs text-fg-muted">Attachments</label>
