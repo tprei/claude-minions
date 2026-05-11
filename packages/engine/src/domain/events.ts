@@ -19,7 +19,8 @@ export type WorkflowEventKind =
   | "run-ended"
   | "workflow-status-changed"
   | "provider-event"
-  | "merge-phase";
+  | "merge-phase"
+  | "ci-poll-result";
 
 export interface TaskTransitionedPayload {
   taskId: string;
@@ -76,6 +77,24 @@ export interface MergePhasePayload {
   error?: string;
 }
 
+export type CIPollOverallStatus = "pending" | "success" | "failure" | "neutral";
+
+export interface CIPollCheck {
+  name: string;
+  status: "queued" | "in_progress" | "completed";
+  conclusion?: string | null;
+  url?: string;
+}
+
+export interface CIPollResultPayload {
+  taskId: string;
+  runId?: string;
+  prNumber: number;
+  headSha: string;
+  overallStatus: CIPollOverallStatus;
+  checks: CIPollCheck[];
+}
+
 interface EventBase {
   cursor: number;
   workflowId: string;
@@ -91,6 +110,7 @@ export type WorkflowEvent = EventBase &
     | { kind: "workflow-status-changed"; payload: WorkflowStatusChangedPayload }
     | { kind: "provider-event"; payload: ProviderEventPayload }
     | { kind: "merge-phase"; payload: MergePhasePayload }
+    | { kind: "ci-poll-result"; payload: CIPollResultPayload }
   );
 
 export function deriveEvents(

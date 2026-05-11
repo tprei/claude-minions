@@ -101,6 +101,41 @@ describe("connectWorkflowSse", () => {
     conn.close();
   });
 
+  it("calls onEvent for ci-poll-result events", async () => {
+    const onEvent = vi.fn();
+    const { connectWorkflowSse } = await import("../sse.js");
+    const conn = connectWorkflowSse(CONN, "wf-ci", { onEvent });
+
+    const es = FakeEventSource.instances[0]!;
+    const ciEvent: WorkflowEvent = {
+      cursor: 0,
+      workflowId: "wf-ci",
+      occurredAt: "2026-01-01T00:00:02Z",
+      kind: "ci-poll-result",
+      payload: {
+        taskId: "wf-ci:task",
+        prNumber: 7,
+        headSha: "deadbeef",
+        overallStatus: "pending",
+        checks: [
+          { name: "ci/test", status: "in_progress", conclusion: null },
+        ],
+      },
+    };
+    es.fire("ci-poll-result", ciEvent);
+
+    expect(onEvent).toHaveBeenCalledOnce();
+    const received = onEvent.mock.calls[0]?.[0] as WorkflowEvent;
+    expect(received.kind).toBe("ci-poll-result");
+    if (received.kind === "ci-poll-result") {
+      expect(received.payload.prNumber).toBe(7);
+      expect(received.payload.overallStatus).toBe("pending");
+      expect(received.payload.checks[0]?.name).toBe("ci/test");
+    }
+
+    conn.close();
+  });
+
   it("calls onEvent for workflow-status-changed events", async () => {
     const onEvent = vi.fn();
     const { connectWorkflowSse } = await import("../sse.js");

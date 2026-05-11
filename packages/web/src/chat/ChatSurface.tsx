@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Workflow, TaskNode } from "@minions/engine";
+import type { CIPollResultPayload } from "@minions/engine";
 import type { TranscriptEvent } from "@minions/shared";
 import { useWorkflowStore, EMPTY_WORKFLOWS } from "../store/workflowStore.js";
 import { useRootStore } from "../store/root.js";
@@ -191,13 +192,40 @@ function ArtifactPill({ artifact }: { artifact: TaskNode["artifacts"][number] })
   );
 }
 
+const CI_POLL_VISIBLE_STATUSES = new Set(["pr-open", "ci-pending", "needs-review"]);
+
+function CIPollPill({ payload }: { payload: CIPollResultPayload }) {
+  const symbol =
+    payload.overallStatus === "success"
+      ? "✓"
+      : payload.overallStatus === "failure"
+        ? "✗"
+        : "⏳";
+  const tone =
+    payload.overallStatus === "success"
+      ? "bg-emerald-900/40 text-emerald-300"
+      : payload.overallStatus === "failure"
+        ? "bg-red-900/40 text-red-300"
+        : "bg-bg-elev text-fg-muted";
+  const breakdown = payload.checks
+    .map((c) => `${c.name} [${c.status}${c.conclusion ? ` / ${c.conclusion}` : ""}]`)
+    .join("\n");
+  return (
+    <span className={cx("pill font-mono", tone)} title={breakdown || "no checks"}>
+      CI {symbol} {payload.checks.length}
+    </span>
+  );
+}
+
 function WorkflowHeader({
   workflow,
   task,
+  ciPoll,
   onClose,
 }: {
   workflow: Workflow;
   task: TaskNode;
+  ciPoll: CIPollResultPayload | undefined;
   onClose: () => void;
 }) {
   const conn = useRootStore((s) => s.getActiveConnection());
@@ -271,6 +299,9 @@ function WorkflowHeader({
         {task.artifacts.map((a, i) => (
           <ArtifactPill key={i} artifact={a} />
         ))}
+        {ciPoll !== undefined && CI_POLL_VISIBLE_STATUSES.has(task.executionStatus) && (
+          <CIPollPill payload={ciPoll} />
+        )}
         {isMultiTask && (
           <button
             type="button"
@@ -312,6 +343,23 @@ function SurfacePanel({
   const conn = useRootStore((s) => s.getActiveConnection());
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const tabPanelRef = useRef<HTMLDivElement | null>(null);
+  const [ciPollByTask, setCiPollByTask] = useState<Record<string, CIPollResultPayload>>({});
+
+  useEffect(() => {
+    if (!conn) return;
+    const sseConn = connectWorkflowSse(conn, workflow.id, {
+      onEvent(e) {
+        if (e.kind !== "ci-poll-result") return;
+        const payload = e.payload;
+        setCiPollByTask((prev) => ({ ...prev, [payload.taskId]: payload }));
+      },
+    });
+    return () => {
+      sseConn.close();
+    };
+  }, [conn, workflow.id]);
+
+  const ciPoll = useMemo(() => ciPollByTask[task.id], [ciPollByTask, task.id]);
 
   useEffect(() => {
     if (!isMobile) return;
@@ -410,7 +458,7 @@ function SurfacePanel({
 
   return (
     <div className="flex flex-col h-full bg-bg-soft">
-      <WorkflowHeader workflow={workflow} task={task} onClose={onClose} />
+      <WorkflowHeader workflow={workflow} task={task} ciPoll={ciPoll} onClose={onClose} />
       <SurfaceTablist tabs={SURFACE_TABS} active={activeTab} onChange={onTabChange} />
       <div
         ref={tabPanelRef}

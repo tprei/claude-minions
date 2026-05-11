@@ -78,6 +78,7 @@ function applyWorkflowEvent(workflow: Workflow, event: WorkflowEvent): Workflow 
     case "run-ended":
     case "provider-event":
     case "merge-phase":
+    case "ci-poll-result":
       return workflow;
 
     default:

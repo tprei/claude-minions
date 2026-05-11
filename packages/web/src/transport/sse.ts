@@ -29,6 +29,7 @@ const WORKFLOW_EVENT_KINDS: WorkflowEventKind[] = [
   "workflow-status-changed",
   "provider-event",
   "merge-phase",
+  "ci-poll-result",
 ];
 
 export function connectWorkflowSse(

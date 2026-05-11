@@ -29,7 +29,7 @@ export interface WorkflowRepository {
   eventsSince(workflowId: string, cursor: number): Promise<WorkflowEvent[]>;
   latestCursor(workflowId: string): Promise<number>;
   subscribe(workflowId: string, fromCursor: number): AsyncIterable<WorkflowEvent>;
-  publishTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" }>): void;
+  publishTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" | "ci-poll-result" }>): void;
   lookupIdempotency(workflowId: string, key: string): Promise<string | undefined>;
   listRecoverable(): Promise<Workflow[]>;
   list(opts?: { includeCompleted?: boolean }): Promise<Workflow[]>;
@@ -116,7 +116,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     );
   }
 
-  publishTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" }>): void {
+  publishTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" | "ci-poll-result" }>): void {
     this.hub.notifyTransient(workflowId, event);
   }
 
