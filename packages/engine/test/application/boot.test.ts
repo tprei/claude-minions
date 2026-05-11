@@ -226,6 +226,62 @@ describe("runBootRecovery", () => {
     expect(lastRun?.runtimeSessionId).toBe("s-missing");
   });
 
+  it("probe returning 'dead' (tmux server gone) routes through recover-task, not skip workflow", async () => {
+    // Regression: a dead tmux server (after a container/tmux restart) used to cause
+    // probe() to throw, which boot.ts treated as probeFailed → skip workflow → task
+    // stuck running forever. With the tmux-runtime fix, probe returns "dead" and boot
+    // recovery runs scan(), which dispatches recover-task. The task ends up in pending
+    // (no artifacts) or needs-review (artifacts) with sessionId cleared.
+    const repo = new InMemoryWorkflowRepository();
+    const runtime = new StubRuntimeBackend();
+
+    const wf = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => started);
+    await repo.save(wf, []);
+    await applyCommand(repo, {
+      kind: "transition-task",
+      workflowId: "wf-1",
+      transition: { kind: "mark-ready", taskId: "wf-1:task", now: started },
+    });
+    await applyCommand(repo, {
+      kind: "transition-task",
+      workflowId: "wf-1",
+      transition: {
+        kind: "mark-running",
+        taskId: "wf-1:task",
+        sessionId: "s-server-gone",
+        providerSessionRef: "captured-ref-7",
+        now: started,
+      },
+    });
+
+    // Simulate the tmux fix: a server-down state returns "dead" (instead of throwing).
+    vi.spyOn(runtime, "probe").mockResolvedValue("dead");
+
+    const spawned: BootRespawnContext[] = [];
+    const service = createRecoveryService(repo, new NoopRestackExecutor(), runtime, () => staleNow, silentLogger());
+    const report = await runBootRecovery(repo, service, runtime, {
+      ...bootOptions,
+      spawnOrchestrator: (ctx) => spawned.push(ctx),
+    });
+
+    // probe-phase failure isolated workflows; with "dead" returned cleanly, no failure
+    expect(report.failures).toHaveLength(0);
+    expect(report.workflowsScanned).toBe(1);
+
+    const saved = await repo.get("wf-1");
+    const task = saved?.graph["wf-1:task"];
+    expect(task?.executionStatus).toBe("pending");
+    expect(task?.sessionId).toBeUndefined();
+    const lastRun = task?.runs[task.runs.length - 1];
+    expect(lastRun?.terminalReason).toBe("recovered");
+    // The providerSessionRef on the closed run is preserved so SchedulerService can resume.
+    expect(lastRun?.providerSessionRef).toBe("captured-ref-7");
+
+    // boot.ts only spawns orchestrators for tasks with live probes — the recovered task is
+    // now pending and gets dispatched later by SchedulerService instead.
+    expect(spawned).toHaveLength(0);
+  });
+
   it("dead probe on boot: task returns to pending (no artifacts) with recovered run", async () => {
     const repo = new InMemoryWorkflowRepository();
     const runtime = new StubRuntimeBackend();

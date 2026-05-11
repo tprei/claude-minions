@@ -14,19 +14,6 @@ const mockClient = {
 };
 
 vi.mock("../../../src/plugins/tmux/tmux-client.js", () => {
-  const TmuxNoSuchSessionError = class extends Error {
-    readonly stdout: string;
-    readonly stderr: string;
-    readonly exitCode: number;
-    constructor(stdout = "", stderr = "no such session", exitCode = 1) {
-      super("no such session");
-      this.name = "TmuxNoSuchSessionError";
-      this.stdout = stdout;
-      this.stderr = stderr;
-      this.exitCode = exitCode;
-    }
-  };
-
   const TmuxError = class extends Error {
     readonly stdout: string;
     readonly stderr: string;
@@ -37,6 +24,20 @@ vi.mock("../../../src/plugins/tmux/tmux-client.js", () => {
       this.stdout = stdout;
       this.stderr = stderr;
       this.exitCode = exitCode;
+    }
+  };
+
+  const TmuxNoSuchSessionError = class extends TmuxError {
+    constructor(stdout = "", stderr = "no such session", exitCode = 1) {
+      super("no such session", stdout, stderr, exitCode);
+      this.name = "TmuxNoSuchSessionError";
+    }
+  };
+
+  const TmuxServerNotRunningError = class extends TmuxError {
+    constructor(stdout = "", stderr = "no server running", exitCode = 1) {
+      super("tmux server not running", stdout, stderr, exitCode);
+      this.name = "TmuxServerNotRunningError";
     }
   };
 
@@ -63,7 +64,7 @@ vi.mock("../../../src/plugins/tmux/tmux-client.js", () => {
     killSession = mockClientInner.killSession;
   }
 
-  return { TmuxClient, TmuxError, TmuxNoSuchSessionError, _mockClientInner: mockClientInner };
+  return { TmuxClient, TmuxError, TmuxNoSuchSessionError, TmuxServerNotRunningError, _mockClientInner: mockClientInner };
 });
 
 const mockFileHandle = {
@@ -303,6 +304,52 @@ describe("TmuxRuntimeBackend", () => {
     client.paneDead.mockResolvedValue(false);
 
     expect(await backend.probe("x")).toBe("live");
+  });
+
+  it("probe: TmuxServerNotRunningError from sessionExists → 'dead' (tmux server down)", async () => {
+    const backend = await makeBackend();
+    const client = await getMockClientInner();
+    const { TmuxServerNotRunningError: TSNRE } = await import("../../../src/plugins/tmux/tmux-client.js");
+
+    client.sessionExists.mockRejectedValue(
+      new TSNRE("", "no server running on /tmp/tmux-1000/default", 1),
+    );
+
+    expect(await backend.probe("any-session")).toBe("dead");
+  });
+
+  it("probe: TmuxServerNotRunningError from paneDead → 'dead'", async () => {
+    const backend = await makeBackend();
+    const client = await getMockClientInner();
+    const { TmuxServerNotRunningError: TSNRE } = await import("../../../src/plugins/tmux/tmux-client.js");
+
+    client.sessionExists.mockResolvedValue(true);
+    client.paneDead.mockRejectedValue(
+      new TSNRE("", "error connecting to /tmp/tmux-1000/default", 1),
+    );
+
+    expect(await backend.probe("any-session")).toBe("dead");
+  });
+
+  it("probe: unrelated TmuxError still rethrows (permission denied)", async () => {
+    const backend = await makeBackend();
+    const client = await getMockClientInner();
+    const { TmuxError: TE } = await import("../../../src/plugins/tmux/tmux-client.js");
+
+    const permError = new TE("tmux exited with code 1", "", "permission denied", 1);
+    client.sessionExists.mockRejectedValue(permError);
+
+    await expect(backend.probe("x")).rejects.toThrow(permError);
+  });
+
+  it("stop: TmuxServerNotRunningError from killSession is swallowed (session already gone)", async () => {
+    const backend = await makeBackend();
+    const client = await getMockClientInner();
+    const { TmuxServerNotRunningError: TSNRE } = await import("../../../src/plugins/tmux/tmux-client.js");
+
+    client.killSession.mockRejectedValue(new TSNRE("", "no server running", 1));
+
+    await expect(backend.stop("any-session")).resolves.toBeUndefined();
   });
 
   it("attach propagates fromOffset to followLog and yields RuntimeOutputChunk shape", async () => {

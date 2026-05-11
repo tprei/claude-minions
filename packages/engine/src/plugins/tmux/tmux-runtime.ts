@@ -16,7 +16,7 @@ import {
   SENTINEL_TIMEOUT_MS,
 } from "./constants.js";
 import { followLog } from "./log-follow.js";
-import { TmuxClient, TmuxError, TmuxNoSuchSessionError } from "./tmux-client.js";
+import { TmuxClient, TmuxError, TmuxNoSuchSessionError, TmuxServerNotRunningError } from "./tmux-client.js";
 
 export interface TmuxRuntimeConfig {
   dataDir: string;
@@ -112,12 +112,20 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
   async stop(sessionId: string): Promise<void> {
     try {
       await this.client.pipePaneOff(sessionId).catch((err) => {
-        if (err instanceof TmuxNoSuchSessionError || isDockerDown(err)) return;
+        if (
+          err instanceof TmuxNoSuchSessionError ||
+          err instanceof TmuxServerNotRunningError ||
+          isDockerDown(err)
+        ) return;
         throw err;
       });
       await this.client.killSession(sessionId);
     } catch (err) {
-      if (err instanceof TmuxNoSuchSessionError || isDockerDown(err)) return;
+      if (
+        err instanceof TmuxNoSuchSessionError ||
+        err instanceof TmuxServerNotRunningError ||
+        isDockerDown(err)
+      ) return;
       throw err;
     }
   }
@@ -129,6 +137,10 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
       const dead = await this.client.paneDead(sessionId);
       return dead ? "dead" : "live";
     } catch (err) {
+      // A dead tmux server (e.g., after a container/tmux restart) leaves any prior session
+      // unreachable but recoverable from the agent's POV — report "dead" so boot recovery
+      // routes the task through recover-task instead of skipping the workflow.
+      if (err instanceof TmuxServerNotRunningError) return "dead";
       if (this.config.commandPrefix.length > 0 && isDockerDown(err)) {
         return "missing";
       }
@@ -159,6 +171,7 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
       } catch (err) {
         if (
           err instanceof TmuxNoSuchSessionError ||
+          err instanceof TmuxServerNotRunningError ||
           (this.config.commandPrefix.length > 0 && isDockerDown(err))
         ) {
           dead = true;
@@ -185,7 +198,11 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
     if (!terminated || opts.signal?.aborted) return;
 
     await this.client.pipePaneOff(sessionId).catch((err) => {
-      if (err instanceof TmuxNoSuchSessionError || isDockerDown(err)) return;
+      if (
+        err instanceof TmuxNoSuchSessionError ||
+        err instanceof TmuxServerNotRunningError ||
+        isDockerDown(err)
+      ) return;
       throw err;
     });
 

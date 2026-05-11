@@ -1,14 +1,27 @@
 import type { WorkflowEvent } from "../domain/events.js";
 import type { Logger } from "../observability/logger.js";
+import type { ContinueTaskService } from "./continue-task-service.js";
 import type { WorkflowRepository } from "./repository.js";
 import type { RetryTaskService } from "./retry-task-service.js";
 import { planDispatch } from "./scheduler.js";
+import type { TaskNode } from "../domain/types.js";
 
 export interface SchedulerServiceDeps {
   repo: WorkflowRepository;
   retry: RetryTaskService;
+  continueService?: ContinueTaskService;
   log: Logger;
   signal: AbortSignal;
+}
+
+function priorSessionRef(task: TaskNode): string | undefined {
+  for (let i = task.runs.length - 1; i >= 0; i--) {
+    const run = task.runs[i];
+    if (run && run.endedAt !== undefined && run.providerSessionRef !== undefined && run.providerSessionRef !== "") {
+      return run.providerSessionRef;
+    }
+  }
+  return undefined;
 }
 
 export class SchedulerService {
@@ -84,8 +97,14 @@ export class SchedulerService {
       if (!freshTask || freshTask.executionStatus !== "pending") continue;
 
       this.inFlight.add(key);
-      void this.deps.retry
-        .run({ workflowId, taskId: task.id, prompt: task.prompt })
+      // Prefer continue (--resume) over retry (fresh) when the prior run captured a
+      // providerSessionRef. Lets a task survive a tmux/container restart without losing
+      // the agent's conversation memory.
+      const resumeRef = priorSessionRef(freshTask);
+      const dispatch = resumeRef !== undefined && this.deps.continueService !== undefined
+        ? this.deps.continueService.run({ workflowId, taskId: task.id, prompt: task.prompt })
+        : this.deps.retry.run({ workflowId, taskId: task.id, prompt: task.prompt });
+      void dispatch
         .catch((err: unknown) => {
           this.deps.log.warn("scheduler-service: dispatch failed", {
             workflowId,

@@ -27,7 +27,18 @@ export class TmuxNoSuchSessionError extends TmuxError {
   }
 }
 
-const NO_SUCH_SESSION_RE = /no such session|session not found|can't find session|no server running|target pane has exited/i;
+export class TmuxServerNotRunningError extends TmuxError {
+  constructor(stdout: string, stderr: string, exitCode: number) {
+    super("tmux server not running", stdout, stderr, exitCode);
+    this.name = "TmuxServerNotRunningError";
+  }
+}
+
+const NO_SUCH_SESSION_RE = /no such session|session not found|can't find session|target pane has exited/i;
+// The server-down signal differs from a missing individual session: every operation against
+// the dead socket fails the same way regardless of session id. Detected separately so probe()
+// can report "dead" (recover-task semantics) rather than "missing" (interrupt-task semantics).
+const SERVER_NOT_RUNNING_RE = /no server running|error connecting to/i;
 
 function shellQuotePath(p: string): string {
   return "'" + p.replace(/'/g, "'\\''") + "'";
@@ -64,6 +75,8 @@ export class TmuxClient {
 
         if (exitCode === 0) {
           resolve({ stdout, stderr });
+        } else if (SERVER_NOT_RUNNING_RE.test(stderr)) {
+          reject(new TmuxServerNotRunningError(stdout, stderr, exitCode));
         } else if (NO_SUCH_SESSION_RE.test(stderr)) {
           reject(new TmuxNoSuchSessionError(stdout, stderr, exitCode));
         } else {

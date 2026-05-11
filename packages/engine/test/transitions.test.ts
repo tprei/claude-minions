@@ -99,6 +99,7 @@ describe("recover-task routing", () => {
     workflow = transitionTask(workflow, { kind: "recover-task", taskId: "task-1:task", now });
 
     expect(workflow.graph["task-1:task"]?.executionStatus).toBe("pending");
+    expect(workflow.graph["task-1:task"]?.sessionId).toBeUndefined();
   });
 
   it("routes to needs-review when task has artifacts", () => {
