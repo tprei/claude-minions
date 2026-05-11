@@ -55,6 +55,17 @@ export interface MergePullRequestInput {
   method?: "merge" | "squash" | "rebase";
 }
 
+export interface BranchSummary {
+  /** First line of the latest commit message. Suitable as a PR title. */
+  title: string;
+  /** Body of the latest commit message (everything after the first line). */
+  commitBody: string;
+  /** `git diff --stat baseBranch..HEAD` output. */
+  diffStat: string;
+  /** Number of commits on the branch ahead of baseBranch. */
+  commitCount: number;
+}
+
 export interface SCMPlugin {
   createBranch(path: string, branchName: string): Promise<void>;
   commit(path: string, message: string): Promise<string>;
@@ -62,6 +73,8 @@ export interface SCMPlugin {
   rebase(path: string, onto: string): Promise<MergeResult>;
 
   pushBranch(path: string, branch: string): Promise<void>;
+  /** Summarize a branch for PR title/body composition. Reads commits + diff. */
+  summarizeBranch(path: string, baseBranch: string): Promise<BranchSummary>;
   openPullRequest(input: OpenPullRequestInput): Promise<PullRequestRef>;
   findPullRequest(input: FindPullRequestInput): Promise<PullRequestRef | null>;
   getPullRequest(input: GetPullRequestInput): Promise<PullRequestDetail>;

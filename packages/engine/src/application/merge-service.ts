@@ -250,12 +250,25 @@ export class MergeService {
     if (existingPrRef === null) {
       const wf = await repo.get(workflowId);
       const t = wf?.graph[taskId];
-      const prTitle = t?.title ?? `Task ${taskId}`;
+      let summary: Awaited<ReturnType<typeof scm.summarizeBranch>> | undefined;
+      try {
+        summary = await scm.summarizeBranch(workspaceHandle.path, baseBranch);
+      } catch (err) {
+        this.deps.log.error("merge-service: summarizeBranch failed; using fallback PR title/body", { workflowId, taskId, error: (err as Error).message });
+      }
+      const prTitle = summary?.title ?? t?.title ?? `Task ${taskId}`;
+      const taskPrompt = t?.prompt?.trim() ?? "";
+      const bodyParts: string[] = [];
+      if (summary?.commitBody) bodyParts.push(summary.commitBody);
+      if (summary?.diffStat) bodyParts.push(`\n### Changes\n\n\`\`\`\n${summary.diffStat}\n\`\`\``);
+      if (taskPrompt) bodyParts.push(`\n<details><summary>Task prompt</summary>\n\n${taskPrompt}\n\n</details>`);
+      bodyParts.push(`\n---\n_minions • workflow \`${workflowId}\` • task \`${taskId}\`_`);
+      const prBody = bodyParts.join("\n").trim();
       prRef = await scm.openPullRequest({
         owner: repoCoords.owner,
         repo: repoCoords.repo,
         title: prTitle,
-        body: `Created by minions task ${taskId} (workflow ${workflowId}).`,
+        body: prBody,
         head: branch,
         base: baseBranch,
       });

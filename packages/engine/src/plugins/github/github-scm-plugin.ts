@@ -14,6 +14,7 @@ import type {
   FindPullRequestInput,
   GetPullRequestInput,
   MergePullRequestInput,
+  BranchSummary,
 } from "../scm-plugin.js";
 
 const ASKPASS_PATH = join(
@@ -82,6 +83,19 @@ export class GitHubScmPlugin implements SCMPlugin {
     await this.git.run(path, ["push", "-u", "--force-with-lease", "origin", branch], {
       env: { GIT_ASKPASS: ASKPASS_PATH, GH_TOKEN: this.token },
     });
+  }
+
+  async summarizeBranch(path: string, baseBranch: string): Promise<BranchSummary> {
+    const subject = (await this.git.run(path, ["log", "-1", "--format=%s"])).stdout.trim();
+    const commitBody = (await this.git.run(path, ["log", "-1", "--format=%b"])).stdout.trim();
+    const diffStat = (await this.git.run(path, ["diff", "--stat", `${baseBranch}..HEAD`])).stdout.trim();
+    const countStr = (await this.git.run(path, ["rev-list", "--count", `${baseBranch}..HEAD`])).stdout.trim();
+    return {
+      title: subject || "(empty commit subject)",
+      commitBody,
+      diffStat,
+      commitCount: Number.parseInt(countStr, 10) || 0,
+    };
   }
 
   async openPullRequest(input: OpenPullRequestInput): Promise<PullRequestRef> {

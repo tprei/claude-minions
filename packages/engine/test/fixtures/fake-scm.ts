@@ -81,6 +81,10 @@ export class FakeSCM implements SCMPlugin {
     // no-op: no remote in integration tests
   }
 
+  async summarizeBranch(_path: string, _baseBranch: string): Promise<{ title: string; commitBody: string; diffStat: string; commitCount: number }> {
+    return { title: "fake commit", commitBody: "", diffStat: "", commitCount: 1 };
+  }
+
   async seedTaskCommit(workspacePath: string, fileName: string, content: string): Promise<string> {
     const filePath = join(workspacePath, fileName);
     await writeFile(filePath, content);
