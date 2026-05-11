@@ -10,6 +10,7 @@ import type { LocalFinalizeService } from "../application/local-finalize-service
 import type { ContinueTaskService } from "../application/continue-task-service.js";
 import type { MergeService } from "../application/merge-service.js";
 import { MergeServiceError } from "../application/merge-service.js";
+import type { LandWorkflowService } from "../application/land-workflow-service.js";
 import type { RetryTaskService } from "../application/retry-task-service.js";
 import type { RecoveryService } from "../application/recovery-service.js";
 import type { WorkflowRepository } from "../application/repository.js";
@@ -34,6 +35,7 @@ export interface ServerDeps {
   continueTaskService?: ContinueTaskService;
   retryTaskService?: RetryTaskService;
   mergeService?: MergeService;
+  landWorkflowService?: LandWorkflowService;
   ciBabysitter?: CIBabysitterService;
   qualityGateService?: QualityGateService;
   completionDispatcher?: CompletionDispatcher;
@@ -49,7 +51,7 @@ export interface ServerDeps {
   schedulerService?: SchedulerService;
 }
 
-type AcceptedCommandKind = CommandKind | "continue-task" | "retry-task";
+type AcceptedCommandKind = CommandKind | "continue-task" | "retry-task" | "land-workflow";
 
 const VALID_COMMAND_KINDS = new Set<AcceptedCommandKind>([
   "transition-task",
@@ -59,6 +61,7 @@ const VALID_COMMAND_KINDS = new Set<AcceptedCommandKind>([
   "mark-restack-conflict",
   "continue-task",
   "retry-task",
+  "land-workflow",
 ]);
 
 export function createServer(deps: ServerDeps): Hono {
@@ -233,6 +236,26 @@ export function createServer(deps: ServerDeps): Hono {
         prompt: body["prompt"] as string,
       });
       return c.json(result);
+    }
+
+    if (kind === "land-workflow") {
+      if (!deps.landWorkflowService) {
+        return c.json({ code: "internal_error", message: "land-workflow service not available", details: {} }, 500);
+      }
+      try {
+        const result = await deps.landWorkflowService.run({
+          workflowId: body["workflowId"] as string,
+        });
+        return c.json(result);
+      } catch (err) {
+        if (err instanceof MergeServiceError && err.code === "merge_state_inconsistent") {
+          return c.json(
+            { code: "merge_state_inconsistent", message: "GitHub merged but internal state transition failed; operator must reconcile", details: err.details },
+            500,
+          );
+        }
+        throw err;
+      }
     }
 
     const result = await applyCommand(repo, body as unknown as Command);

@@ -1,6 +1,6 @@
 import type { CommandKind } from "../application/commands.js";
 
-type AllCommandKind = CommandKind | "continue-task" | "retry-task";
+type AllCommandKind = CommandKind | "continue-task" | "retry-task" | "land-workflow";
 
 export interface ValidationFailure {
   field: string;
@@ -108,6 +108,9 @@ const COMMAND_CHECKS: { [K in AllCommandKind]: FieldCheck[] } = {
     BASE_WORKFLOW_ID,
     { path: "taskId", check: isString, expected: "string" },
     { path: "prompt", check: isNonEmptyString, expected: "non-empty string" },
+  ],
+  "land-workflow": [
+    BASE_WORKFLOW_ID,
   ],
 };
 
