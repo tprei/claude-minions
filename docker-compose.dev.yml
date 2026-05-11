@@ -4,7 +4,11 @@
 # Usage:
 #   mkdir -p .docker-dev/data .docker-dev/repo
 #   git clone https://github.com/tprei/claude-minions.git .docker-dev/repo   # OR symlink your working copy
-#   docker compose -f docker-compose.dev.yml up --build
+#   UID=$(id -u) GID=$(id -g) docker compose -f docker-compose.dev.yml up --build
+#
+# The UID/GID env vars make the container's user match yours so the bind-mounted
+# ~/.claude is readable+writable by both sides; without them the build defaults
+# to 10001 and claude inside the container can't read host-owned credentials.
 #
 # First time: authenticate claude inside the container.
 #   docker exec -it minions-dev claude /login
@@ -17,6 +21,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        MINION_UID: "${UID:-1000}"
+        MINION_GID: "${GID:-1000}"
     image: minions/engine:dev
     container_name: minions-dev
     restart: unless-stopped
@@ -34,8 +41,10 @@ services:
     ports:
       - "3949:8787"
     volumes:
-      # Engine state: sqlite + worktrees + claude auth home. All in one host dir.
+      # Engine state: sqlite + worktrees. Excludes /data/home so .claude bind-mount wins.
       - ./.docker-dev/data:/data
+      # Share host's claude auth directly so token refreshes on either side stay in sync.
+      - ${HOME}/.claude:/data/home/.claude
       # The repo the agents will work in. Bind-mount your local working copy.
       - ./.docker-dev/repo:/repo
     healthcheck:
