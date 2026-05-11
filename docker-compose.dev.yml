@@ -30,6 +30,7 @@ services:
       HOME: /data/home
       MWF_LOG_LEVEL: info
       MWF_QUALITY_DISABLED: "1"
+      MWF_GITHUB_BASE_BRANCH: engine-port
     ports:
       - "3949:8787"
     volumes:
