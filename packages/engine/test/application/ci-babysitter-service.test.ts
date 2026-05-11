@@ -659,6 +659,79 @@ describe("CIBabysitterService", () => {
     expect(evt.payload.checks[0]?.status).toBe("in_progress");
   });
 
+  it("merge conflict — mergeableState flips clean → dirty; merge-conflict transition + conflict artifact, no continue-task", async () => {
+    const repo = makeRepo();
+    await makeTaskUpToFinalizing(repo);
+
+    const ctrl = new AbortController();
+    let getPRCalls = 0;
+    const getPR = vi.fn().mockImplementation(async () => {
+      getPRCalls++;
+      const mergeableState = getPRCalls >= 3 ? "dirty" : "clean";
+      const mergeable = mergeableState === "clean";
+      return {
+        number: PR_NUMBER,
+        url: PR_URL,
+        headSha: HEAD_SHA,
+        headRef: "feature",
+        baseRef: "main",
+        mergeable,
+        mergeableState,
+        state: "open",
+      };
+    });
+    const listCheckRuns = vi.fn().mockResolvedValue([
+      { name: "ci", status: "in_progress" } satisfies GhCheckRun,
+    ]);
+    const github = makeGithub({ getPR, listCheckRuns });
+    const continueTaskService = makeContinueTaskService();
+    const applyCommandSpy = vi.fn((cmd: Parameters<typeof applyCommand>[1]) => applyCommand(repo, cmd));
+
+    const service = new CIBabysitterService({
+      workflowRepo: repo,
+      github,
+      repoCoords: { owner: OWNER, repo: REPO },
+      applyCommand: applyCommandSpy,
+      continueTaskService,
+      signal: ctrl.signal,
+      now,
+      sleep: immediateSleep,
+      cadence: FAST_CADENCE,
+      log: silentLogger(),
+    });
+
+    service.attach(WORKFLOW_ID);
+    await new Promise((r) => setImmediate(r));
+
+    await openPR(repo);
+    await new Promise((r) => setTimeout(r, 150));
+    ctrl.abort();
+
+    const mergeConflictCalls = applyCommandSpy.mock.calls.filter(
+      (c) => c[0].kind === "transition-task" && c[0].transition.kind === "merge-conflict",
+    );
+    expect(mergeConflictCalls).toHaveLength(1);
+
+    const transition = (mergeConflictCalls[0]![0] as { transition: { artifacts: Artifact[]; reason?: string } }).transition;
+    expect(transition.reason).toBe("merge_conflict");
+    const conflictArtifact = transition.artifacts.find((a: Artifact) => a.kind === "conflict");
+    expect(conflictArtifact).toBeDefined();
+    const conflictRef = JSON.parse(conflictArtifact!.ref) as {
+      prNumber: number;
+      prUrl: string;
+      mergeableState: string;
+      mergeable: boolean | null;
+    };
+    expect(conflictRef.prNumber).toBe(PR_NUMBER);
+    expect(conflictRef.prUrl).toBe(PR_URL);
+    expect(conflictRef.mergeableState).toBe("dirty");
+
+    expect(continueTaskService.run).not.toHaveBeenCalled();
+
+    const wf = await repo.get(WORKFLOW_ID);
+    expect(wf?.graph[TASK_ID]?.executionStatus).toBe("needs-review");
+  });
+
   it("pollPR bails on 404 from listCheckRuns", async () => {
     const repo = makeRepo();
     await makeTaskUpToFinalizing(repo);

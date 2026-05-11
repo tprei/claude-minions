@@ -284,6 +284,61 @@ export class CIBabysitterService {
       const taskCurrent = wfCurrent?.graph[taskId];
       if (!taskCurrent || taskCurrent.executionStatus !== "pr-open") return;
 
+      let prCurrent: Awaited<ReturnType<GitHubClient["getPR"]>> | null = null;
+      try {
+        prCurrent = await github.getPR(repoCoords.owner, repoCoords.repo, prNumber);
+      } catch (err) {
+        if (err instanceof GitHubApiError && err.status === 404) {
+          this.deps.log.info(`ci-babysitter: PR not found for task ${taskId}, bailing`, { taskId, workflowId, prNumber });
+          return;
+        }
+        this.deps.log.error(`ci-babysitter: getPR poll error for task ${taskId}`, { taskId, workflowId, prNumber, error: (err as Error).message });
+      }
+
+      if (prCurrent && prCurrent.mergeableState === "dirty") {
+        this.deps.log.info(`ci-babysitter: PR mergeable_state dirty for task ${taskId}`, {
+          taskId,
+          workflowId,
+          prNumber,
+          mergeableState: prCurrent.mergeableState,
+        });
+
+        const conflictArtifact: Artifact = {
+          kind: "conflict",
+          ref: JSON.stringify({
+            prNumber,
+            prUrl,
+            headSha: prCurrent.headSha,
+            mergeable: prCurrent.mergeable,
+            mergeableState: prCurrent.mergeableState,
+            at: now(),
+          }),
+          producedBy: "ci-babysitter",
+          createdAt: now(),
+        };
+
+        try {
+          await applyCommand({
+            kind: "transition-task",
+            workflowId,
+            transition: {
+              kind: "merge-conflict",
+              taskId,
+              artifacts: [conflictArtifact],
+              reason: "merge_conflict",
+              now: now(),
+            },
+          });
+        } catch (err) {
+          this.deps.log.error(`ci-babysitter: merge-conflict transition failed for task ${taskId} (mergeable_state)`, {
+            taskId,
+            workflowId,
+            error: (err as Error).message,
+          });
+        }
+        return;
+      }
+
       let runs: Awaited<ReturnType<GitHubClient["listCheckRuns"]>>;
       try {
         runs = await github.listCheckRuns(repoCoords.owner, repoCoords.repo, headSha);
