@@ -455,8 +455,14 @@ function TranscriptPanel({
     setEvents([]);
   }, [taskKey]);
 
-  // Seed transcript from persisted store when a run is available
+  // Seed transcript from persisted store when a run is available.
+  // Use scalar deps (conn?.id/baseUrl) so unstable conn object refs from the
+  // store don't churn the effect and trap hydrating=true forever.
   const latestRunId = task.runs[0]?.id;
+  const connId = conn?.id;
+  const connBaseUrl = conn?.baseUrl;
+  const connToken = conn?.token;
+  const runsCount = task.runs.length;
   useEffect(() => {
     if (!conn || !latestRunId) return;
     let cancelled = false;
@@ -465,7 +471,7 @@ function TranscriptPanel({
       .then(({ transcript }) => {
         if (cancelled) return;
         const seeded = transcript.flatMap((entry) => {
-          const te = providerEventToTranscript(entry.providerEvent, task.id, task.runs.length, entry.occurredAt);
+          const te = providerEventToTranscript(entry.providerEvent, task.id, runsCount, entry.occurredAt);
           return te !== null ? [te] : [];
         });
         setEvents(seeded);
@@ -474,10 +480,14 @@ function TranscriptPanel({
         if (!cancelled) setEvents([]);
       })
       .finally(() => {
-        if (!cancelled) setHydrating(false);
+        // Always clear hydrating, even if the fetch was cancelled — otherwise
+        // the spinner stays forever when the effect re-fires faster than the
+        // fetch resolves.
+        setHydrating(false);
       });
     return () => { cancelled = true; };
-  }, [conn, workflowId, task.id, latestRunId, task.runs.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connId, connBaseUrl, connToken, workflowId, task.id, latestRunId, runsCount]);
 
   useEffect(() => {
     if (!conn) return;
@@ -489,7 +499,7 @@ function TranscriptPanel({
         const transcriptEvent = providerEventToTranscript(
           e.payload.providerEvent,
           task.id,
-          task.runs.length,
+          runsCount,
           e.occurredAt,
         );
         if (transcriptEvent !== null) {
@@ -501,7 +511,8 @@ function TranscriptPanel({
     return () => {
       sseConn.close();
     };
-  }, [conn, workflowId, task.id, task.runs.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connId, connBaseUrl, connToken, workflowId, task.id, runsCount]);
 
   return (
     <div className="flex-1 overflow-y-auto">
