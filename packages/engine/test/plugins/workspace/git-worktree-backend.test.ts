@@ -7,6 +7,8 @@ vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn(async () => undefined),
   rm: vi.fn(async () => undefined),
   access: vi.fn(async () => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); }),
+  symlink: vi.fn(async () => undefined),
+  readdir: vi.fn(async () => []),
 }));
 
 const FAKE_REPO = "/fake/repo";
@@ -39,6 +41,8 @@ beforeEach(async () => {
   fsp.mkdir.mockResolvedValue(undefined);
   fsp.rm.mockResolvedValue(undefined);
   fsp.access.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+  fsp.symlink.mockResolvedValue(undefined);
+  fsp.readdir.mockResolvedValue([]);
 });
 
 describe("GitWorktreeWorkspaceBackend", () => {
@@ -186,6 +190,118 @@ describe("GitWorktreeWorkspaceBackend", () => {
       // ".." sanitizes to "" but hash "5ec1f7" is used; workspaceId must not contain ".."
       expect(handle.workspaceId).not.toContain("..");
       expect(handle.workspaceId).toContain("5ec1f7");
+    });
+  });
+
+  describe("seeds node_modules after create", () => {
+    it("symlinks root node_modules and per-package node_modules into the worktree", async () => {
+      const gitClient = makeGitClient();
+      const fsp = vi.mocked(await import("node:fs/promises"));
+
+      // A virtual filesystem: the set of paths that "exist" for access().
+      const existing = new Set<string>([
+        `${FAKE_REPO}/node_modules`,
+        `${FAKE_REPO}/packages/engine/node_modules`,
+        `${FAKE_REPO}/packages/shared/node_modules`,
+        // Source has a "web" package too, but this worktree branch doesn't include it.
+        `/fake/workspaces/wf1-a16d54_task1-943be8/packages/engine`,
+        `/fake/workspaces/wf1-a16d54_task1-943be8/packages/shared`,
+      ]);
+
+      fsp.access.mockImplementation(async (p) => {
+        if (existing.has(String(p))) return undefined;
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      });
+      fsp.readdir.mockImplementation((async (p: unknown, opts?: unknown) => {
+        if (String(p) === `${FAKE_REPO}/packages` && opts && (opts as { withFileTypes?: boolean }).withFileTypes) {
+          return [
+            { name: "engine", isDirectory: () => true },
+            { name: "shared", isDirectory: () => true },
+            { name: "web", isDirectory: () => true },
+          ];
+        }
+        return [];
+      }) as never);
+      // Track which symlinks were "created" so we can verify accessibility.
+      fsp.symlink.mockImplementation((async (target: unknown, path: unknown) => {
+        existing.add(String(path));
+        existing.add(`${String(target)}`); // src must already be in existing; harmless dup
+        return undefined;
+      }) as never);
+
+      const backend = await makeBackend(gitClient);
+
+      const handle = await backend.create({
+        workflowId: "wf1",
+        taskId: "task1",
+        branch: "minions/wf1_task1",
+        mode: "worktree",
+      });
+
+      // Root node_modules: src → dst symlink.
+      expect(fsp.symlink).toHaveBeenCalledWith(
+        `${FAKE_REPO}/node_modules`,
+        `${handle.path}/node_modules`,
+        "dir",
+      );
+      // Per-package node_modules for packages present in the worktree.
+      expect(fsp.symlink).toHaveBeenCalledWith(
+        `${FAKE_REPO}/packages/engine/node_modules`,
+        `${handle.path}/packages/engine/node_modules`,
+        "dir",
+      );
+      expect(fsp.symlink).toHaveBeenCalledWith(
+        `${FAKE_REPO}/packages/shared/node_modules`,
+        `${handle.path}/packages/shared/node_modules`,
+        "dir",
+      );
+      // "web" package is not in the worktree on this branch — must be skipped.
+      expect(fsp.symlink).not.toHaveBeenCalledWith(
+        expect.anything(),
+        `${handle.path}/packages/web/node_modules`,
+        expect.anything(),
+      );
+
+      // The fresh worktree now has node_modules accessible.
+      await expect(fsp.access(`${handle.path}/node_modules`)).resolves.toBeUndefined();
+      await expect(fsp.access(`${handle.path}/packages/engine/node_modules`)).resolves.toBeUndefined();
+    });
+
+    it("is a no-op when the source repo has no node_modules", async () => {
+      const gitClient = makeGitClient();
+      const fsp = vi.mocked(await import("node:fs/promises"));
+      // access() always fails → no source node_modules exists.
+      fsp.access.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+      // Also no packages directory.
+      fsp.readdir.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+
+      const backend = await makeBackend(gitClient);
+
+      await backend.create({
+        workflowId: "wf1",
+        taskId: "task1",
+        branch: "minions/wf1_task1",
+        mode: "worktree",
+      });
+
+      expect(fsp.symlink).not.toHaveBeenCalled();
+    });
+
+    it("swallows EEXIST when the worktree already has a node_modules entry", async () => {
+      const gitClient = makeGitClient();
+      const fsp = vi.mocked(await import("node:fs/promises"));
+
+      fsp.access.mockImplementation(async (p) => {
+        if (String(p) === `${FAKE_REPO}/node_modules`) return undefined;
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      });
+      fsp.symlink.mockRejectedValueOnce(Object.assign(new Error("EEXIST"), { code: "EEXIST" }));
+
+      const backend = await makeBackend(gitClient);
+
+      await expect(
+        backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "worktree" }),
+      ).resolves.toBeDefined();
     });
   });
 

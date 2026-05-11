@@ -1,5 +1,5 @@
 import { join, sep, dirname, basename } from "node:path";
-import { realpath, mkdir } from "node:fs/promises";
+import { realpath, mkdir, symlink, access, readdir } from "node:fs/promises";
 import type { GitClient } from "../git/git-client.js";
 import { GitError } from "../git/git-client.js";
 import type { WorkspaceBackend, WorkspaceCreateSpec, WorkspaceHandle } from "../workspace-backend.js";
@@ -243,6 +243,8 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       if (spec.resetBranch !== undefined) addOpts.resetBranch = spec.resetBranch;
       await this.gitClient.worktreeAdd(this.repoPath, addOpts);
 
+      await this.seedNodeModules(worktreePath);
+
       const handle: WorkspaceHandle = {
         workspaceId,
         mode: "worktree",
@@ -253,6 +255,50 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       this.handles.set(workspaceId, handle);
       return handle;
     });
+  }
+
+  // Seed a fresh worktree with node_modules by symlinking the source repo's installs.
+  // Chosen over a fresh `pnpm install` because pnpm's per-package node_modules contain
+  // relative symlinks into the root .pnpm store; an absolute symlink at each node_modules
+  // boundary preserves those relatives and avoids re-downloading/re-linking the universe.
+  private async seedNodeModules(worktreePath: string): Promise<void> {
+    if (this.dockerMode) return; // operator handles container-side setup
+
+    await this.linkNodeModules(this.repoPath, worktreePath);
+
+    const packagesDir = join(this.repoPath, "packages");
+    let entries: Array<{ name: string; isDirectory: () => boolean }>;
+    try {
+      entries = await readdir(packagesDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const srcPkg = join(packagesDir, entry.name);
+      const dstPkg = join(worktreePath, "packages", entry.name);
+      try {
+        await access(dstPkg);
+      } catch {
+        continue; // worktree branch may not include this package
+      }
+      await this.linkNodeModules(srcPkg, dstPkg);
+    }
+  }
+
+  private async linkNodeModules(srcDir: string, dstDir: string): Promise<void> {
+    const srcNm = join(srcDir, "node_modules");
+    const dstNm = join(dstDir, "node_modules");
+    try {
+      await access(srcNm);
+    } catch {
+      return;
+    }
+    try {
+      await symlink(srcNm, dstNm, "dir");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
   }
 
   async cleanup(workspaceId: string): Promise<void> {
