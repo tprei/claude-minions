@@ -506,6 +506,7 @@ function renderWorkflowList(container) {
     const item = document.createElement("div");
     const isActive = wf.id === state.currentId;
     item.className = `workflow-item${isActive ? " active" : ""}`;
+    item.style.viewTransitionName = `wf-${wf.id}`;
     item.addEventListener("click", () => {
       window.location.hash = `#/workflow/${wf.id}`;
     });
@@ -543,6 +544,14 @@ function renderWorkflowList(container) {
 }
 
 function renderKanban(container) {
+  if (typeof document.startViewTransition === "function") {
+    document.startViewTransition(() => doRenderKanban(container));
+  } else {
+    doRenderKanban(container);
+  }
+}
+
+function doRenderKanban(container) {
   const wf = state.currentWorkflow;
   if (!wf) return;
 
@@ -619,6 +628,7 @@ function renderKanban(container) {
       const sc = statusClassMap[colName] ?? "status-pending";
       card.className = `task-card ${sc}`;
       card.dataset.taskId = task.id;
+      card.style.viewTransitionName = `task-${task.id}`;
 
       const titleRow = document.createElement("div");
       titleRow.className = "task-card-title";
