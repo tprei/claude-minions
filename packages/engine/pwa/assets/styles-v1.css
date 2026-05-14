@@ -135,6 +135,9 @@ header h1 {
   font-size: 11px;
   color: var(--fg-dim);
   cursor: pointer;
+  max-height: 200px;
+  overflow: hidden;
+  transition: max-height 220ms ease, opacity 220ms ease;
 }
 
 .banner span { flex: 1; }
