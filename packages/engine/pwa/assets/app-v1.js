@@ -119,6 +119,10 @@ function openStream(id) {
     state.transcript.push(payload);
     const container = document.querySelector(".transcript");
     if (container) {
+      const prevStreaming = container.querySelector(".msg.streaming");
+      if (prevStreaming) prevStreaming.classList.remove("streaming");
+      const kind = payload?.providerEvent?.kind ?? payload?.kind;
+      if (kind === "assistant_text") node.classList.add("streaming");
       container.appendChild(node);
       container.scrollTop = container.scrollHeight;
     }
@@ -136,6 +140,8 @@ function closeStream() {
     es = null;
   }
   state.streamStatus = "closed";
+  const streaming = document.querySelector(".transcript .msg.streaming");
+  if (streaming) streaming.classList.remove("streaming");
   updateLiveIndicator();
 }
 
