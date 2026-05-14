@@ -11,33 +11,6 @@ function tail(s: string): string {
   return s.length <= MAX_TAIL ? s : s.slice(s.length - MAX_TAIL);
 }
 
-function pLimit(concurrency: number): <T>(fn: () => Promise<T>) => Promise<T> {
-  let running = 0;
-  const queue: Array<() => void> = [];
-
-  function next(): void {
-    if (queue.length > 0 && running < concurrency) {
-      running++;
-      queue.shift()!();
-    }
-  }
-
-  return function limit<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      queue.push(() => {
-        Promise.resolve()
-          .then(fn)
-          .then(resolve, reject)
-          .finally(() => {
-            running--;
-            next();
-          });
-      });
-      next();
-    });
-  };
-}
-
 export class ExecQualityPlugin implements QualityPlugin {
   private readonly log: Logger;
   constructor(private readonly runner: CommandRunner, log: Logger = createLogger("info", [])) {
@@ -88,42 +61,38 @@ export class ExecQualityPlugin implements QualityPlugin {
     opts: { signal?: AbortSignal; defaultTimeoutMs?: number },
   ): Promise<QualityRunResult> {
     const defaultTimeoutMs = opts.defaultTimeoutMs ?? 5 * 60_000;
-    const limit = pLimit(2);
+    const checks: QualityCheckResult[] = [];
 
-    const checks = await Promise.all(
-      configs.map((cfg) =>
-        limit(async (): Promise<QualityCheckResult> => {
-          const id = randomUUID();
-          const cwd = join(workspacePath, cfg.cwdRel ?? "");
-          const startedAt = new Date().toISOString();
-          const t0 = Date.now();
+    for (const cfg of configs) {
+      const id = randomUUID();
+      const cwd = join(workspacePath, cfg.cwdRel ?? "");
+      const startedAt = new Date().toISOString();
+      const t0 = Date.now();
 
-          const runOpts: Parameters<typeof this.runner.run>[0] = {
-            cwd,
-            command: cfg.command,
-            timeoutMs: cfg.timeoutMs ?? defaultTimeoutMs,
-          };
-          if (opts.signal) runOpts.signal = opts.signal;
-          const result = await this.runner.run(runOpts);
+      const runOpts: Parameters<typeof this.runner.run>[0] = {
+        cwd,
+        command: cfg.command,
+        timeoutMs: cfg.timeoutMs ?? defaultTimeoutMs,
+      };
+      if (opts.signal) runOpts.signal = opts.signal;
+      const result = await this.runner.run(runOpts);
 
-          const durationMs = Date.now() - t0;
-          const status: "passed" | "failed" = result.exitCode === 0 ? "passed" : "failed";
+      const durationMs = Date.now() - t0;
+      const status: "passed" | "failed" = result.exitCode === 0 ? "passed" : "failed";
 
-          return {
-            id,
-            name: cfg.name,
-            command: cfg.command,
-            status,
-            startedAt,
-            completedAt: new Date().toISOString(),
-            durationMs,
-            exitCode: result.timedOut ? -1 : result.exitCode,
-            stdoutTail: tail(result.stdout),
-            stderrTail: tail(result.stderr),
-          };
-        }),
-      ),
-    );
+      checks.push({
+        id,
+        name: cfg.name,
+        command: cfg.command,
+        status,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs,
+        exitCode: result.timedOut ? -1 : result.exitCode,
+        stdoutTail: tail(result.stdout),
+        stderrTail: tail(result.stderr),
+      });
+    }
 
     const failed = checks.filter((c) => c.status === "failed");
     const requiredNames = new Set(

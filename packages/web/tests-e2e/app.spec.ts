@@ -196,7 +196,7 @@ async function addConnection(page: Page): Promise<void> {
   await page.getByPlaceholder("http://localhost:3000").fill(ENGINE_URL);
   await page.getByPlaceholder("secret").fill("token");
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Fixture engine/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Fixture engine", exact: true })).toBeVisible();
 }
 
 test.beforeEach(async ({ context }) => {

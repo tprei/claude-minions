@@ -8,6 +8,21 @@ import type {
   ProviderResumeSpec,
 } from "../provider-plugin.js";
 
+function toolResultTextSegments(content: unknown): string[] {
+  if (typeof content === "string") return [content];
+  if (!Array.isArray(content)) return [];
+
+  return content.flatMap((block) => {
+    if (typeof block !== "object" || block === null) return [];
+    const record = block as Record<string, unknown>;
+    return record["type"] === "text" && typeof record["text"] === "string" ? [record["text"]] : [];
+  });
+}
+
+function hasStreamIdleTimeout(content: unknown): boolean {
+  return toolResultTextSegments(content).some((text) => /^\s*API Error:\s*Stream idle timeout\b/i.test(text));
+}
+
 export class ClaudeCodeProvider implements ProviderPlugin {
   readonly name = "claude-code";
 
@@ -155,7 +170,7 @@ USER QUESTION:
               kind: "tool_result",
               id: String(b["tool_use_id"] ?? ""),
               output: b["content"],
-              isError: b["is_error"] === true,
+              isError: b["is_error"] === true || hasStreamIdleTimeout(b["content"]),
             });
           }
         }
