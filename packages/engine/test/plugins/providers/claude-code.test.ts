@@ -233,6 +233,22 @@ describe("ClaudeCodeProvider", () => {
     expect(events).toEqual([{ kind: "tool_result", id: "tr1", output: "ok", isError: false }]);
   });
 
+  it("user message tool_result marks stream idle timeout envelope as error", () => {
+    const content = [
+      { type: "text", text: "API Error: Stream idle timeout - partial response received" },
+      { type: "text", text: "agentId: ad050485013fff517" },
+    ];
+    const line = encode({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tr1", content, is_error: false }],
+      },
+    });
+    const events = provider.parseFrame(line);
+    expect(events).toEqual([{ kind: "tool_result", id: "tr1", output: content, isError: true }]);
+  });
+
   describe("prepare", () => {
     it("returns correct argv shape with commit preamble wrapped around the user prompt", async () => {
       const inv = await provider.prepare({
