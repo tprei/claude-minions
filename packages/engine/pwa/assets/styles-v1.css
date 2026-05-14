@@ -290,6 +290,7 @@ main {
 }
 
 .task-card {
+  position: relative;
   border-left: 2px solid var(--fg-faint);
   border-top: 1px solid var(--rule);
   border-right: 1px solid var(--rule);
@@ -310,6 +311,21 @@ main {
 .task-card.status-review  { border-left-color: var(--status-review); }
 .task-card.status-done    { border-left-color: var(--status-done); }
 .task-card.status-failed  { border-left-color: var(--status-failed); }
+
+.task-card.status-running::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  z-index: 0;
+  animation: scan 1.8s linear infinite;
+}
 
 .task-card-title {
   font-size: 13px;
@@ -340,6 +356,11 @@ main {
 @keyframes card-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scan {
+  from { background-position: -100% 0; }
+  to   { background-position: 200% 0; }
 }
 
 /* ── Transcript ── */
