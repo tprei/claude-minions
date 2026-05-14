@@ -98,6 +98,7 @@ header h1 {
   border-radius: 50%;
   background: var(--fg-faint);
   display: inline-block;
+  position: relative;
 }
 
 .live-indicator.connected {
@@ -107,6 +108,14 @@ header h1 {
 .live-indicator.connected .live-dot {
   background: var(--accent);
   animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.live-indicator.connected .live-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation: pulse-dot-ring 2s ease-in-out infinite;
 }
 
 .live-indicator.reconnecting {
@@ -120,6 +129,11 @@ header h1 {
 @keyframes pulse-dot {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
+}
+
+@keyframes pulse-dot-ring {
+  0% { box-shadow: 0 0 0 0 var(--accent); }
+  100% { box-shadow: 0 0 0 6px transparent; }
 }
 
 /* ── Push Banner ── */
