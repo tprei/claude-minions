@@ -15,6 +15,31 @@ let transcriptScrollTimer = null;
 let transcriptScrollDeadline = 0;
 let transcriptScrollPending = null;
 
+let headerReconnectingTimer = null;
+
+function setStreamStatus(newStatus) {
+  const prev = state.streamStatus;
+  if (prev === newStatus) return;
+  state.streamStatus = newStatus;
+  if (
+    (prev === "connected" && newStatus === "reconnecting") ||
+    (prev === "reconnecting" && newStatus === "connected")
+  ) {
+    pulseHeaderReconnecting();
+  }
+}
+
+function pulseHeaderReconnecting() {
+  const header = document.querySelector(".header");
+  if (!header) return;
+  header.classList.add("reconnecting");
+  if (headerReconnectingTimer) clearTimeout(headerReconnectingTimer);
+  headerReconnectingTimer = setTimeout(() => {
+    header.classList.remove("reconnecting");
+    headerReconnectingTimer = null;
+  }, 400);
+}
+
 function scrollTranscriptNodeIntoView(node) {
   transcriptScrollPending = node;
   if (transcriptScrollTimer !== null) return;
@@ -108,7 +133,7 @@ export function loadWorkflowAndSubscribe(id) {
 function openStream(id) {
   closeStream();
   es = new EventSource(`/workflows/${id}/events`);
-  state.streamStatus = "connected";
+  setStreamStatus("connected");
   updateLiveIndicator();
 
   es.addEventListener("task-transitioned", (e) => {
@@ -146,7 +171,7 @@ function openStream(id) {
   });
 
   es.onerror = () => {
-    state.streamStatus = "reconnecting";
+    setStreamStatus("reconnecting");
     updateLiveIndicator();
   };
 }
@@ -156,7 +181,7 @@ function closeStream() {
     es.close();
     es = null;
   }
-  state.streamStatus = "closed";
+  setStreamStatus("closed");
   const streaming = document.querySelector(".transcript .msg.streaming");
   if (streaming) streaming.classList.remove("streaming");
   updateLiveIndicator();
@@ -411,6 +436,7 @@ function render() {
 
 function renderHeader(container) {
   const hdr = document.createElement("header");
+  hdr.className = "header";
 
   const h1 = document.createElement("h1");
   h1.textContent = "Minions";

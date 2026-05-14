@@ -12,6 +12,7 @@
   --status-done: #5fb47f;
   --status-failed: #c1473e;
   --status-info: #5b9bd5;
+  --status-warn: #d4a017;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -71,6 +72,14 @@ header {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+.header {
+  transition: border-bottom-color 200ms ease;
+}
+
+.header.reconnecting {
+  border-bottom-color: var(--status-warn, #d4a017);
 }
 
 header h1 {
