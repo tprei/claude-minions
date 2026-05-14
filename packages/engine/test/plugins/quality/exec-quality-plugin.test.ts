@@ -143,13 +143,15 @@ describe("ExecQualityPlugin — run", () => {
     expect(result.checks[0]?.exitCode).toBe(-1);
   });
 
-  it("pLimit(2): 4 checks * 100ms delay take ~200ms not ~400ms", async () => {
+  it("runs checks serially in config order", async () => {
     let running = 0;
     let maxConcurrent = 0;
+    const started: string[] = [];
     const runner = makeRunner(async () => {
       running++;
       maxConcurrent = Math.max(maxConcurrent, running);
-      await new Promise((r) => setTimeout(r, 100));
+      started.push(String.fromCharCode(96 + started.length + 1));
+      await new Promise((r) => setTimeout(r, 10));
       running--;
       return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
     });
@@ -160,12 +162,9 @@ describe("ExecQualityPlugin — run", () => {
       { name: "c", command: "c" },
       { name: "d", command: "d" },
     ];
-    const t0 = Date.now();
     await plugin.run(configs, "/workspace", {});
-    const elapsed = Date.now() - t0;
-    expect(maxConcurrent).toBeLessThanOrEqual(2);
-    expect(elapsed).toBeLessThan(350);
-    expect(elapsed).toBeGreaterThan(150);
+    expect(maxConcurrent).toBe(1);
+    expect(started).toEqual(["a", "b", "c", "d"]);
   }, 5000);
 
   it("tail truncation: long stdout is trimmed to 4096 chars", async () => {
