@@ -464,7 +464,11 @@ function renderPushBanner() {
     const span = document.createElement("span");
     span.textContent = "notifications active ✓";
     banner.appendChild(span);
-    setTimeout(() => banner.remove(), 3000);
+    setTimeout(() => {
+      banner.style.maxHeight = "0";
+      banner.style.opacity = "0";
+      banner.addEventListener("transitionend", () => banner.remove(), { once: true });
+    }, 3000);
     return;
   }
 
