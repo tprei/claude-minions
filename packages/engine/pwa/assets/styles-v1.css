@@ -405,10 +405,15 @@ main {
   display: flex;
   flex-direction: column;
   background: var(--bg);
+  transition: border-top-color 200ms ease;
 }
 
 .reply:focus-within {
   border-top-color: var(--accent);
+}
+
+.reply.sent {
+  border-top-color: var(--status-done);
 }
 
 .reply textarea {

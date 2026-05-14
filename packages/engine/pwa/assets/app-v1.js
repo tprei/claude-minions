@@ -303,7 +303,14 @@ function submitReply(taskId, prompt, fresh) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }).catch(() => {});
+  })
+    .then(() => {
+      const reply = document.querySelector(".reply");
+      if (!reply) return;
+      reply.classList.add("sent");
+      setTimeout(() => reply.classList.remove("sent"), 200);
+    })
+    .catch(() => {});
 }
 
 function setupPush(workflowId) {
