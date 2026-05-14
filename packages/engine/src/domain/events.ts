@@ -1,117 +1,22 @@
-// Events are produced with cursor: 0 as a placeholder. The repository
-// overwrites cursor values at save time before persisting.
 import type { TransitionKind } from "../application/transitions.js";
-import type { NodeRunTerminalReason } from "./runs.js";
-import type {
-  GraphOperationKind,
-  GraphOperationStatus,
-  TaskExecutionStatus,
-  TaskStackStatus,
-  Workflow,
-  WorkflowStatus,
-} from "./types.js";
-import type { ProviderEvent } from "../plugins/provider-plugin.js";
+import type { RunEndedPayload, RunStartedPayload, TaskTransitionedPayload, WorkflowEvent } from "@minions/shared";
+import type { Workflow } from "./types.js";
 
-export type WorkflowEventKind =
-  | "task-transitioned"
-  | "graph-operation-changed"
-  | "run-started"
-  | "run-ended"
-  | "workflow-status-changed"
-  | "provider-event"
-  | "merge-phase"
-  | "ci-poll-result";
-
-export interface TaskTransitionedPayload {
-  taskId: string;
-  transitionKind?: TransitionKind;
-  fromExecutionStatus: TaskExecutionStatus;
-  toExecutionStatus: TaskExecutionStatus;
-  fromStackStatus: TaskStackStatus;
-  toStackStatus: TaskStackStatus;
-  taskVersion: number;
-}
-
-export interface GraphOperationChangedPayload {
-  operationId: string;
-  kind: GraphOperationKind;
-  fromStatus: GraphOperationStatus | null;
-  toStatus: GraphOperationStatus;
-}
-
-export interface RunStartedPayload {
-  runId: string;
-  taskId: string;
-  attempt: number;
-  runtimeSessionId: string;
-  providerSessionRef?: string;
-  providerType: string;
-  runtimeType: string;
-}
-
-export interface RunEndedPayload {
-  runId: string;
-  taskId: string;
-  attempt: number;
-  terminalReason: NodeRunTerminalReason;
-  providerSessionRef?: string;
-}
-
-export interface WorkflowStatusChangedPayload {
-  fromStatus: WorkflowStatus;
-  toStatus: WorkflowStatus;
-}
-
-export interface ProviderEventPayload {
-  taskId: string;
-  runId: string;
-  providerEvent: ProviderEvent;
-}
-
-export type MergePhase = "prepareMerge" | "commit" | "squash" | "rebase" | "applyMerge" | "finalize";
-
-export interface MergePhasePayload {
-  taskId: string;
-  phase: MergePhase;
-  status: "started" | "completed";
-  error?: string;
-}
-
-export type CIPollOverallStatus = "pending" | "success" | "failure" | "neutral";
-
-export interface CIPollCheck {
-  name: string;
-  status: "queued" | "in_progress" | "completed";
-  conclusion?: string | null;
-  url?: string;
-}
-
-export interface CIPollResultPayload {
-  taskId: string;
-  runId?: string;
-  prNumber: number;
-  headSha: string;
-  overallStatus: CIPollOverallStatus;
-  checks: CIPollCheck[];
-}
-
-interface EventBase {
-  cursor: number;
-  workflowId: string;
-  occurredAt: string;
-}
-
-export type WorkflowEvent = EventBase &
-  (
-    | { kind: "task-transitioned"; payload: TaskTransitionedPayload }
-    | { kind: "graph-operation-changed"; payload: GraphOperationChangedPayload }
-    | { kind: "run-started"; payload: RunStartedPayload }
-    | { kind: "run-ended"; payload: RunEndedPayload }
-    | { kind: "workflow-status-changed"; payload: WorkflowStatusChangedPayload }
-    | { kind: "provider-event"; payload: ProviderEventPayload }
-    | { kind: "merge-phase"; payload: MergePhasePayload }
-    | { kind: "ci-poll-result"; payload: CIPollResultPayload }
-  );
+export type {
+  CIPollCheck,
+  CIPollOverallStatus,
+  CIPollResultPayload,
+  GraphOperationChangedPayload,
+  MergePhase,
+  MergePhasePayload,
+  ProviderEventPayload,
+  RunEndedPayload,
+  RunStartedPayload,
+  TaskTransitionedPayload,
+  WorkflowEvent,
+  WorkflowEventKind,
+  WorkflowStatusChangedPayload,
+} from "@minions/shared";
 
 export function deriveEvents(
   prev: Workflow,

@@ -22,6 +22,12 @@ const ASKPASS_PATH = join(
   "../../../scripts/gh-askpass.sh",
 );
 
+function isStalePushRejection(err: unknown): boolean {
+  if (!(err instanceof GitError)) return false;
+  const output = `${err.stdout}\n${err.stderr}`;
+  return /fetch first|stale info|stale info was rejected|non-fast-forward|failed to push some refs/i.test(output);
+}
+
 export interface GitHubScmPluginDeps {
   github: GitHubClient;
   git: GitClient;
@@ -80,9 +86,18 @@ export class GitHubScmPlugin implements SCMPlugin {
   }
 
   async pushBranch(path: string, branch: string): Promise<void> {
-    await this.git.run(path, ["push", "-u", "--force-with-lease", "origin", branch], {
+    const push = () => this.git.run(path, ["push", "-u", "--force-with-lease", "origin", branch], {
       env: { GIT_ASKPASS: ASKPASS_PATH, GH_TOKEN: this.token },
     });
+    try {
+      await push();
+    } catch (err) {
+      if (!isStalePushRejection(err)) throw err;
+      await this.git.run(path, ["fetch", "origin", branch], {
+        env: { GIT_ASKPASS: ASKPASS_PATH, GH_TOKEN: this.token },
+      });
+      await push();
+    }
   }
 
   async summarizeBranch(path: string, baseBranch: string): Promise<BranchSummary> {

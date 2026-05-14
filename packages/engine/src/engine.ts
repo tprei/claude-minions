@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { dirname, basename, join, isAbsolute, resolve, relative } from "node:path";
+import { statfs } from "node:fs/promises";
 import { runBootRecovery } from "./application/boot.js";
 import type { BootRecoveryReport, BootRespawnContext } from "./application/boot.js";
 import type { SCMPlugin } from "./plugins/scm-plugin.js";
@@ -85,6 +86,52 @@ export interface EngineConfig {
   ciBabysitterCadence?: PollCadence;
   supervisor?: SupervisorWithRepos;
   scanIntervalMs?: number;
+  recoveryScanIntervalMs?: number;
+  providerName?: string;
+  buildSha?: string;
+  startedAt?: string;
+}
+
+const ENGINE_FEATURES = [
+  "workflows",
+  "workflow-planning",
+  "task-transitions",
+  "scheduler",
+  "provider-orchestration",
+  "transcripts",
+  "recovery",
+  "restack",
+  "quality-gates",
+  "github-prs",
+  "ci-babysit",
+  "local-finalize",
+  "push",
+  "supervisor",
+  "audit",
+  "observability",
+  "pwa-connections",
+  "snapshot-cache",
+  "status-rendering",
+  "slash-commands",
+  "voice-input",
+  "runtime-diagnostics",
+] as const;
+
+type DoctorStatus = "ok" | "degraded" | "error";
+
+interface DoctorCheck {
+  name: string;
+  status: DoctorStatus;
+  detail?: string;
+  checkedAt: string;
+}
+
+interface SubscriberCountRepo {
+  subscriberCount(workflowId: string): number;
+}
+
+interface PragmasRepo {
+  getPragmas(): { journalMode: string; busyTimeout: number; foreignKeys: number };
 }
 
 function resolveVapid(config: EngineConfig): VapidConfig | undefined {
@@ -107,6 +154,8 @@ export interface Engine {
 }
 
 export async function createEngine(config: EngineConfig): Promise<Engine> {
+  const startedAt = config.startedAt ?? new Date().toISOString();
+  const buildSha = config.buildSha ?? process.env["MWF_BUILD_SHA"] ?? process.env["GITHUB_SHA"] ?? "unknown";
   const ownsSinks = config.log === undefined;
   const baseSinks: Sink[] = ownsSinks ? (config.logSinks ?? buildSinksFromEnv()) : [];
 
@@ -329,8 +378,8 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   const githubToken = config.githubToken ?? process.env["MWF_GITHUB_TOKEN"];
   const scmOverride = config.scm;
   const ghClientOverride = config.githubClient;
-  const githubEnabled = (githubToken && config.githubRepo) ||
-                        (config.githubRepo && (scmOverride !== undefined || ghClientOverride !== undefined));
+  const githubEnabled = Boolean((githubToken && config.githubRepo) ||
+                        (config.githubRepo && (scmOverride !== undefined || ghClientOverride !== undefined)));
 
   if (githubEnabled && config.githubRepo) {
     if (workspace instanceof StubWorkspaceBackend) {
@@ -469,6 +518,67 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   serverDeps.observability = observability;
   serverDeps.log = log.child({ component: "transport" });
   serverDeps.supervisor = supervisor;
+  serverDeps.versionInfo = () => ({
+    apiVersion: "workflow-v1",
+    libraryVersion: "0.1.0",
+    buildSha,
+    features: [...ENGINE_FEATURES],
+    featuresPending: [],
+    provider: config.providerName ?? process.env["MWF_PROVIDER"] ?? (config.providerFactory ? "configured" : "stub"),
+    providers: ["claude-code", "codex", "stub"],
+    repos: buildRepoBindings(config),
+    pluginSet: buildPluginSet({
+      runtime,
+      workspace,
+      githubEnabled,
+      qualityEnabled: config.qualityPlugin !== undefined,
+      pushEnabled: vapid !== undefined,
+    }),
+    startedAt,
+  });
+  serverDeps.doctor = () => {
+    const input: Parameters<typeof buildDoctorReport>[0] = {
+      repo,
+      dbPath: config.dbPath,
+      dataDir,
+      workspace,
+      runtime,
+      githubEnabled,
+      githubTokenPresent: githubToken !== undefined,
+      pushEnabled: vapid !== undefined,
+      now,
+    };
+    if (config.repoPath !== undefined) input.repoPath = config.repoPath;
+    return buildDoctorReport(input);
+  };
+  serverDeps.metrics = () => {
+    const input: Parameters<typeof buildMetrics>[0] = { repo, supervisor, startedAt };
+    if (serverDeps.schedulerService !== undefined) input.schedulerService = serverDeps.schedulerService;
+    return buildMetrics(input);
+  };
+
+  let periodicRecoveryTimer: ReturnType<typeof setInterval> | undefined;
+  let periodicRecoveryInFlight = false;
+  const recoveryScanIntervalMs = config.recoveryScanIntervalMs ?? 5 * 60_000;
+  if (recoveryScanIntervalMs > 0) {
+    const recoveryLog = log.child({ component: "periodic-recovery" });
+    periodicRecoveryTimer = setInterval(() => {
+      if (periodicRecoveryInFlight) return;
+      periodicRecoveryInFlight = true;
+      void runBootRecovery(repo, recoveryService, runtime, {
+        now,
+        staleReadyMs,
+        staleGateMs,
+      }).then((report) => {
+        recoveryLog.info("periodic recovery complete", { kind: "periodic-recovery", report });
+      }).catch((err: unknown) => {
+        recoveryLog.error("periodic recovery failed", { kind: "periodic-recovery", error: (err as Error).message });
+      }).finally(() => {
+        periodicRecoveryInFlight = false;
+      });
+    }, recoveryScanIntervalMs);
+    periodicRecoveryTimer.unref?.();
+  }
 
   const server = createServer(serverDeps);
 
@@ -486,6 +596,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       localFinalizeAbort?.abort();
       schedulerAbort?.abort();
       observabilityAbort.abort();
+      if (periodicRecoveryTimer !== undefined) clearInterval(periodicRecoveryTimer);
       for (const entry of activeOrchestrators) {
         entry.controller.abort();
       }
@@ -495,4 +606,168 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       if (ownsSinks) await Promise.all(sinks.map((s) => s.close?.() ?? Promise.resolve()));
     },
   };
+}
+
+function buildRepoBindings(config: EngineConfig): Array<{ id: string; label: string; remote?: string; defaultBranch?: string }> {
+  if (config.githubRepo !== undefined) {
+    return [{
+      id: `${config.githubRepo.owner}/${config.githubRepo.repo}`,
+      label: `${config.githubRepo.owner}/${config.githubRepo.repo}`,
+      remote: `https://github.com/${config.githubRepo.owner}/${config.githubRepo.repo}.git`,
+      defaultBranch: config.githubBaseBranch ?? "main",
+    }];
+  }
+  if (config.repoPath !== undefined) {
+    return [{
+      id: config.repoPath,
+      label: basename(config.repoPath),
+      defaultBranch: config.githubBaseBranch ?? "main",
+    }];
+  }
+  return [];
+}
+
+function buildPluginSet(input: {
+  runtime: RuntimeBackend;
+  workspace: WorkspaceBackend;
+  githubEnabled: boolean;
+  qualityEnabled: boolean;
+  pushEnabled: boolean;
+}): string[] {
+  return [
+    `runtime:${input.runtime.constructor.name}`,
+    `workspace:${input.workspace.constructor.name}`,
+    input.githubEnabled ? "scm:github" : "scm:local",
+    input.qualityEnabled ? "quality:enabled" : "quality:disabled",
+    input.pushEnabled ? "push:enabled" : "push:disabled",
+  ];
+}
+
+async function buildDoctorReport(input: {
+  repo: WorkflowRepository;
+  dbPath: string;
+  dataDir: string;
+  repoPath?: string;
+  workspace: WorkspaceBackend;
+  runtime: RuntimeBackend;
+  githubEnabled: boolean;
+  githubTokenPresent: boolean;
+  pushEnabled: boolean;
+  now: () => string;
+}): Promise<{ status: DoctorStatus; checks: DoctorCheck[]; checkedAt: string }> {
+  const checkedAt = input.now();
+  const checks: DoctorCheck[] = [];
+  const add = (check: Omit<DoctorCheck, "checkedAt">): void => {
+    checks.push({ ...check, checkedAt });
+  };
+
+  const pragmas = hasPragmas(input.repo) ? input.repo.getPragmas() : undefined;
+  add(pragmas?.journalMode.toLowerCase() === "wal"
+    ? { name: "sqlite-wal", status: "ok", detail: "journal_mode=wal" }
+    : { name: "sqlite-wal", status: "error", detail: `journal_mode=${pragmas?.journalMode ?? "unknown"}` });
+  add(pragmas !== undefined && pragmas.busyTimeout >= 5000
+    ? { name: "sqlite-busy-timeout", status: "ok", detail: `busy_timeout=${pragmas.busyTimeout}` }
+    : { name: "sqlite-busy-timeout", status: "error", detail: `busy_timeout=${pragmas?.busyTimeout ?? "unknown"}` });
+
+  add(input.repoPath !== undefined
+    ? { name: "repo-state", status: "ok", detail: input.repoPath }
+    : { name: "repo-state", status: "degraded", detail: "repoPath is not configured" });
+  add(input.workspace.constructor.name === "GitWorktreeWorkspaceBackend"
+    ? { name: "worktree-health", status: "ok", detail: "git worktree backend configured" }
+    : { name: "worktree-health", status: "degraded", detail: input.workspace.constructor.name });
+  add(input.runtime.constructor.name === "TmuxRuntimeBackend"
+    ? { name: "tmux-runtime", status: "ok", detail: "tmux runtime configured" }
+    : { name: "tmux-runtime", status: "degraded", detail: input.runtime.constructor.name });
+  add(input.githubEnabled && input.githubTokenPresent
+    ? { name: "github-auth", status: "ok", detail: "GitHub integration configured" }
+    : { name: "github-auth", status: "degraded", detail: "GitHub integration is disabled" });
+  add(input.pushEnabled
+    ? { name: "push-config", status: "ok", detail: "VAPID configured" }
+    : { name: "push-config", status: "degraded", detail: "VAPID is not configured" });
+  add({ name: "dependency-cache", status: "degraded", detail: "no dependency cache is configured in the engine port" });
+
+  try {
+    const fs = await statfs(dirname(input.dbPath));
+    const freeBytes = fs.bavail * fs.bsize;
+    const threshold = 1024 * 1024 * 1024;
+    add(freeBytes >= threshold
+      ? { name: "disk-free", status: "ok", detail: `${freeBytes}` }
+      : { name: "disk-free", status: "error", detail: `${freeBytes}` });
+  } catch (err) {
+    add({ name: "disk-free", status: "error", detail: (err as Error).message });
+  }
+
+  const status: DoctorStatus = checks.some((check) => check.status === "error")
+    ? "error"
+    : checks.some((check) => check.status === "degraded")
+      ? "degraded"
+      : "ok";
+  return { status, checks, checkedAt };
+}
+
+async function buildMetrics(input: {
+  repo: WorkflowRepository;
+  schedulerService?: SchedulerService;
+  supervisor: SupervisorWithRepos;
+  startedAt: string;
+}): Promise<string> {
+  const workflows = await input.repo.list({ includeCompleted: true });
+  const recoverable = await input.repo.listRecoverable();
+  const schedulerStats = input.schedulerService?.getStats() ?? { attachedWorkflows: 0, inFlight: 0 };
+  let subscriberTotal = 0;
+  if (hasSubscriberCount(input.repo)) {
+    const subscriberRepo = input.repo;
+    subscriberTotal = workflows.reduce((total, workflow) => total + subscriberRepo.subscriberCount(workflow.id), 0);
+  }
+  const alerts = input.supervisor.alertRepo.list({ limit: 500 });
+  const lines: string[] = [
+    "# HELP minions_workflows_total Workflows by status",
+    "# TYPE minions_workflows_total gauge",
+  ];
+  const statusCounts = new Map<string, number>();
+  for (const workflow of workflows) {
+    statusCounts.set(workflow.status, (statusCounts.get(workflow.status) ?? 0) + 1);
+  }
+  for (const [status, count] of statusCounts) {
+    lines.push(`minions_workflows_total{status=${quoteLabel(status)}} ${count}`);
+  }
+  lines.push("# HELP minions_recoverable_workflows Workflows eligible for recovery");
+  lines.push("# TYPE minions_recoverable_workflows gauge");
+  lines.push(`minions_recoverable_workflows ${recoverable.length}`);
+  lines.push("# HELP minions_subscriber_hub_subscribers Active SSE subscribers");
+  lines.push("# TYPE minions_subscriber_hub_subscribers gauge");
+  lines.push(`minions_subscriber_hub_subscribers ${subscriberTotal}`);
+  lines.push("# HELP minions_scheduler_in_flight In-flight scheduler dispatches");
+  lines.push("# TYPE minions_scheduler_in_flight gauge");
+  lines.push(`minions_scheduler_in_flight ${schedulerStats.inFlight}`);
+  lines.push("# HELP minions_scheduler_attached_workflows Scheduler attached workflow count");
+  lines.push("# TYPE minions_scheduler_attached_workflows gauge");
+  lines.push(`minions_scheduler_attached_workflows ${schedulerStats.attachedWorkflows}`);
+  lines.push("# HELP minions_alerts_total Alerts by kind and severity in the retained window");
+  lines.push("# TYPE minions_alerts_total gauge");
+  const alertCounts = new Map<string, number>();
+  for (const alert of alerts) {
+    const key = `${alert.kind}\u0000${alert.severity}`;
+    alertCounts.set(key, (alertCounts.get(key) ?? 0) + 1);
+  }
+  for (const [key, count] of alertCounts) {
+    const [kind, severity] = key.split("\u0000");
+    lines.push(`minions_alerts_total{kind=${quoteLabel(kind ?? "")},severity=${quoteLabel(severity ?? "")}} ${count}`);
+  }
+  lines.push("# HELP minions_engine_started_at_seconds Engine start time as Unix timestamp");
+  lines.push("# TYPE minions_engine_started_at_seconds gauge");
+  lines.push(`minions_engine_started_at_seconds ${Math.floor(Date.parse(input.startedAt) / 1000)}`);
+  return `${lines.join("\n")}\n`;
+}
+
+function hasSubscriberCount(repo: WorkflowRepository): repo is WorkflowRepository & SubscriberCountRepo {
+  return typeof (repo as Partial<SubscriberCountRepo>).subscriberCount === "function";
+}
+
+function hasPragmas(repo: WorkflowRepository): repo is WorkflowRepository & PragmasRepo {
+  return typeof (repo as Partial<PragmasRepo>).getPragmas === "function";
+}
+
+function quoteLabel(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"").replace(/\n/g, "\\n")}"`;
 }

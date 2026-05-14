@@ -5,8 +5,12 @@ import { FakeGitHubClient, asGitHubClient } from "../fixtures/fake-github-client
 import { slugify } from "../../src/plugins/workspace-backend.js";
 import { StubProviderPlugin } from "../../src/plugins/providers/stub.js";
 import { SQLiteWorkflowRepository } from "../../src/persistence/sqlite-repo.js";
+import { applyCommand } from "../../src/application/commands.js";
+import { createWorkflow } from "../../src/domain/workflow.js";
 import type { Workflow } from "../../src/domain/types.js";
 import type { MergePhasePayload, TaskTransitionedPayload } from "../../src/domain/events.js";
+import type { RuntimeAttachOptions, RuntimeBackend, RuntimeOutputChunk, RuntimeStartResult, RuntimeStartSpec } from "../../src/plugins/runtime-backend.js";
+import type { RuntimeProbeState } from "../../src/application/recovery.js";
 
 const FAST_CADENCE = {
   intervals: [{ afterMs: 0, everyMs: 10 }],
@@ -51,6 +55,32 @@ async function postCommand(
     const text = await res.text();
     throw new Error(`POST /commands → ${res.status}: ${text}`);
   }
+}
+
+function makeFinalChunkRuntime(frameCount: number): RuntimeBackend {
+  let startCount = 0;
+  return {
+    async start(_spec: RuntimeStartSpec): Promise<RuntimeStartResult> {
+      startCount += 1;
+      return { sessionId: `stub-${startCount}`, runtimeType: "stub" };
+    },
+    async stop(): Promise<void> {},
+    async probe(): Promise<RuntimeProbeState> {
+      return "live";
+    },
+    attach(sessionId: string, _opts?: RuntimeAttachOptions): AsyncIterable<RuntimeOutputChunk> {
+      return {
+        [Symbol.asyncIterator]: async function* () {
+          let offset = 0;
+          for (let i = 0; i < frameCount; i++) {
+            const bytes = new TextEncoder().encode(`frame-${i}\n`);
+            yield { sessionId, offset, bytes };
+            offset += bytes.byteLength;
+          }
+        },
+      };
+    },
+  };
 }
 
 describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
@@ -125,10 +155,9 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
         transition: { kind: "complete-runtime", taskId, expectedSessionId: sessionId, artifacts: [], now },
       });
 
-      // Wait for quality gate to run and transition to finalizing
       await waitFor(async () => {
         const wf = await getWorkflow(harness.fetch, wfId);
-        return wf.graph[taskId]?.executionStatus === "finalizing";
+        return wf.graph[taskId]?.executionStatus === "pr-open";
       });
 
       // POST merge via HTTP
@@ -159,8 +188,18 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
       ];
       expect(transitions).toEqual(expectedTransitions);
 
-      // All 12 merge-phase events (6 phases × {started, completed})
+      const openOnlyPhases: Array<{ phase: string; status: string }> = [
+        { phase: "prepareMerge", status: "started" },
+        { phase: "prepareMerge", status: "completed" },
+        { phase: "commit", status: "started" },
+        { phase: "commit", status: "completed" },
+        { phase: "squash", status: "started" },
+        { phase: "squash", status: "completed" },
+        { phase: "rebase", status: "started" },
+        { phase: "rebase", status: "completed" },
+      ];
       const expectedMergePhases: Array<{ phase: string; status: string }> = [
+        ...openOnlyPhases,
         { phase: "prepareMerge", status: "started" },
         { phase: "prepareMerge", status: "completed" },
         { phase: "commit", status: "started" },
@@ -197,13 +236,13 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
       scm,
       githubClient: asGitHubClient(fakeGhClient),
       ciBabysitterCadence: FAST_CADENCE,
-      providerFactory: () => new StubProviderPlugin({ frames: [] }),
+      providerFactory: () => new StubProviderPlugin({ frames: [[{ kind: "final", sessionRef: "auto-ref" }]] }),
+      runtime: makeFinalChunkRuntime(1),
     });
 
     try {
       const wfId = "wf-automerge-2";
       const taskId = "t1";
-      const now = new Date().toISOString();
 
       const createRes = await harness.fetch("/workflows", {
         method: "POST",
@@ -217,36 +256,8 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
       });
       expect(createRes.status).toBe(201);
 
-      await postCommand(harness.fetch, {
-        kind: "transition-task",
-        workflowId: wfId,
-        transition: { kind: "mark-ready", taskId, now },
-      });
-
       const branch = `minions/${slugify(wfId)}_${slugify(taskId)}`;
-      const handle = await harness.workspace.create({
-        workflowId: wfId,
-        taskId,
-        branch,
-        mode: "worktree",
-      });
 
-      const sessionId = "sess-2";
-      await postCommand(harness.fetch, {
-        kind: "transition-task",
-        workflowId: wfId,
-        transition: { kind: "mark-running", taskId, sessionId, workspaceId: handle.workspaceId, now },
-      });
-
-      await scm.seedTaskCommit(handle.path, "task-output.txt", "task work\n");
-
-      await postCommand(harness.fetch, {
-        kind: "transition-task",
-        workflowId: wfId,
-        transition: { kind: "complete-runtime", taskId, expectedSessionId: sessionId, artifacts: [], now },
-      });
-
-      // Wait for quality gate → finalizing → pr-open (via CompletionDispatcher autoLand)
       await waitFor(async () => {
         const wf = await getWorkflow(harness.fetch, wfId);
         return wf.graph[taskId]?.executionStatus === "pr-open";
@@ -458,7 +469,6 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
   it("Test 4: boot recovery mid-pipeline", async () => {
     const harness = await makeHarness({
       withRealQuality: false,
-      // No scm on engine A — no CompletionDispatcher, no auto openOnly
     });
 
     const wfId = "wf-recovery-4";
@@ -470,59 +480,59 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
 
     try {
       try {
-        const createRes = await harness.fetch("/workflows", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        await harness.engine.close();
+
+        const setupRepo = new SQLiteWorkflowRepository(harness.dbPath);
+        try {
+          const workflow = createWorkflow({
             id: wfId,
             kind: "single-task",
             tasks: [{ id: taskId, title: "Recovery Task", prompt: "recover me" }],
             policy: { autoLand: true },
-          }),
-        });
-        expect(createRes.status).toBe(201);
+          });
+          await setupRepo.save(workflow, []);
 
-        await postCommand(harness.fetch, {
-          kind: "transition-task",
-          workflowId: wfId,
-          transition: { kind: "mark-ready", taskId, now },
-        });
+          await applyCommand(setupRepo, {
+            kind: "transition-task",
+            workflowId: wfId,
+            transition: { kind: "mark-ready", taskId, now },
+          });
 
-        const handle = await harness.workspace.create({
-          workflowId: wfId,
-          taskId,
-          branch,
-          mode: "worktree",
-        });
-        workspaceId = handle.workspaceId;
+          const handle = await harness.workspace.create({
+            workflowId: wfId,
+            taskId,
+            branch,
+            mode: "worktree",
+          });
+          workspaceId = handle.workspaceId;
 
-        await postCommand(harness.fetch, {
-          kind: "transition-task",
-          workflowId: wfId,
-          transition: { kind: "mark-running", taskId, sessionId: "sess-4", workspaceId, now },
-        });
+          await applyCommand(setupRepo, {
+            kind: "transition-task",
+            workflowId: wfId,
+            transition: { kind: "mark-running", taskId, sessionId: "sess-4", workspaceId, now },
+          });
 
-        // Seed a real commit on the task branch before completing runtime
-        const scmA = new FakeSCM();
-        await scmA.seedTaskCommit(handle.path, "task-output.txt", "recovery task work\n");
+          const scmA = new FakeSCM();
+          await scmA.seedTaskCommit(handle.path, "task-output.txt", "recovery task work\n");
 
-        await postCommand(harness.fetch, {
-          kind: "transition-task",
-          workflowId: wfId,
-          transition: { kind: "complete-runtime", taskId, expectedSessionId: "sess-4", artifacts: [], now },
-        });
+          await applyCommand(setupRepo, {
+            kind: "transition-task",
+            workflowId: wfId,
+            transition: { kind: "complete-runtime", taskId, expectedSessionId: "sess-4", artifacts: [], now },
+          });
 
-        await postCommand(harness.fetch, {
-          kind: "transition-task",
-          workflowId: wfId,
-          transition: { kind: "start-finalization", taskId, now },
-        });
+          await applyCommand(setupRepo, {
+            kind: "transition-task",
+            workflowId: wfId,
+            transition: { kind: "start-finalization", taskId, now },
+          });
 
-        // Verify task is at finalizing before engine A closes
-        const preClosedWf = await getWorkflow(harness.fetch, wfId);
-        expect(preClosedWf.graph[taskId]?.executionStatus).toBe("finalizing");
+          const preClosedWf = await setupRepo.get(wfId);
+          expect(preClosedWf?.graph[taskId]?.executionStatus).toBe("finalizing");
+        } finally {
+          setupRepo.close();
+        }
       } finally {
-        // Close engine A — task stays in finalizing in DB; baseDir kept for engine B
         await harness.engine.close();
       }
 

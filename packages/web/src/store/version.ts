@@ -1,17 +1,14 @@
 import { create } from "zustand";
 import type { RepoBinding } from "@minions/shared";
 
-/**
- * Per-connection metadata surfaced by the engine's health/version endpoint.
- * The new engine-next does not expose a /version route; these fields default
- * to empty so UI components compile and render gracefully.
- */
 export interface ConnectionMeta {
   apiVersion: string;
   libraryVersion: string;
+  buildSha: string;
   provider: string;
   features: string[];
   repos: RepoBinding[];
+  pluginSet: string[];
 }
 
 /**
@@ -32,7 +29,7 @@ interface VersionStore {
   workflowVersions: Map<string, Map<string, number>>;
   setConnectionMeta: (connId: string, meta: ConnectionMeta) => void;
   /** Alias for setConnectionMeta, accepts VersionInfo from @minions/shared for backward compat. */
-  setVersion: (connId: string, info: { apiVersion: string; libraryVersion: string; provider: string; features: string[]; repos: RepoBinding[] }) => void;
+  setVersion: (connId: string, info: { apiVersion: string; libraryVersion: string; buildSha: string; provider: string; features: string[]; repos: RepoBinding[]; pluginSet: string[] }) => void;
   setWorkflowVersion: (connId: string, workflowId: string, version: number) => void;
   getWorkflowVersion: (connId: string, workflowId: string) => number | undefined;
   /** Bulk-seed versions from a snapshot of workflows. */
@@ -42,9 +39,11 @@ interface VersionStore {
 const EMPTY_META: ConnectionMeta = {
   apiVersion: "",
   libraryVersion: "",
+  buildSha: "",
   provider: "",
   features: [],
   repos: [],
+  pluginSet: [],
 };
 
 export const useVersionStore = create<VersionStore>((set, get) => ({
@@ -65,9 +64,11 @@ export const useVersionStore = create<VersionStore>((set, get) => ({
       next.set(connId, {
         apiVersion: info.apiVersion,
         libraryVersion: info.libraryVersion,
+        buildSha: info.buildSha,
         provider: info.provider,
         features: info.features,
         repos: info.repos,
+        pluginSet: info.pluginSet,
       });
       return { byConnection: next };
     });

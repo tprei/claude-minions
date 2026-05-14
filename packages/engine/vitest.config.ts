@@ -7,7 +7,7 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
-          include: ["test/**/*.test.ts"],
+          include: ["test/**/*.test.ts", "test/**/*.chaos.test.ts"],
           exclude: ["test/pwa/**"],
         },
       },

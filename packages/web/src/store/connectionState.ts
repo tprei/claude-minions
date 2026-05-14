@@ -1,6 +1,6 @@
 import type { Connection } from "../connections/store.js";
 import { connectWorkflowSse } from "../transport/sse.js";
-import { listWorkflows } from "../transport/rest.js";
+import { getVersion, listWorkflows } from "../transport/rest.js";
 import { loadSnapshot, saveSnapshot } from "../transport/snapshotCache.js";
 import { useWorkflowStore } from "./workflowStore.js";
 import { useVersionStore } from "./version.js";
@@ -8,8 +8,12 @@ import type { SseConnection } from "../transport/sse.js";
 import type { Workflow } from "@minions/engine";
 
 async function refetch(conn: Connection, isDisposed: () => boolean): Promise<Workflow[]> {
-  const workflows = await listWorkflows(conn, { includeCompleted: true });
+  const [version, workflows] = await Promise.all([
+    getVersion(conn),
+    listWorkflows(conn, { includeCompleted: true }),
+  ]);
   if (isDisposed()) return [];
+  useVersionStore.getState().setVersion(conn.id, version);
   useWorkflowStore.getState().replaceAll(conn.id, workflows);
   useVersionStore.getState().seedFromWorkflows(
     conn.id,
@@ -114,4 +118,3 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
     teardownSse();
   };
 }
-

@@ -1,307 +1,226 @@
-# Architecture — claude-minions
+# Architecture
 
-> Read this fully before writing code in this repo. Sub-agents must follow these conventions.
+This document is the current contract for `claude-minions` after the engine port. It describes the code that exists now: workflows, task nodes, graph operations, the Hono engine, SQLite persistence, supervisor alerts, and the PWA client.
 
 ## Repo layout
 
 ```
 claude-minions/
-├── package.json              pnpm workspaces, scripts
+├── package.json
 ├── pnpm-workspace.yaml
-├── tsconfig.base.json
-├── packages/
-│   ├── shared/               wire-format types — DO NOT add runtime logic here
-│   │   └── src/
-│   │       index.ts
-│   │       session.ts transcript.ts dag.ts checkpoint.ts memory.ts
-│   │       external-task.ts audit.ts quality.ts readiness.ts pr.ts
-│   │       resource.ts runtime-config.ts command.ts event.ts diff.ts
-│   │       screenshot.ts loop.ts stats.ts push.ts entrypoint.ts
-│   │       version.ts api.ts
-│   ├── engine/               long-running HTTP service
-│   │   └── src/
-│   │       cli.ts            entrypoint, reads env, starts server
-│   │       index.ts          createEngine() factory
-│   │       env.ts            env parsing + defaults
-│   │       logger.ts         pino-style minimal logger
-│   │       errors.ts
-│   │       http/             routes/*, server.ts, auth.ts, sse.ts
-│   │       store/            sqlite.ts, migrations/, repos/*Repo.ts
-│   │       bus/              eventBus.ts (in-process pub/sub)
-│   │       sessions/         registry.ts, transcriptCollector.ts, replyQueue.ts, screenshots.ts, diff.ts, checkpoints.ts
-│   │       providers/        provider.ts (interface), claudeCode.ts, mock.ts, registry.ts, assets/ (instructions templates)
-│   │       workspace/        cloner.ts, worktree.ts, depsCache.ts, assetInjector.ts, paths.ts
-│   │       dag/              scheduler.ts, model.ts
-│   │       ship/             coordinator.ts, stages.ts, mutex.ts
-│   │       landing/          manager.ts, restack.ts, stackComment.ts
-│   │       loops/            scheduler.ts
-│   │       variants/         judge.ts, runner.ts
-│   │       ci/               babysitter.ts, prLifecycle.ts, githubClient.ts, askpass.ts
-│   │       quality/          gates.ts, runner.ts
-│   │       readiness/        compute.ts
-│   │       memory/           store.ts, review.ts, mcpServer.ts, preamble.ts
-│   │       digest/           summarizer.ts
-│   │       audit/            log.ts
-│   │       resource/         monitor.ts, cgroup.ts
-│   │       push/             notifier.ts
-│   │       runtime/          overrides.ts, schema.ts
-│   │       intake/           externalTasks.ts
-│   │       completion/       dispatcher.ts, handlers/*.ts
-│   │       util/             ids.ts, time.ts, fs.ts, debounce.ts, mutex.ts, jitter.ts
-│   └── web/                  PWA
-│       └── src/
-│           main.tsx          mounts <App/>
-│           App.tsx
-│           index.css         tailwind base + custom utilities
-│           routing/          parseUrl.ts, urlState.ts
-│           connections/      store.ts, picker.tsx, addDialog.tsx, qrImport.tsx
-│           transport/        rest.ts, sse.ts, snapshotCache.ts (idb)
-│           store/            sessionStore.ts, dagStore.ts, memoryStore.ts, resourceStore.ts, runtimeStore.ts, root.ts
-│           views/            list.tsx, kanban.tsx, dagCanvas.tsx, shipPipeline.tsx, layout.tsx, header.tsx, sidebar.tsx
-│           transcript/       Transcript.tsx, events/*.tsx (one per kind)
-│           chat/             ChatSurface.tsx, slashCommands.ts, autocomplete.tsx, attachments.tsx, voice.ts, quickActions.tsx, feedback.tsx
-│           memory/           Drawer.tsx, list.tsx, edit.tsx, review.tsx
-│           runtime/          Drawer.tsx, autoForm.tsx
-│           resource/         Indicator.tsx, Panel.tsx
-│           pwa/              install.ts, offline.ts, push.ts, gestures.ts, haptics.ts, theme.ts, qr.ts
-│           components/       Button, Pill, Diff, Markdown, Spinner, ResizeHandle, Sheet, Modal, ...
-│           util/             time.ts, classnames.ts
-│           hooks/            useFeature.ts, useReactive.ts, useResize.ts, useTheme.ts
-└── docs/
-    └── architecture.md       this file
+├── eslint.config.js
+├── .github/workflows/ci.yml
+├── docs/
+│   └── architecture.md
+└── packages/
+    ├── shared/
+    │   ├── package.json
+    │   └── src/
+    │       api.ts doctor.ts version.ts transcript.ts push.ts ...
+    ├── engine/
+    │   ├── scripts/smoke.ts
+    │   ├── src/
+    │   │   ├── application/
+    │   │   │   boot.ts commands.ts transitions.ts scheduler-service.ts
+    │   │   │   run-orchestrator.ts recovery.ts recovery-service.ts
+    │   │   │   merge-service.ts ci-babysitter-service.ts
+    │   │   │   quality-gate-service.ts local-finalize-service.ts
+    │   │   ├── domain/
+    │   │   │   workflow.ts types.ts events.ts runs.ts errors.ts
+    │   │   ├── persistence/
+    │   │   │   schema.ts sqlite-repo.ts sqlite-subscription-repo.ts subscriber-hub.ts
+    │   │   ├── plugins/
+    │   │   │   git/ github/ providers/ quality/ runners/ tmux/ workspace/
+    │   │   ├── supervisor/
+    │   │   │   rules/ alert-repo.ts audit-repo.ts supervisor.ts scan-loop.ts
+    │   │   ├── transport/
+    │   │   │   server.ts validators.ts errors.ts
+    │   │   ├── engine.ts
+    │   │   └── main.ts
+    │   └── test/
+    │       fixtures/ integration/ application/ transport/ supervisor/ ...
+    └── web/
+        ├── src/
+        │   ├── chat/ components/ connections/ hooks/ markdown/ pwa/
+        │   ├── routing/ store/ transcript/ transport/ util/ views/
+        │   ├── App.tsx
+        │   └── main.tsx
+        └── vitest.config.ts
 ```
 
-## Conventions
+## Runtime model
 
-### Module system
-- All packages are ESM (`"type": "module"`).
-- Source uses `.ts`/`.tsx` and imports neighbors with **`.js` extension** (TypeScript NodeNext-style). Example: `import { foo } from "./bar.js"`. This stays correct after compilation.
-- The shared package re-exports everything from `./index.js`.
+The engine owns a `Workflow` aggregate. A workflow contains `TaskNode` records in `graph`, recoverable `GraphOperation` records in `operations`, a scheduling policy, and an optimistic concurrency `version`.
 
-### Strictness
-- Strict TS, `noUncheckedIndexedAccess` on. Handle the `T | undefined` from arrays and records.
-- Never use `any`. Use `unknown` and narrow.
-- No `// @ts-ignore` / `// eslint-disable`. Fix the underlying issue.
+Tasks have two independent status axes:
 
-### Error model
-- Engine errors thrown as `EngineError` with `code` (`bad_request | not_found | conflict | unauthorized | forbidden | internal | upstream`). HTTP layer maps to status codes.
-- Web treats every non-2xx as `ApiError` (shape from `@minions/shared`, the HTTP transport type package).
+| Type | Literals |
+| --- | --- |
+| `TaskExecutionStatus` | `pending`, `ready`, `running`, `completed`, `finalizing`, `quality-pending`, `ci-pending`, `pr-open`, `merged`, `failed`, `cancelled`, `needs-review` |
+| `TaskStackStatus` | `clean`, `restack-pending`, `restacking`, `restack-conflict`, `stale-artifacts` |
+| `WorkflowStatus` | `active`, `completed`, `failed`, `cancelled` |
+| `GraphOperationKind` | `restack` |
+| `GraphOperationStatus` | `pending`, `running`, `completed`, `conflict`, `failed` |
 
-### Logging
-- One tiny logger (`logger.ts`) — `info|warn|error|debug` with structured fields, level from `MWF_LOG_LEVEL`. No third-party logger dep.
+`SchedulerService` watches workflow events and dispatches ready tasks through `RetryTaskService` or `ContinueTaskService`. `RunOrchestrator` starts a runtime session, attaches provider output, persists transcript events, and applies lifecycle transitions. `CompletionDispatcher`, `QualityGateService`, `CIBabysitterService`, `MergeService`, `LandWorkflowService`, and `LocalFinalizeService` move completed tasks through quality checks, pull requests, CI, merge, or local finalize paths.
 
-### Time
-- ISO-8601 strings on the wire. `new Date().toISOString()`.
-- Internal monotonic durations use `performance.now()` for resource monitor only.
+## Workflow events
 
-### IDs
-- Slugs: `nanoid(10)` lowercase + `-`. Sessions, DAG nodes, memories, etc. all use these. Never expose database row IDs.
+Durable events are persisted in SQLite with monotonically increasing per-workflow cursors. Transient events use cursor `0` and are delivered to live subscribers without advancing replay state.
 
-### SSE wire format
-- One event-stream endpoint: `GET /api/events?token=...`.
-- Each frame is `event: <kind>\ndata: <json>\n\n`. Hello frame on connect, periodic ping every 25s.
-- Snapshot semantics — each frame carries the full object, the client replaces. No deltas.
+| Event kind | Durable | Payload |
+| --- | --- | --- |
+| `task-transitioned` | yes | task id, transition kind, previous and next execution/stack status, task version |
+| `graph-operation-changed` | yes | operation id, operation kind, previous status, next status |
+| `run-started` | yes | run id, task id, attempt, runtime session id, provider/runtime type |
+| `run-ended` | yes | run id, task id, attempt, terminal reason |
+| `workflow-status-changed` | yes | previous status, next status |
+| `provider-event` | no | task id, run id, provider transcript event |
+| `merge-phase` | no | task id, merge phase, phase status, optional error |
+| `ci-poll-result` | no | task id, PR number, head SHA, overall status, checks |
 
-### Concurrency primitives
-- `util/mutex.ts` — keyed async mutex (one promise per key, auto-released on resolve/reject).
-- `util/debounce.ts` — leading+trailing debounce.
+SSE is exposed at `GET /workflows/:id/events`. Clients can resume with `Last-Event-ID` or `?since=`. Durable frames include an SSE id. Transient frames omit an id so the browser does not advance `Last-Event-ID` past the durable cursor.
 
-### Storage
-- One sqlite file `<workspace>/engine.db`, WAL mode, foreign keys on.
-- Migrations are numbered SQL strings in `store/migrations/`. Bootstrapped in order at boot. A `meta` table tracks `schemaVersion`.
-- Repos are class-per-table with prepared statements; no ORM.
+## Transitions
 
-### Filesystem layout
-```
-<workspace>/
-  engine.db
-  engine.db-wal / engine.db-shm
-  .repos/<repo-id>.git           bare clone
-  .repos/v3-<repo-id>-deps       hardlink cache root
-  <session-slug>/                worktree
-  <session-slug>/.minions/...    per-session metadata, screenshots, audit
-  home/<provider>/               agent CLI auth dir (mounted)
-  reply-queue/<session-slug>.jsonl  disk-backed reply queue
-  uploads/<session-slug>/        attachments
-  audit/audit.log                jsonl audit trail
-```
+`application/transitions.ts` is the only place that mutates task execution status. Every transition increments the task version; saving the workflow increments the workflow version and produces derived events.
 
-### Subprocess spawning
-- All agent CLI calls go through `providers/*.ts` which yield typed events from a streaming reader.
-- Never inherit ambient credentials except a mounted home directory or env-passed API key.
-- Provider parses **NDJSON** by default; a fallback line-buffered text mode exists for the mock provider.
+| Transition | Allowed from | Result |
+| --- | --- | --- |
+| `mark-ready` | `pending` | `ready` |
+| `mark-running` | `ready`, `needs-review`, `pr-open` | `running`, appends a run, records session/workspace |
+| `update-run` | `running` | patches provider session ref or output offset |
+| `complete-runtime` | `running` | `completed`, closes run as `completed` |
+| `start-finalization` | `completed` | `finalizing` |
+| `open-review` | `finalizing` | `pr-open` |
+| `start-quality-gate` | `completed`, `finalizing` | `quality-pending` |
+| `complete-quality-gate` | `quality-pending` | `finalizing` or `needs-review` |
+| `start-ci-gate` | `pr-open` | `ci-pending` |
+| `complete-ci-gate` | `ci-pending` | `pr-open` |
+| `merge-task` | `pr-open` | `merged` |
+| `complete-without-pr` | `finalizing` | `merged` |
+| `merge-conflict` | `pr-open`, `finalizing`, `ci-pending` | `needs-review` |
+| `cancel-task` | `pending`, `ready`, `running`, `finalizing`, `quality-pending`, `ci-pending`, `needs-review` | `cancelled` |
+| `recover-task` | `ready`, `running`, `quality-pending`, `ci-pending` | `pending` or `needs-review`, clears session |
+| `mark-interrupted` | `running` | `needs-review`, clears session |
+| `fail-task` | `pending`, `ready`, `running`, `finalizing`, `quality-pending`, `ci-pending` | `failed` |
 
-### Git operations
-- `simple-git` only. Never shell out raw `git` from feature code; route through `workspace/worktree.ts` and `landing/manager.ts`.
-- Always pass `cwd` explicitly. Never rely on process cwd.
+## Persistence
 
-### Testing
-- Node's `node:test` runner. Test files live next to their subject as `*.test.ts`.
-- Sub-agents: do not insist on full coverage, but write at least one happy-path test per non-trivial module.
+`SQLiteWorkflowRepository` stores workflow blobs, durable workflow events, idempotency records, transcripts, push subscriptions, audit events, alerts, and alert subscriptions in one SQLite file. The repository applies PRAGMAs on open, prepares all statements once, and wraps workflow saves in a transaction.
 
-## REST surface (v1)
+Important invariants:
 
-All routes prefixed `/api`. Bearer auth on every route except `/health`. SSE auth via `?token=`.
+- `workflows.version` must match `incoming.version - 1` on update.
+- event cursors are assigned inside the save transaction.
+- recovery idempotency keys prevent double-dispatch after restart.
+- transient events never write to `workflow_events`.
+- `listRecoverable()` returns non-completed workflows plus completed workflows with non-terminal graph operations.
 
-```
-GET    /api/health
-GET    /api/version
-GET    /api/sessions
-GET    /api/sessions/:slug
-POST   /api/sessions
-DELETE /api/sessions/:slug
-GET    /api/sessions/:slug/transcript
-GET    /api/sessions/:slug/diff
-GET    /api/sessions/:slug/screenshots
-GET    /api/sessions/:slug/screenshots/:filename
-GET    /api/sessions/:slug/pr
-GET    /api/sessions/:slug/readiness
-GET    /api/sessions/:slug/checkpoints
-POST   /api/sessions/:slug/checkpoints/:id/restore
-POST   /api/sessions/variants
-GET    /api/dags
-GET    /api/dags/:id
-POST   /api/commands                  — Command discriminated union
-POST   /api/messages                  — { sessionSlug?, prompt, ... } convenience
-POST   /api/entrypoints
-GET    /api/stats
-GET    /api/stats/modes
-GET    /api/stats/recent
-GET    /api/metrics                   — prom-style text
-GET    /api/readiness/summary
-GET    /api/audit/events
-GET    /api/memories
-POST   /api/memories
-PATCH  /api/memories/:id
-PATCH  /api/memories/:id/review
-DELETE /api/memories/:id
-GET    /api/config/runtime
-PATCH  /api/config/runtime
-GET    /api/push/vapid-public-key
-POST   /api/push-subscribe
-DELETE /api/push-subscribe
-GET    /api/events                    — SSE
-```
+## Recovery
 
-## Event bus
+Boot recovery runs once during `createEngine()`. Periodic recovery runs against recoverable workflows while the engine is live. Recovery plans come from `application/recovery.ts`; execution lives in `application/recovery-service.ts`.
 
-`bus/eventBus.ts` exports a typed pub/sub:
+Recovery action kinds:
 
-```ts
-type Listener<T> = (event: T) => void;
-class EventBus {
-  on<K extends ServerEvent["kind"]>(kind: K, fn: Listener<Extract<ServerEvent, { kind: K }>>): () => void;
-  onAny(fn: Listener<ServerEvent>): () => void;
-  emit(event: ServerEvent): void;
-}
-```
+| Action | Behavior |
+| --- | --- |
+| `recover-task` | transition stale ready/running/gate tasks to pending or needs-review |
+| `interrupt-task` | transition dead runtime sessions to needs-review |
+| `stop-runtime` | stop mismatched runtime session, then cancel task |
+| `probe-gate` | synthesize failed quality/CI artifacts for stale gates |
+| `operator-review` | no automatic mutation |
+| `resume-graph-operation` | resume pending/running restack operation through `RestackExecutor` |
 
-Completion handlers register on session_updated where `status` transitions to a terminal state.
+`session_mismatch` during recovery is swallowed because another actor already moved the task. Other domain errors surface.
 
-## Session lifecycle (key sequences)
+## Supervisor
 
-### Create
-1. `POST /api/sessions` validated → `SessionRegistry.create()`.
-2. Insert row (status `pending`).
-3. Bare clone (or reuse cache) → `git worktree add` → bootstrap deps (hardlink) → asset injection.
-4. Spawn provider subprocess with prompt.
-5. `transcriptCollector` consumes stdout, persists events, emits `transcript_event`.
-6. On terminal stop → `completion/dispatcher` runs handlers in order.
+The supervisor has a log sink, audit projector, alert repository, alert subscription repository, notification sender, and periodic scan loop.
 
-### Resume on boot
-1. Load all sessions where `status` is `running` or `waiting_input`.
-2. For each, call `provider.resume(sessionId)`. If resume fails, mark `failed`.
-3. Drain `replyQueue` into resumed processes.
+Rules:
 
-### Reply
-1. Operator sends `reply` command.
-2. If session running → write to provider stdin and store as `user_message` event.
-3. Else → enqueue to `replyQueue/<slug>.jsonl`. Drained when session re-enters running.
+| Rule | Signal |
+| --- | --- |
+| `ci-exhausted` | CI attempt cap or exhausted CI repair loop |
+| `orchestrator-silent` | running task has not produced progress within the rule window |
+| `merge-inconsistent` | GitHub merge succeeded but internal transition failed |
+| `boot-recovery-failed` | boot recovery reports failures |
+| `push-failures-spike` | push sender failures spike within the observation window |
 
-### Stop
-1. Mark session `cancelled`. Send SIGINT, then SIGKILL after 5s. Final transcript event status=cancelled. Emit `session_updated`.
+Audit routes are exposed at `GET /audit/events` and `GET /audit/workflows/:id`. Alert routes are exposed at `GET /alerts`, `POST /alerts/subscribe`, and `DELETE /alerts/subscribe`.
 
-### Close
-1. Stop (if running) → drop worktree + branch (if `removeWorktree`) → keep DB row. Emit `session_deleted` only if hard-deleted.
+## REST surface
 
-## DAG scheduler
+The engine exposes unprefixed routes from `transport/server.ts`:
 
-- DAG creation: parsed from agent JSON output (a `DAGNode[]`-shaped emission detected by the transcript collector when a session in `dag` ship-stage produces fenced JSON), or built manually via `/split`.
-- On `dag_updated` and on session terminal events: walk nodes; any `pending` whose deps are all `done|landed` → mark `ready` and spawn a `dag-task` session bound to that node. Reserve a per-DAG concurrency cap (default 3).
-- When a node session completes successfully **and** quality + readiness pass → run landing manager → mark `landed`. On readiness failure → `ci-failed`. On rebase conflict → spawn `rebase-resolver`.
+| Route | Purpose |
+| --- | --- |
+| `GET /health` | shallow liveness |
+| `GET /health/deep` | runtime self-check summary |
+| `GET /version` | API/build/provider/repo/feature metadata |
+| `GET /metrics` | Prometheus text metrics |
+| `GET /doctor` | operator diagnostics |
+| `POST /workflows` | create workflow |
+| `POST /workflows/plan` | create workflow spec from prompt |
+| `GET /workflows` | list active workflows, or completed with `?include=completed` |
+| `GET /workflows/:id` | get workflow |
+| `DELETE /workflows/:id` | delete workflow |
+| `POST /commands` | apply command or invoke command service |
+| `POST /workflows/:id/tasks/:taskId/merge` | merge task PR |
+| `GET /workflows/:id/events` | SSE workflow events |
+| `GET /workflows/:id/runs/:runId/transcript` | persisted provider transcript |
+| `GET /push/vapid-public-key` | push public key |
+| `POST /push/subscribe` | upsert workflow push subscription |
+| `DELETE /push/subscribe` | remove workflow push subscription |
+| `GET /audit/events` | audit event list |
+| `GET /audit/workflows/:id` | audit event list by workflow |
+| `GET /alerts` | alert list |
+| `POST /alerts/subscribe` | upsert alert push subscription |
+| `DELETE /alerts/subscribe` | remove alert push subscription |
 
-## Ship coordinator
+## Feature table
 
-- `ship` mode session has stages `think → plan → dag → verify → done`.
-- Each transition holds a per-session mutex (keyed by slug). Only one transition can run at a time.
-- Stage transition writes a `status` transcript event, optionally injects a stage-specific directive into the next turn, and persists the new stage in `sessions.shipStage`.
-- Force release available via `force` command.
+Every user-visible feature row must have a code owner and a gate. A feature in code without a row, or a row without code, fails the truth inventory.
 
-## Memory subsystem
+| Feature | Code owner | Gate |
+| --- | --- | --- |
+| Workflow create/list/get/delete | `engine/src/transport/server.ts`, `engine/src/domain/workflow.ts` | transport tests, smoke matrix |
+| Workflow planning | `engine/src/application/planner-service.ts` | planner tests, `/workflows/plan` tests |
+| Task transitions and workflow OCC | `engine/src/application/transitions.ts`, `engine/src/application/commands.ts` | transition tests, SSE tests |
+| Scheduler concurrency and claim checks | `engine/src/application/scheduler-service.ts`, `engine/src/application/scheduler.ts` | scheduler tests, integration tests |
+| Provider orchestration and transcripts | `engine/src/application/run-orchestrator.ts`, provider plugins | orchestrator tests, transcript tests |
+| Recovery boot and periodic scan | `engine/src/application/boot.ts`, `engine/src/application/recovery*.ts` | recovery tests, runtime self-check tests |
+| Restack graph operation | `engine/src/application/restack*.ts` | restack tests, integration tests |
+| Quality gates | `engine/src/application/quality-gate-service.ts`, quality plugins | quality tests, smoke matrix |
+| GitHub PR creation and merge | `engine/src/application/merge-service.ts`, GitHub SCM plugin | merge tests, chaos probes |
+| CI babysitting and auto-merge | `engine/src/application/ci-babysitter-service.ts` | babysitter tests, smoke matrix, chaos probes |
+| Local finalize without PR | `engine/src/application/local-finalize-service.ts` | local finalize tests, smoke matrix |
+| Push notifications | `engine/src/application/push-service.ts`, push routes | push tests, `/metrics` and key endpoint tests |
+| Supervisor audit and alerts | `engine/src/supervisor/**` | supervisor rule tests, runtime metrics |
+| Observability logging | `engine/src/observability/**` | observability tests |
+| PWA connection management | `web/src/connections/**`, `web/src/transport/**` | web unit tests, browser e2e |
+| PWA snapshot cache and offline replay | `web/src/transport/snapshotCache.ts`, PWA modules | web unit tests, browser e2e |
+| PWA task graph and status rendering | `web/src/views/**`, `web/src/store/**` | exhaustive status tests, browser e2e |
+| PWA transcript rendering | `web/src/transcript/**` | exhaustive renderer tests |
+| Slash command registry | `web/src/chat/slashCommands.ts`, command routes | registry contract tests |
+| Voice input | `web/src/chat/voice.ts` | web unit tests, browser e2e |
+| Runtime diagnostics | `engine/src/transport/server.ts`, `shared/src/doctor.ts`, `shared/src/version.ts` | transport tests, `/doctor` |
 
-- Memories have lifecycle `pending → approved → rejected | superseded | pending_deletion`.
-- The agent never sees memories directly via prompt — they come through:
-  1. **Preamble**: approved global + repo-scoped memories rendered into the system instructions injected at session creation.
-  2. **MCP-style server**: spawned alongside the agent, exposing `list_memories`, `get_memory`, `propose_memory`. Proposals land as `pending`.
-- Operator approves/rejects via `PATCH /api/memories/:id/review`. Approved memories take effect on the next session.
+## Removed engine-port concepts
 
-## Quality gates / readiness
+The following pre-port modules and features are not part of the current architecture: sessions registry, reply queue, DAG package, ship stage coordinator, loop scheduler, variants judge, memory MCP, resource monitor, screenshots, checkpoints, runtime-overrides PATCH, and `CommandPalette` commands that target those removed APIs. New work must not reintroduce compatibility shims for these concepts.
 
-- Per-repo gate config (env or `<repo>/.minions/quality.json`) — list of `{ name, command, cwdRel?, timeoutMs? }`.
-- After a turn completes, a `QualityRunner` queues per session (debounced). Outcome stored as `QualityReport`.
-- Readiness composes: PR open + not draft, required reviews, last `QualityReport.status === passed`, no failed CI checks, branch ahead of base, no rebase-conflict.
+## Verification loop
 
-## Loops
+The loop is ordered so each stage gates the next:
 
-- A `LoopDefinition` row defines an interval and prompt.
-- `loops/scheduler.ts` ticks every 5s. For loops whose `nextRunAt` has passed and `enabled` is true and concurrent-loop count < cap, spawn a `loop`-mode session. On terminal failure: increment `consecutiveFailures` and apply exponential backoff (`min(intervalSec * 2^failures, 86400)`).
-- Reserved interactive slots (default 4) — loops cannot occupy them.
-
-## Variants + judge
-
-- `POST /api/sessions/variants` with `{prompt, count}` spawns N parallel sessions sharing a `variantParentSlug`.
-- When all complete (or N-1 within timeout): `variants/judge.ts` runs `extract → advocate → judge` prompt loop on a fresh sub-session, picks a winner with rationale, posts as a `status` event on the parent.
-
-## Resource monitor
-
-- `resource/monitor.ts` samples every 2s.
-- CPU: read `/sys/fs/cgroup/cpu.stat` if present (cgroup v2), else `os.loadavg() / cpus`.
-- Memory: `/sys/fs/cgroup/memory.current` + `memory.max` if cgroup, else `os.freemem()/totalmem()`.
-- Disk: `statvfs` on workspace.
-- Event-loop lag: `monitorEventLoopDelay()` from `node:perf_hooks`, mean over the window.
-- Emits `ResourceEvent` to bus → SSE.
-
-## Push notifier
-
-- VAPID keys from env. Subscriptions persisted in sqlite.
-- Fires when an `AttentionFlag` is added to a session, or when a CI failure / rebase conflict / judge-review attention raises.
-
-## Runtime overrides
-
-- Live-editable subset declared in `runtime/schema.ts`. Persisted in sqlite (`runtime_config` row, single-row).
-- On `PATCH /api/config/runtime`, the engine updates the row, applies values to live subsystems (e.g., loop interval, memory MCP toggle, quota retry budget), and broadcasts a `session_updated`-shaped no-op so clients refetch on demand (clients also poll on focus).
-
-## Web client conventions
-
-- Reactive primitives: zustand stores with shallow subscribers.
-- IndexedDB cache: `connection:<id>:state` key holds last sessions+dags snapshot.
-- SSE: full-jitter exponential backoff (`base=1000ms`, `cap=30s`); on every successful (re)connect refetch `/api/sessions` and `/api/dags`.
-- All capability-gated UI uses `useFeature("name")` hook.
-- Slash commands: a registry `slashCommands.ts` exports `{name, args[], hint, build(args): Command}` so autocomplete + dispatch share one source of truth.
-
-## Wire stability
-
-- The shared types are the only public contract between engine and web. Never branch behavior on `apiVersion` strings — always check `features[]`. Versioned schema migrations live entirely inside the engine.
-
-## Sub-agent rules
-
-- Edit only files inside the directories you were assigned. If your task requires touching a sibling subsystem, expose a thin interface and leave the impl to the owner.
-- Import HTTP transport types from `@minions/shared`. Import engine domain types from `@minions/engine`. Never duplicate type definitions.
-- Always use `.js` extension on internal imports.
-- Always use `cwd`-aware `simple-git` calls; never assume process cwd.
-- Default exports are forbidden; use named exports.
-- No code comments unless the WHY is non-obvious.
-- One named export per file when practical, otherwise group by feature.
-- Never fall back silently. Throw with a useful message.
-- Never bake credentials into source. Read from env or mounted dir.
-
+1. Truth inventory: this document and the feature table match code.
+2. Static gates: typecheck, lint, disabled-rule scan, exhaustive status and renderer tests.
+3. Fast unit: engine, web, shared, and sidecar package tests.
+4. Engine integration: real SQLite/git where needed, stub provider/runtime/quality.
+5. Full-stack smoke matrix: deterministic HTTP create-to-finalize paths.
+6. Chaos probes: known regression injections for GitHub 429, push reject, CI reset-on-green, two-engine SQLite, and runtime recovery.
+7. Browser e2e: Playwright against a deterministic fixture engine.
+8. Runtime self-checks: `/health/deep`, `/version`, `/metrics`, `/doctor`, periodic recovery.
+9. Dogfood verify loop: scheduled fixture repo run with the real provider CLI.

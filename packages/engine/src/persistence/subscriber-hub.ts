@@ -19,7 +19,7 @@ export class SubscriberHub {
     fromCursor: number,
     replay: () => Promise<WorkflowEvent[]>,
   ): AsyncIterable<WorkflowEvent> {
-    const hub = this;
+    const subscribers = this.subscribers;
     return {
       [Symbol.asyncIterator]() {
         const sub: Subscriber = {
@@ -37,10 +37,10 @@ export class SubscriberHub {
         };
 
         // Registration MUST be synchronous here — before the first await.
-        let subSet = hub.subscribers.get(workflowId);
+        let subSet = subscribers.get(workflowId);
         if (!subSet) {
           subSet = new Set();
-          hub.subscribers.set(workflowId, subSet);
+          subscribers.set(workflowId, subSet);
         }
         subSet.add(sub);
 
@@ -73,10 +73,10 @@ export class SubscriberHub {
               });
             }
           } finally {
-            const set = hub.subscribers.get(workflowId);
+            const set = subscribers.get(workflowId);
             if (set) {
               set.delete(sub);
-              if (set.size === 0) hub.subscribers.delete(workflowId);
+              if (set.size === 0) subscribers.delete(workflowId);
             }
           }
         }
@@ -84,10 +84,10 @@ export class SubscriberHub {
         const generator = gen();
 
         function cleanup() {
-          const set = hub.subscribers.get(workflowId);
+          const set = subscribers.get(workflowId);
           if (set) {
             set.delete(sub);
-            if (set.size === 0) hub.subscribers.delete(workflowId);
+            if (set.size === 0) subscribers.delete(workflowId);
           }
         }
 

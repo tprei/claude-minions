@@ -191,7 +191,7 @@ describe("MergeService", () => {
 
   it("rejects when task is in wrong status", async () => {
     const repo = new InMemoryWorkflowRepository();
-    let workflow = createSingleTaskWorkflow("wf-1", { title: "Task 1", prompt: "Do it" }, () => now);
+    const workflow = createSingleTaskWorkflow("wf-1", { title: "Task 1", prompt: "Do it" }, () => now);
     await repo.save(workflow, []);
 
     const service = new MergeService({

@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useCallback, type ReactElement } from "react";
-import type { Workflow } from "@minions/engine";
 import { AppLayout } from "./views/layout.js";
 import { Header } from "./views/header.js";
 import { Sidebar } from "./views/sidebar.js";
@@ -98,12 +97,6 @@ export function App(): ReactElement {
 
   const paletteActions = useMemo(() => buildActions({
     activeId,
-    openMemory: undefined,
-    openRuntime: undefined,
-    openLoops: undefined,
-    openAudit: undefined,
-    openVariants: undefined,
-    openEntrypoints: undefined,
     sessions: paletteSessions,
   }), [activeId, paletteSessions]);
 

@@ -470,6 +470,7 @@ describe("TmuxRuntimeBackend", () => {
 
     followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
       await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+      yield* [];
     });
 
     client.paneDead.mockResolvedValue(true);
@@ -491,6 +492,7 @@ describe("TmuxRuntimeBackend", () => {
 
     followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
       await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+      yield* [];
     });
 
     client.paneDead.mockResolvedValue(true);
@@ -522,6 +524,7 @@ describe("TmuxRuntimeBackend", () => {
 
     followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
       await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+      yield* [];
     });
 
     client.paneDead.mockRejectedValue(new TNSE("", "no such session", 1));
@@ -554,6 +557,7 @@ describe("TmuxRuntimeBackend", () => {
 
     followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
       await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+      yield* [];
     });
 
     client.paneDead.mockResolvedValue(true);
@@ -592,6 +596,7 @@ describe("TmuxRuntimeBackend", () => {
 
     followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
       await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+      yield* [];
     });
 
     client.paneDead.mockResolvedValue(true);
@@ -626,6 +631,7 @@ describe("TmuxRuntimeBackend", () => {
 
     followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
       await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+      yield* [];
     });
 
     client.paneDead.mockResolvedValue(true);
@@ -737,6 +743,7 @@ describe("TmuxRuntimeBackend (docker mode)", () => {
 
     followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
       await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+      yield* [];
     });
 
     client.paneDead.mockResolvedValue(true);
@@ -760,6 +767,7 @@ describe("TmuxRuntimeBackend (docker mode)", () => {
 
     followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
       await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+      yield* [];
     });
 
     client.paneDead.mockRejectedValue(

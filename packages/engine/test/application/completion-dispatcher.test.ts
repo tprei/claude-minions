@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CompletionDispatcher } from "../../src/application/completion-dispatcher.js";
 import { silentLogger } from "../test-helpers.js";
 import { MergeAbortedError, MergeConflictError, MergeServiceError } from "../../src/application/merge-service.js";
+import { GitHubApiError } from "../../src/plugins/github/github-client.js";
 import { applyCommand } from "../../src/application/commands.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
 import { createWorkflow } from "../../src/domain/workflow.js";
@@ -177,6 +178,24 @@ describe("CompletionDispatcher", () => {
     consoleSpy.mockRestore();
 
     expect(mergeService.openOnly).toHaveBeenCalledOnce();
+  });
+
+  it("GitHub 429 during PR lookup leaves task finalizing for retry", async () => {
+    const repo = makeRepo();
+    await makeWorkflowInFinalizing(repo, true);
+    const mergeService = makeMergeService({
+      openOnly: vi.fn().mockRejectedValue(new GitHubApiError(429, "https://api.github.com/repos/o/r/pulls", "rate limited", 30)),
+    });
+    const ctrl = new AbortController();
+
+    const service = makeService(repo, mergeService, ctrl.signal);
+    service.attach(WORKFLOW_ID);
+
+    await new Promise((r) => setTimeout(r, 50));
+    ctrl.abort();
+
+    const workflow = await repo.get(WORKFLOW_ID);
+    expect(workflow?.graph[TASK_ID]?.executionStatus).toBe("finalizing");
   });
 
   it("attach scans existing finalizing tasks at attach time", async () => {

@@ -22,12 +22,7 @@ describe("parseUrl", () => {
   });
 
   it.each([
-    ["/doctor", "doctor"],
     ["/dag", "dag"],
-    ["/ship", "ship"],
-    ["/kanban", "kanban"],
-    ["/loops", "loops"],
-    ["/memory", "memory"],
     ["/new", "new"],
   ] as const)("recognizes bare %s as view=%s", (path, view) => {
     setLocation(path);
@@ -54,9 +49,9 @@ describe("parseUrl", () => {
   });
 
   it("parses query params", () => {
-    setLocation("/doctor?foo=bar&baz=qux");
+    setLocation("/dag?foo=bar&baz=qux");
     const result = parseUrl();
-    expect(result.view).toBe("doctor");
+    expect(result.view).toBe("dag");
     expect(result.query).toEqual({ foo: "bar", baz: "qux" });
   });
 

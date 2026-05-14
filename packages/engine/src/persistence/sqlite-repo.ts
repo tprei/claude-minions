@@ -28,6 +28,7 @@ import {
   SQL_LIST_TRANSCRIPT,
 } from "./schema.js";
 import { SubscriberHub } from "./subscriber-hub.js";
+import { configureSqliteDatabase } from "./sqlite-options.js";
 
 interface WorkflowRow {
   blob: string;
@@ -87,6 +88,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
+    configureSqliteDatabase(this.db);
     this.db.exec(SCHEMA_DDL);
     this.db.exec(TRANSCRIPTS_DDL);
 
@@ -266,6 +268,14 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
 
   getDatabase(): Database.Database {
     return this.db;
+  }
+
+  getPragmas(): { journalMode: string; busyTimeout: number; foreignKeys: number } {
+    return {
+      journalMode: String(this.db.pragma("journal_mode", { simple: true })),
+      busyTimeout: Number(this.db.pragma("busy_timeout", { simple: true })),
+      foreignKeys: Number(this.db.pragma("foreign_keys", { simple: true })),
+    };
   }
 
   close(): void {

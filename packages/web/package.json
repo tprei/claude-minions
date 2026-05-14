@@ -7,37 +7,39 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "typecheck": "pnpm --filter @minions/shared run build && tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@minions/engine": "workspace:*",
     "@minions/shared": "workspace:*",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "zustand": "^5.0.1",
-    "reactflow": "^11.11.4",
     "dagre": "^0.8.5",
-    "marked": "^15.0.3",
     "dompurify": "^3.2.1",
     "highlight.js": "^11.10.0",
     "idb-keyval": "^6.2.1",
-    "qr-scanner": "^1.4.2"
+    "marked": "^15.0.3",
+    "qr-scanner": "^1.4.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "reactflow": "^11.11.4",
+    "zustand": "^5.0.1"
   },
   "devDependencies": {
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@playwright/test": "^1.58.2",
     "@types/dagre": "^0.7.52",
     "@types/dompurify": "^3.2.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
+    "happy-dom": "^15.11.7",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vite-plugin-pwa": "^0.21.1",
     "vitest": "^1.6.1",
-    "happy-dom": "^15.11.7",
     "workbox-window": "^7.3.0"
   }
 }

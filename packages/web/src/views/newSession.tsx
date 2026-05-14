@@ -3,7 +3,7 @@ import type { WorkflowSpec } from "@minions/engine";
 import { useConnectionStore } from "../connections/store.js";
 import { useWorkflowStore } from "../store/workflowStore.js";
 import { useVersionStore } from "../store/version.js";
-import { createWorkflow, planWorkflow, ApiError } from "../transport/rest.js";
+import { createWorkflow, planWorkflow } from "../transport/rest.js";
 import { setUrlState } from "../routing/urlState.js";
 import { AttachmentBar, useAttachments } from "../chat/attachments.js";
 import { startListening, stopListening, isVoiceSupported, type VoiceSession } from "../chat/voice.js";

@@ -22,4 +22,75 @@ describe("GET /health", () => {
     const body = await res.json() as { status: string };
     expect(body.status).toBe("ok");
   });
+
+  it("returns version metadata when configured", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const executor = new NoopRestackExecutor();
+    const runtime = new StubRuntimeBackend();
+    const recoveryService = createRecoveryService(repo, executor, runtime, () => "2026-05-10T00:00:00.000Z", silentLogger());
+    const app = createServer({
+      repo,
+      recoveryService,
+      executor,
+      versionInfo: () => ({
+        apiVersion: "workflow-v1",
+        libraryVersion: "0.1.0",
+        buildSha: "abc123",
+        features: ["workflows"],
+        featuresPending: [],
+        provider: "stub",
+        providers: ["stub"],
+        repos: [],
+        pluginSet: ["runtime:stub"],
+        startedAt: "2026-05-10T00:00:00.000Z",
+      }),
+    });
+
+    const res = await app.request("/version");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { buildSha: string; features: string[] };
+    expect(body.buildSha).toBe("abc123");
+    expect(body.features).toContain("workflows");
+  });
+
+  it("returns doctor report and maps error status to 503", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const executor = new NoopRestackExecutor();
+    const runtime = new StubRuntimeBackend();
+    const recoveryService = createRecoveryService(repo, executor, runtime, () => "2026-05-10T00:00:00.000Z", silentLogger());
+    const app = createServer({
+      repo,
+      recoveryService,
+      executor,
+      doctor: async () => ({
+        status: "error",
+        checkedAt: "2026-05-10T00:00:00.000Z",
+        checks: [{ name: "sqlite-wal", status: "error", checkedAt: "2026-05-10T00:00:00.000Z" }],
+      }),
+    });
+
+    const res = await app.request("/doctor");
+    expect(res.status).toBe(503);
+    const body = await res.json() as { status: string; checks: Array<{ name: string }> };
+    expect(body.status).toBe("error");
+    expect(body.checks[0]?.name).toBe("sqlite-wal");
+  });
+
+  it("returns Prometheus metrics text", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const executor = new NoopRestackExecutor();
+    const runtime = new StubRuntimeBackend();
+    const recoveryService = createRecoveryService(repo, executor, runtime, () => "2026-05-10T00:00:00.000Z", silentLogger());
+    const app = createServer({
+      repo,
+      recoveryService,
+      executor,
+      metrics: async () => "minions_test_metric 1\n",
+    });
+
+    const res = await app.request("/metrics");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(await res.text()).toBe("minions_test_metric 1\n");
+  });
 });

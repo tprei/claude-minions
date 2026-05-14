@@ -58,14 +58,12 @@ function Harness({ postCommand }: HarnessProps): ReactElement {
 
   const handleSlashCommand = useCallback(
     async (cmd: SlashCommand, args: string[]) => {
-      const ctx: SlashContext = { sessionSlug: "sess-1" };
+      const ctx: SlashContext = { workflowId: "wf-1", taskId: "task-1" };
       const result = cmd.build(args, ctx);
       if (result.kind === "command") {
         postCommand(result.payload);
       } else if (result.kind === "ui") {
         dispatchSlashUi(result.action, {
-          activeId: null,
-          openConfig: () => {},
           openHelp: () => setHelpOpen(true),
           openCost: () => {},
         });
@@ -119,7 +117,7 @@ describe("ChatInput slash popover", () => {
     expect(popoverText).toContain("/compact");
   });
 
-  it("/clear + Enter dispatches a reply command with text '/clear'", async () => {
+  it("/clear + Enter dispatches continue-task with text '/clear'", async () => {
     const postCommand = vi.fn();
     act(() => {
       root.render(createElement(Harness, { postCommand }));
@@ -130,9 +128,10 @@ describe("ChatInput slash popover", () => {
 
     expect(postCommand).toHaveBeenCalledTimes(1);
     expect(postCommand).toHaveBeenCalledWith({
-      kind: "reply",
-      sessionSlug: "sess-1",
-      text: "/clear",
+      kind: "continue-task",
+      workflowId: "wf-1",
+      taskId: "task-1",
+      prompt: "/clear",
     });
   });
 
@@ -145,7 +144,7 @@ describe("ChatInput slash popover", () => {
 
     await typeAndEnter("/help");
 
-    for (const name of ["clear", "cost", "diff", "compact", "help"]) {
+    for (const name of ["clear", "cost", "compact", "help", "retry", "land"]) {
       const row = container.querySelector(`[data-testid="help-row-${name}"]`);
       expect(row, `expected /${name} row in HelpModal`).not.toBeNull();
     }

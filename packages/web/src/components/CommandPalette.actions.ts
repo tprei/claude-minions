@@ -18,12 +18,6 @@ export interface PaletteSessionRef {
 
 export interface BuildActionsOptions {
   activeId: string | null;
-  openMemory?: (() => void) | undefined;
-  openRuntime?: (() => void) | undefined;
-  openLoops?: (() => void) | undefined;
-  openAudit?: (() => void) | undefined;
-  openVariants?: (() => void) | undefined;
-  openEntrypoints?: (() => void) | undefined;
   sessions: Iterable<PaletteSessionRef>;
 }
 
@@ -37,31 +31,15 @@ function navigateTo(activeId: string | null, view: ViewKind): void {
 export function buildActions(opts: BuildActionsOptions): PaletteAction[] {
   const {
     activeId,
-    openMemory,
-    openRuntime,
-    openLoops,
-    openAudit,
-    openVariants,
-    openEntrypoints,
     sessions,
   } = opts;
   const actions: PaletteAction[] = [];
 
   actions.push(
     { id: "nav:list", label: "Go to List", group: "Navigate", hint: "List view", run: () => navigateTo(activeId, "list") },
-    { id: "nav:kanban", label: "Go to Kanban", group: "Navigate", hint: "Kanban view", run: () => navigateTo(activeId, "kanban") },
     { id: "nav:dag", label: "Go to DAG", group: "Navigate", hint: "DAG view", run: () => navigateTo(activeId, "dag") },
-    { id: "nav:ship", label: "Go to Ship", group: "Navigate", hint: "Ship view", run: () => navigateTo(activeId, "ship") },
-    { id: "nav:doctor", label: "Go to Doctor", group: "Navigate", hint: "Doctor view", run: () => navigateTo(activeId, "doctor") },
     { id: "nav:new", label: "New session", group: "Navigate", hint: "Start a new session", run: () => navigateTo(activeId, "new") },
   );
-
-  if (openMemory) actions.push({ id: "drawer:memory", label: "Open Memory drawer", group: "Drawers", run: openMemory });
-  if (openRuntime) actions.push({ id: "drawer:runtime", label: "Open Runtime drawer", group: "Drawers", run: openRuntime });
-  if (openLoops) actions.push({ id: "drawer:loops", label: "Open Loops sheet", group: "Drawers", run: openLoops });
-  if (openAudit) actions.push({ id: "drawer:audit", label: "Open Audit sheet", group: "Drawers", run: openAudit });
-  if (openVariants) actions.push({ id: "drawer:variants", label: "Open variants", group: "Drawers", hint: "Spawn parallel variants", run: openVariants });
-  if (openEntrypoints) actions.push({ id: "drawer:entrypoints", label: "Open entrypoints", group: "Drawers", hint: "Webhooks and triggers", run: openEntrypoints });
 
   actions.push({
     id: "sys:reconnect",

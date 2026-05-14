@@ -28,6 +28,34 @@ import type { SupervisorWithRepos } from "../supervisor/supervisor.js";
 import type { WorkflowPlannerService } from "../application/planner-service.js";
 import type { SchedulerService } from "../application/scheduler-service.js";
 
+type DoctorCheckStatus = "ok" | "degraded" | "error";
+
+interface RuntimeDoctorCheck {
+  name: string;
+  status: DoctorCheckStatus;
+  detail?: string;
+  checkedAt: string;
+}
+
+interface RuntimeDoctorReport {
+  status: DoctorCheckStatus;
+  checks: RuntimeDoctorCheck[];
+  checkedAt: string;
+}
+
+interface RuntimeVersionInfo {
+  apiVersion: string;
+  libraryVersion: string;
+  buildSha: string;
+  features: string[];
+  featuresPending: Array<{ flag: string; reason: string }>;
+  provider: string;
+  providers: string[];
+  repos: Array<{ id: string; label: string; remote?: string; defaultBranch?: string }>;
+  pluginSet: string[];
+  startedAt: string;
+}
+
 export interface ServerDeps {
   repo: WorkflowRepository;
   recoveryService: RecoveryService;
@@ -49,6 +77,9 @@ export interface ServerDeps {
   supervisor?: SupervisorWithRepos;
   plannerService?: WorkflowPlannerService;
   schedulerService?: SchedulerService;
+  versionInfo?: () => RuntimeVersionInfo;
+  doctor?: () => Promise<RuntimeDoctorReport>;
+  metrics?: () => Promise<string>;
 }
 
 type AcceptedCommandKind = CommandKind | "continue-task" | "retry-task" | "land-workflow";
@@ -111,6 +142,53 @@ export function createServer(deps: ServerDeps): Hono {
   });
 
   app.get("/health", (c) => c.json({ status: "ok" }));
+
+  app.get("/health/deep", async (c) => {
+    if (!deps.doctor) {
+      return c.json({ status: "ok", checks: [], checkedAt: new Date().toISOString() });
+    }
+    const report = await deps.doctor();
+    const status = report.status === "error" ? 503 : 200;
+    return c.json(report, status);
+  });
+
+  app.get("/version", (c) => {
+    if (!deps.versionInfo) {
+      return c.json({
+        apiVersion: "workflow-v1",
+        libraryVersion: "0.1.0",
+        buildSha: "unknown",
+        features: [],
+        featuresPending: [],
+        provider: "unknown",
+        providers: [],
+        repos: [],
+        pluginSet: [],
+        startedAt: new Date().toISOString(),
+      });
+    }
+    return c.json(deps.versionInfo());
+  });
+
+  app.get("/metrics", async (c) => {
+    if (!deps.metrics) {
+      return c.text("# HELP minions_metrics_configured Runtime metrics configured\n# TYPE minions_metrics_configured gauge\nminions_metrics_configured 0\n", 200, {
+        "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+      });
+    }
+    return c.text(await deps.metrics(), 200, {
+      "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+    });
+  });
+
+  app.get("/doctor", async (c) => {
+    if (!deps.doctor) {
+      return c.json({ status: "ok", checks: [], checkedAt: new Date().toISOString() });
+    }
+    const report = await deps.doctor();
+    const status = report.status === "error" ? 503 : 200;
+    return c.json(report, status);
+  });
 
   app.post("/workflows", async (c) => {
     let body: unknown;

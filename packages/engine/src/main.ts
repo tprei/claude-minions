@@ -49,12 +49,17 @@ async function main(): Promise<void> {
   const vapidSubject = optional("MWF_VAPID_SUBJECT");
 
   const qualityDisabled = process.env["MWF_QUALITY_DISABLED"] === "1";
+  const recoveryScanIntervalRaw = optional("MWF_RECOVERY_SCAN_INTERVAL_MS");
+  const buildSha = optional("MWF_BUILD_SHA") ?? optional("GITHUB_SHA");
   const config: EngineConfig = {
     dbPath,
     providerFactory,
+    providerName,
     qualityPlugin: qualityDisabled ? new StubQualityPlugin() : new ExecQualityPlugin(runner),
     logLevel: parseLevel(process.env["MWF_LOG_LEVEL"]),
   };
+  if (buildSha !== undefined) config.buildSha = buildSha;
+  if (recoveryScanIntervalRaw !== undefined) config.recoveryScanIntervalMs = Number(recoveryScanIntervalRaw);
 
   if (repoPath !== undefined) config.repoPath = repoPath;
   if (workspaceRoot !== undefined) config.workspaceRoot = workspaceRoot;

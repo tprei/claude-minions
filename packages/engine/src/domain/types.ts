@@ -18,26 +18,32 @@ export type WorkflowKind = (typeof WORKFLOW_KINDS)[number];
 
 export type WorkflowStatus = "active" | "completed" | "failed" | "cancelled";
 
-export type TaskExecutionStatus =
-  | "pending"
-  | "ready"
-  | "running"
-  | "completed"
-  | "finalizing"
-  | "quality-pending"
-  | "ci-pending"
-  | "pr-open"
-  | "merged"
-  | "failed"
-  | "cancelled"
-  | "needs-review";
+export const TASK_EXECUTION_STATUSES = [
+  "pending",
+  "ready",
+  "running",
+  "completed",
+  "finalizing",
+  "quality-pending",
+  "ci-pending",
+  "pr-open",
+  "merged",
+  "failed",
+  "cancelled",
+  "needs-review",
+] as const;
 
-export type TaskStackStatus =
-  | "clean"
-  | "restack-pending"
-  | "restacking"
-  | "restack-conflict"
-  | "stale-artifacts";
+export type TaskExecutionStatus = (typeof TASK_EXECUTION_STATUSES)[number];
+
+export const TASK_STACK_STATUSES = [
+  "clean",
+  "restack-pending",
+  "restacking",
+  "restack-conflict",
+  "stale-artifacts",
+] as const;
+
+export type TaskStackStatus = (typeof TASK_STACK_STATUSES)[number];
 
 export type ClaimMode = "read" | "write";
 

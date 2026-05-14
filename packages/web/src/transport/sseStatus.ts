@@ -17,13 +17,29 @@ export function createSseStatusStore(): SseStatusStore {
   const reconnectFns = new Map<string, () => void>();
   const listeners = new Set<() => void>();
 
+  function scopedKeys(connectionId: string): string[] {
+    const prefix = `${connectionId}:`;
+    return [...map.keys()].filter((key) => key.startsWith(prefix));
+  }
+
+  function aggregate(connectionId: string): SseStatus | undefined {
+    const direct = map.get(connectionId);
+    if (direct !== undefined) return direct;
+    const statuses = scopedKeys(connectionId).map((key) => map.get(key)).filter((v): v is SseStatus => v !== undefined);
+    if (statuses.length === 0) return undefined;
+    if (statuses.includes("down")) return "down";
+    if (statuses.includes("reconnecting")) return "reconnecting";
+    if (statuses.includes("connecting")) return "connecting";
+    return "open";
+  }
+
   function notify(): void {
     for (const l of listeners) l();
   }
 
   return {
     get(connectionId) {
-      return map.get(connectionId);
+      return aggregate(connectionId);
     },
     set(connectionId, status) {
       if (map.get(connectionId) === status) return;
@@ -40,9 +56,14 @@ export function createSseStatusStore(): SseStatusStore {
     },
     forceReconnect(connectionId) {
       const fn = reconnectFns.get(connectionId);
-      if (!fn) return false;
-      fn();
-      return true;
+      if (fn) {
+        fn();
+        return true;
+      }
+      const prefix = `${connectionId}:`;
+      const scoped = [...reconnectFns.entries()].filter(([key]) => key.startsWith(prefix));
+      for (const [, reconnect] of scoped) reconnect();
+      return scoped.length > 0;
     },
     unregisterReconnect(connectionId) {
       reconnectFns.delete(connectionId);

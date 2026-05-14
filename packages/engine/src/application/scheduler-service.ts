@@ -12,6 +12,8 @@ export interface SchedulerServiceDeps {
   continueService?: ContinueTaskService;
   log: Logger;
   signal: AbortSignal;
+  nowMs?: () => number;
+  dispatchBackoffMs?: number;
 }
 
 function priorSessionRef(task: TaskNode): string | undefined {
@@ -25,9 +27,12 @@ function priorSessionRef(task: TaskNode): string | undefined {
 }
 
 export class SchedulerService {
+  private static readonly DEFAULT_DISPATCH_BACKOFF_MS = 300_000;
+
   private readonly deps: SchedulerServiceDeps;
   private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent> | null>();
   private readonly inFlight = new Set<string>();
+  private readonly failures = new Map<string, { signature: string; count: number; backoffUntilMs: number }>();
 
   constructor(deps: SchedulerServiceDeps) {
     this.deps = deps;
@@ -43,6 +48,13 @@ export class SchedulerService {
     if (this.activeIterators.has(workflowId)) return;
     this.activeIterators.set(workflowId, null);
     void this.attachAsync(workflowId);
+  }
+
+  getStats(): { attachedWorkflows: number; inFlight: number } {
+    return {
+      attachedWorkflows: this.activeIterators.size,
+      inFlight: this.inFlight.size,
+    };
   }
 
   private async attachAsync(workflowId: string): Promise<void> {
@@ -91,6 +103,7 @@ export class SchedulerService {
     for (const { task } of candidates) {
       const key = `${workflowId}:${task.id}`;
       if (this.inFlight.has(key)) continue;
+      if (this.isBackedOff(key)) continue;
 
       const fresh = await this.deps.repo.get(workflowId);
       const freshTask = fresh?.graph[task.id];
@@ -105,7 +118,11 @@ export class SchedulerService {
         ? this.deps.continueService.run({ workflowId, taskId: task.id, prompt: task.prompt })
         : this.deps.retry.run({ workflowId, taskId: task.id, prompt: task.prompt });
       void dispatch
+        .then(() => {
+          this.failures.delete(key);
+        })
         .catch((err: unknown) => {
+          this.recordDispatchFailure(key, err);
           this.deps.log.warn("scheduler-service: dispatch failed", {
             workflowId,
             taskId: task.id,
@@ -116,5 +133,24 @@ export class SchedulerService {
           this.inFlight.delete(key);
         });
     }
+  }
+
+  private isBackedOff(key: string): boolean {
+    const failure = this.failures.get(key);
+    return failure !== undefined && failure.backoffUntilMs > this.nowMs();
+  }
+
+  private recordDispatchFailure(key: string, err: unknown): void {
+    const signature = err instanceof Error ? `${err.name}:${err.message}` : String(err);
+    const previous = this.failures.get(key);
+    const count = previous?.signature === signature ? previous.count + 1 : 1;
+    const backoffUntilMs = count >= 2
+      ? this.nowMs() + (this.deps.dispatchBackoffMs ?? SchedulerService.DEFAULT_DISPATCH_BACKOFF_MS)
+      : 0;
+    this.failures.set(key, { signature, count, backoffUntilMs });
+  }
+
+  private nowMs(): number {
+    return this.deps.nowMs?.() ?? Date.now();
   }
 }

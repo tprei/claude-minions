@@ -106,6 +106,7 @@ describe("createEngine — close() aborts boot-spawned orchestrators", () => {
             await new Promise<void>((_resolve, reject) => {
               opts?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
             });
+            yield* [];
           },
         };
       },
@@ -185,6 +186,7 @@ describe("createEngine — close() aborts service-spawned orchestrators", () => 
           await new Promise<void>((_resolve, reject) => {
             opts?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
           });
+          yield* [];
         },
       };
     };

@@ -39,8 +39,6 @@ function clampWidth(n: number): number {
 }
 
 export interface SlashUiHandlers {
-  activeId: string | null;
-  openConfig: () => void;
   openHelp: () => void;
   openCost: () => void;
 }
@@ -52,15 +50,7 @@ export function dispatchSlashUi(action: SlashUiResult["action"], h: SlashUiHandl
   }
   if (action === "cost") {
     h.openCost();
-    return;
   }
-  if (action === "config") {
-    h.openConfig();
-    return;
-  }
-  if (!h.activeId) return;
-  const { sessionSlug, query } = parseUrl();
-  setUrlState({ connectionId: h.activeId, view: "dag", sessionSlug, query });
 }
 
 /** Tab type for the surface tablist. */
@@ -250,7 +240,7 @@ function WorkflowHeader({
 
   const goToDag = useCallback(() => {
     if (!activeId) return;
-    const { view, query } = parseUrl();
+    const { query } = parseUrl();
     setUrlState({ connectionId: activeId, view: "dag", sessionSlug: null, query: { ...query, dag: workflow.id } });
   }, [activeId, workflow.id]);
 
@@ -323,12 +313,9 @@ interface PanelProps {
   activeTab: string;
   onTabChange: (id: string) => void;
   onClose: () => void;
-  onOpenConfig?: () => void;
   onOpenHelp: () => void;
   onOpenCost: () => void;
 }
-
-const NOOP = (): void => {};
 
 function SurfacePanel({
   workflow,
@@ -336,7 +323,6 @@ function SurfacePanel({
   activeTab,
   onTabChange,
   onClose,
-  onOpenConfig,
   onOpenHelp,
   onOpenCost,
 }: PanelProps) {
@@ -406,18 +392,18 @@ function SurfacePanel({
   const handleSlashCommand = useCallback(
     async (cmd: SlashCommand, args: string[]) => {
       if (!conn) return;
-      const ctx: SlashContext = { sessionSlug: task.id, dagId: workflow.id };
+      const ctx: SlashContext = { workflowId: workflow.id, taskId: task.id };
       const result = cmd.build(args, ctx);
       if (result.kind === "ui") {
         dispatchSlashUi(result.action, {
-          activeId: useConnectionStore.getState().activeId,
-          openConfig: onOpenConfig ?? NOOP,
           openHelp: onOpenHelp,
           openCost: onOpenCost,
         });
+      } else {
+        await dispatchCommand(conn, result.payload);
       }
     },
-    [task.id, workflow.id, conn, onOpenConfig, onOpenHelp, onOpenCost],
+    [task.id, workflow.id, conn, onOpenHelp, onOpenCost],
   );
 
   const isActive = task.executionStatus === "running" || task.executionStatus === "ready";
@@ -575,7 +561,6 @@ function TranscriptPanel({
         if (!cancelled) setEvents((prev) => prev);
       });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connId, connBaseUrl, connToken, workflowId, task.id, latestRunId, runsCount]);
 
   useEffect(() => {
@@ -600,7 +585,6 @@ function TranscriptPanel({
     return () => {
       sseConn.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connId, connBaseUrl, connToken, workflowId, task.id, runsCount]);
 
   return (
@@ -659,10 +643,9 @@ function TaskDetailsCollapsible({ task }: { task: TaskNode }) {
 interface Props {
   sessionSlug?: string | null;
   primary?: boolean;
-  onOpenConfig?: () => void;
 }
 
-export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Props) {
+export function ChatSurface({ sessionSlug, primary = false }: Props) {
   const [open, setOpen] = useState<boolean>(() => {
     const stored = getLayout(CHAT_PANEL);
     return stored ? !stored.collapsed : true;
@@ -742,7 +725,6 @@ export function ChatSurface({ sessionSlug, primary = false, onOpenConfig }: Prop
     task,
     activeTab,
     onTabChange: setActiveTab,
-    onOpenConfig,
     onOpenHelp: () => setHelpOpen(true),
     onOpenCost: () => setCostOpen(true),
     onClose: closeToList,

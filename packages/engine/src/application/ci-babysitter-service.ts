@@ -78,6 +78,20 @@ function buildCIPollPayload(
   return payload;
 }
 
+function latestCiReportHeadSha(artifacts: Artifact[]): string | undefined {
+  for (let i = artifacts.length - 1; i >= 0; i--) {
+    const artifact = artifacts[i];
+    if (artifact?.kind !== "ci-report") continue;
+    try {
+      const ref = JSON.parse(artifact.ref) as { headSha?: unknown };
+      if (typeof ref.headSha === "string" && ref.headSha.length > 0) return ref.headSha;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const t = setTimeout(resolve, ms);
@@ -241,12 +255,6 @@ export class CIBabysitterService {
     }
     const prNumber = parseInt(prUrlMatch[1]!, 10);
 
-    const ciReportCount = task.artifacts.filter((a) => a.kind === "ci-report").length;
-    if (ciReportCount >= 1) {
-      this.deps.log.info(`ci-babysitter: ci attempt cap reached for task ${taskId}`, { kind: "ci-attempt-cap", taskId, workflowId });
-      return;
-    }
-
     let prDetail: { headSha: string; url: string };
     try {
       const pr = await github.getPR(repoCoords.owner, repoCoords.repo, prNumber);
@@ -258,6 +266,11 @@ export class CIBabysitterService {
 
     const { headSha } = prDetail;
     const prUrl = prDetail.url;
+    const latestReportHeadSha = latestCiReportHeadSha(task.artifacts);
+    if (latestReportHeadSha === headSha) {
+      this.deps.log.info(`ci-babysitter: ci attempt cap reached for task ${taskId}`, { kind: "ci-attempt-cap", taskId, workflowId, headSha });
+      return;
+    }
     const startMs = Date.now();
     let lastSeenAllComplete = false;
 
@@ -527,7 +540,7 @@ function buildFailureMessage(
 
   const footer = "\n\nInvestigate the failure, fix the underlying cause, and push a commit. Do not bypass hooks or skip checks.";
 
-  let message = header + blocks.join("\n") + footer;
+  const message = header + blocks.join("\n") + footer;
 
   if (message.length > MAX_TOTAL) {
     const truncated = message.slice(0, MAX_TOTAL - "\n…[truncated]".length) + "\n…[truncated]";
