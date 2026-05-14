@@ -283,6 +283,7 @@ main {
   min-height: 44px;
   background: var(--bg-elev);
   animation: card-in 200ms ease-out both;
+  transition: border-left-color 240ms ease, background 240ms ease;
 }
 
 .task-card:last-child { margin-bottom: 0; }
