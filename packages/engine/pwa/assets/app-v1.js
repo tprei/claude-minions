@@ -11,6 +11,23 @@ export const state = {
 let es = null;
 let routeGen = 0;
 
+let transcriptScrollTimer = null;
+let transcriptScrollDeadline = 0;
+let transcriptScrollPending = null;
+
+function scrollTranscriptNodeIntoView(node) {
+  transcriptScrollPending = node;
+  if (transcriptScrollTimer !== null) return;
+  const wait = Math.max(0, transcriptScrollDeadline - Date.now());
+  transcriptScrollTimer = setTimeout(() => {
+    transcriptScrollTimer = null;
+    transcriptScrollDeadline = Date.now() + 80;
+    const target = transcriptScrollPending;
+    transcriptScrollPending = null;
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, wait);
+}
+
 document.addEventListener("DOMContentLoaded", bootstrap);
 
 function bootstrap() {
@@ -124,7 +141,7 @@ function openStream(id) {
       const kind = payload?.providerEvent?.kind ?? payload?.kind;
       if (kind === "assistant_text") node.classList.add("streaming");
       container.appendChild(node);
-      container.scrollTop = container.scrollHeight;
+      scrollTranscriptNodeIntoView(node);
     }
   });
 
