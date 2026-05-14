@@ -113,11 +113,12 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
     return {
       id: generateId(),
       kind: "single-task",
+      repoId,
       tasks: [{
         id: taskId,
         title: effectiveTitle || trimmedPrompt.slice(0, 60),
         prompt: trimmedPrompt,
-        ...(repoId !== NONE_REPO && baseBranch.trim() ? { mergeTarget: baseBranch.trim() } : {}),
+        ...(baseBranch.trim() ? { mergeTarget: baseBranch.trim() } : {}),
       }],
       policy: {},
     };
@@ -128,6 +129,7 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
     return {
       id: generateId(),
       kind: "think-thread",
+      repoId,
       tasks: [{
         id: taskId,
         title: effectiveTitle || trimmedPrompt.slice(0, 60),

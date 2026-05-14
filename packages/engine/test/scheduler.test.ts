@@ -41,6 +41,7 @@ describe("dispatch planning", () => {
       {
         id: "workflow-claims",
         kind: "manual-dag",
+        repoId: "fixture-repo",
         policy: { maxConcurrent: 2 },
         tasks: [
           {
@@ -115,6 +116,7 @@ describe("dispatch planning", () => {
       {
         id: "wf-needs-review-claims",
         kind: "manual-dag",
+        repoId: "fixture-repo",
         policy: { maxConcurrent: 2 },
         tasks: [
           {
@@ -227,6 +229,7 @@ describe("dispatch planning", () => {
       {
         id: "wf-gate",
         kind: "manual-dag",
+        repoId: "fixture-repo",
         policy: { maxConcurrent: 1 },
         tasks: [
           { id: "a", title: "A", prompt: "A" },

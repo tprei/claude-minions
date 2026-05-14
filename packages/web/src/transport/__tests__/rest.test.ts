@@ -13,6 +13,7 @@ const CONN: Connection = {
 const WORKFLOW_FIXTURE: Workflow = {
   id: "wf-1",
   kind: "single-task",
+  repoId: "fixture-repo",
   status: "active",
   graph: {
     "t-1": {
@@ -115,6 +116,7 @@ describe("rest transport", () => {
       const spec: WorkflowSpec = {
         id: "wf-1",
         kind: "single-task",
+        repoId: "fixture-repo",
         tasks: [{ id: "t-1", title: "Do the thing", prompt: "please do it" }],
       };
 

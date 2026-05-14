@@ -25,6 +25,7 @@ describe("restack planning", () => {
       {
         id: "wf-chain",
         kind: "manual-dag",
+        repoId: "fixture-repo",
         tasks: [
           { id: "a", title: "A", prompt: "A" },
           { id: "b", title: "B", prompt: "B", dependsOn: ["a"] },

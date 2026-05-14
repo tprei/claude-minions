@@ -123,6 +123,7 @@ const TASK_SPEC_CHECKS: FieldCheck[] = [
 const WORKFLOW_SPEC_CHECKS: FieldCheck[] = [
   { path: "id", check: isString, expected: "string" },
   { path: "kind", check: isString, expected: "string" },
+  { path: "repoId", check: isNonEmptyString, expected: "non-empty string" },
   { path: "tasks", check: isArray, expected: "array" },
 ];
 

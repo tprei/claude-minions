@@ -444,6 +444,7 @@ describe("workflow status derivation", () => {
       {
         id: "wf-1",
         kind: "manual-dag",
+        repoId: "fixture-repo",
         tasks: [
           { id: "a", title: "A", prompt: "A" },
           { id: "b", title: "B", prompt: "B" },
@@ -480,6 +481,7 @@ describe("workflow status derivation", () => {
       {
         id: "wf-2",
         kind: "manual-dag",
+        repoId: "fixture-repo",
         tasks: [
           { id: "a", title: "A", prompt: "A" },
           { id: "b", title: "B", prompt: "B" },

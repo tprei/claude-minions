@@ -35,6 +35,7 @@ describe("workflow creation", () => {
         {
           id: "bad",
           kind: "totally-made-up" as never,
+          repoId: "fixture-repo",
           tasks: [{ id: "t", title: "T", prompt: "P" }],
         },
         () => now,
@@ -48,6 +49,7 @@ describe("workflow creation", () => {
         {
           id: "bad",
           kind: "manual-dag",
+          repoId: "fixture-repo",
           tasks: [
             { id: "a", title: "A", prompt: "A", dependsOn: ["b"] },
             { id: "b", title: "B", prompt: "B", dependsOn: ["a"] },

@@ -43,6 +43,7 @@ function makeWorkflow(tasks: TaskNode[]): Workflow {
   return {
     id: WF_ID,
     kind: "manual-dag",
+    repoId: "fixture-repo",
     status: "active",
     graph,
     operations: {},

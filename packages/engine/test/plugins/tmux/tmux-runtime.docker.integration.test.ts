@@ -117,6 +117,7 @@ describe.skipIf(process.env["MWF_HAS_DOCKER"] !== "1")("TmuxRuntimeBackend docke
     const fakeWorkflow: Workflow = {
       id: "wf-docker",
       kind: "single-task",
+      repoId: "fixture-repo",
       status: "active",
       graph: {
         "docker-restart-drill": {

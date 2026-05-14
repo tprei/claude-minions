@@ -828,6 +828,7 @@ async function makeWorkflowWithAutoMergeOnGreen(repo: InMemoryWorkflowRepository
   const wf = createWorkflow({
     id: WORKFLOW_ID,
     kind: "single-task",
+    repoId: "fixture-repo",
     tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
     policy: { maxConcurrent: 1, autoLand: true, autoMergeOnGreen },
   }, now);

@@ -27,8 +27,7 @@ describe("POST /workflows", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: "wf-1",
-        kind: "single-task",
-        tasks: [{ id: "t1", title: "Task", prompt: "Do something" }],
+        kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "Task", prompt: "Do something" }],
       }),
     });
 
@@ -44,7 +43,7 @@ describe("POST /workflows", () => {
     const res = await app.request("/workflows", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: "wf-1", kind: "single-task", tasks: [] }),
+      body: JSON.stringify({ id: "wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [] }),
     });
 
     expect(res.status).toBe(400);

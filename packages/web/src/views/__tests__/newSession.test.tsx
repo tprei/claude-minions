@@ -13,6 +13,7 @@ const { createWorkflowMock, planWorkflowMock } = vi.hoisted(() => ({
   createWorkflowMock: vi.fn(async (_conn: unknown, _spec: unknown): Promise<Workflow> => ({
     id: "wf-new",
     kind: "single-task",
+    repoId: "fixture-repo",
     status: "active",
     graph: {
       "task-1": {
@@ -114,6 +115,7 @@ const PLAN_RESPONSE = {
   spec: {
     id: "wf-plan-1",
     kind: "single-task",
+    repoId: "fixture-repo",
     tasks: [{ id: "t-plan-1", title: "Planned task", prompt: "do something useful here" }],
   },
 };

@@ -120,6 +120,7 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
         body: JSON.stringify({
           id: wfId,
           kind: "single-task",
+          repoId: "fixture-repo",
           tasks: [{ id: taskId, title: "Happy Task", prompt: "do stuff" }],
           policy: { autoLand: false, autoMergeOnGreen: false },
         }),
@@ -250,6 +251,7 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
         body: JSON.stringify({
           id: wfId,
           kind: "single-task",
+          repoId: "fixture-repo",
           tasks: [{ id: taskId, title: "AutoMerge Task", prompt: "merge me" }],
           policy: { autoLand: true, autoMergeOnGreen: true },
         }),
@@ -340,6 +342,7 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
         body: JSON.stringify({
           id: wfId,
           kind: "manual-dag",
+          repoId: "fixture-repo",
           tasks: [
             { id: "backend", title: "Backend", prompt: "Build backend" },
             { id: "frontend", title: "Frontend", prompt: "Build frontend" },
@@ -487,6 +490,7 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
           const workflow = createWorkflow({
             id: wfId,
             kind: "single-task",
+            repoId: "fixture-repo",
             tasks: [{ id: taskId, title: "Recovery Task", prompt: "recover me" }],
             policy: { autoLand: true },
           });

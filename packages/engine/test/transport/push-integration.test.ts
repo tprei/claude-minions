@@ -137,8 +137,7 @@ describe("push integration: VAPID-signed delivery and 410 cleanup", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: "wf-push-1",
-        kind: "single-task",
-        tasks: [{ id: "t1", title: "Task", prompt: "Do it" }],
+        kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "Task", prompt: "Do it" }],
       }),
     });
     expect(createRes.status).toBe(201);
@@ -177,8 +176,7 @@ describe("push integration: VAPID-signed delivery and 410 cleanup", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: "wf-push-2",
-        kind: "single-task",
-        tasks: [{ id: "t2", title: "Task2", prompt: "Do it" }],
+        kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t2", title: "Task2", prompt: "Do it" }],
       }),
     });
     expect(createRes.status).toBe(201);
@@ -212,8 +210,7 @@ describe("push integration: VAPID-signed delivery and 410 cleanup", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: "wf-push-3",
-        kind: "single-task",
-        tasks: [{ id: "t3", title: "Task3", prompt: "Do it" }],
+        kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t3", title: "Task3", prompt: "Do it" }],
       }),
     });
     expect(createRes2.status).toBe(201);
