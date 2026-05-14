@@ -589,7 +589,11 @@ function doRenderKanban(container) {
     ? null
     : document.querySelector(".kanban");
 
+  const prevCounts = {};
   if (kanban) {
+    kanban.querySelectorAll(".kanban-col-count").forEach((el) => {
+      if (el.dataset.col) prevCounts[el.dataset.col] = el.dataset.value;
+    });
     kanban.innerHTML = "";
   } else {
     kanban = document.createElement("div");
@@ -647,7 +651,28 @@ function doRenderKanban(container) {
 
     const count = document.createElement("span");
     count.className = "kanban-col-count";
-    count.textContent = String(tasks.length).padStart(2, "0");
+    const newCountValue = String(tasks.length).padStart(2, "0");
+    const prevCountValue = prevCounts[colName];
+    count.dataset.col = colName;
+    count.dataset.value = newCountValue;
+    if (prevCountValue !== undefined && prevCountValue !== newCountValue) {
+      const prevDigit = document.createElement("span");
+      prevDigit.className = "kanban-col-count-prev";
+      prevDigit.textContent = prevCountValue;
+      const currDigit = document.createElement("span");
+      currDigit.className = "kanban-col-count-curr";
+      currDigit.textContent = newCountValue;
+      count.appendChild(prevDigit);
+      count.appendChild(currDigit);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          prevDigit.classList.add("is-out");
+          currDigit.classList.add("is-in");
+        });
+      });
+    } else {
+      count.textContent = newCountValue;
+    }
 
     colHeader.appendChild(h2);
     colHeader.appendChild(count);

@@ -296,6 +296,41 @@ main {
   font-size: 11px;
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  line-height: 1;
+  height: 1em;
+  width: 2ch;
+  text-align: right;
+  vertical-align: baseline;
+}
+
+.kanban-col-count-prev,
+.kanban-col-count-curr {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  font-variant-numeric: tabular-nums;
+  transition: transform 220ms ease;
+  will-change: transform;
+}
+
+.kanban-col-count-prev {
+  transform: translateY(0);
+}
+
+.kanban-col-count-prev.is-out {
+  transform: translateY(-100%);
+}
+
+.kanban-col-count-curr {
+  transform: translateY(100%);
+}
+
+.kanban-col-count-curr.is-in {
+  transform: translateY(0);
 }
 
 .task-card {
