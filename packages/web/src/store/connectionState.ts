@@ -34,6 +34,10 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
   // Per-workflow SSE connections, keyed by workflowId.
   const sseConns = new Map<string, SseConnection>();
   const isDisposed = (): boolean => disposed;
+  const unsubscribeWorkflowStore = useWorkflowStore.subscribe((state) => {
+    const workflows = [...(state.byConnection.get(conn.id)?.values() ?? [])];
+    openSseForWorkflows(workflows);
+  });
 
   function teardownSse(): void {
     for (const c of sseConns.values()) c.close();
@@ -111,6 +115,7 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
 
   return () => {
     disposed = true;
+    unsubscribeWorkflowStore();
     if (disposeTimer !== null) {
       clearTimeout(disposeTimer);
       disposeTimer = null;

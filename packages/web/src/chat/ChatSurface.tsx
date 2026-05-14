@@ -511,6 +511,43 @@ function mergeSeededWithLive(
   return [...seeded, ...liveOnly];
 }
 
+function liveActivityLabel(task: TaskNode, events: TranscriptEvent[]): string | null {
+  if (task.executionStatus === "ready") return "Task is queued.";
+  if (task.executionStatus !== "running" && task.executionStatus !== "finalizing") return null;
+  const last = events.at(-1);
+  if (!last) return "Agent is starting.";
+  switch (last.kind) {
+    case "thinking":
+      return "Agent is thinking.";
+    case "assistant_text":
+      return "Agent is working.";
+    case "tool_call":
+      return `Running ${last.toolName}.`;
+    case "tool_result":
+      return "Reading tool output.";
+    case "status":
+      return last.level === "error" ? "Recovering from provider error." : "Agent is working.";
+    case "turn_started":
+      return "Agent is starting a turn.";
+    case "turn_completed":
+      return task.executionStatus === "finalizing" ? "Finalizing task." : "Agent is working.";
+    case "user_message":
+      return "Agent is reading your prompt.";
+  }
+  return null;
+}
+
+function LiveActivity({ task, events }: { task: TaskNode; events: TranscriptEvent[] }) {
+  const label = liveActivityLabel(task, events);
+  if (label === null) return null;
+  return (
+    <div className="mx-3 mt-3 mb-1 flex items-center gap-2 rounded border border-border bg-bg px-3 py-2 text-xs text-fg-muted">
+      <Spinner size="sm" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
 function TranscriptPanel({
   task,
   workflowId,
@@ -597,7 +634,10 @@ function TranscriptPanel({
           </div>
         </div>
       ) : (
-        <Transcript events={events} />
+        <>
+          <LiveActivity task={task} events={events} />
+          <Transcript events={events} />
+        </>
       )}
       <TaskDetailsCollapsible task={task} />
     </div>
