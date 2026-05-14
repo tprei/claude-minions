@@ -4,24 +4,27 @@ import type { NodeRun, NodeRunTerminalReason } from "../domain/runs.js";
 import type { Artifact, TaskExecutionStatus, TaskNode, Workflow } from "../domain/types.js";
 import { TASK_WORKFLOW_COMPLETING_STATUSES } from "../domain/types.js";
 
-export type TransitionKind =
-  | "mark-ready"
-  | "mark-running"
-  | "update-run"
-  | "complete-runtime"
-  | "start-finalization"
-  | "open-review"
-  | "start-quality-gate"
-  | "complete-quality-gate"
-  | "start-ci-gate"
-  | "complete-ci-gate"
-  | "merge-task"
-  | "complete-without-pr"
-  | "merge-conflict"
-  | "cancel-task"
-  | "recover-task"
-  | "mark-interrupted"
-  | "fail-task";
+export const TRANSITION_KINDS = [
+  "mark-ready",
+  "mark-running",
+  "update-run",
+  "complete-runtime",
+  "start-finalization",
+  "open-review",
+  "start-quality-gate",
+  "complete-quality-gate",
+  "start-ci-gate",
+  "complete-ci-gate",
+  "merge-task",
+  "complete-without-pr",
+  "merge-conflict",
+  "cancel-task",
+  "recover-task",
+  "mark-interrupted",
+  "fail-task",
+] as const;
+
+export type TransitionKind = typeof TRANSITION_KINDS[number];
 
 export interface TransitionCommand {
   kind: TransitionKind;

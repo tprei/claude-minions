@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import type { DiffStat } from "../../types.js";
+import type { DiffStat } from "@minions/shared";
 import { cx } from "../../util/classnames.js";
 
 interface Props {

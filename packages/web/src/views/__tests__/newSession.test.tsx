@@ -91,11 +91,13 @@ function makeVersionInfo(): VersionInfo {
   return {
     apiVersion: "1.0",
     libraryVersion: "0.0.1",
+    buildSha: "test-sha",
     features: [],
     featuresPending: [],
     provider: "test",
     providers: ["test"],
     repos: [],
+    pluginSet: [],
     startedAt: new Date().toISOString(),
   };
 }

@@ -4,13 +4,16 @@ on:
     branches: ["**"]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  typecheck:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,32 +23,52 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @minions/shared run build
+      - run: pnpm run lint
       - run: pnpm -r run typecheck
-
-  test-engine:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @minions/shared run build
-      - run: pnpm --filter @minions/engine run test
-
-  build-web:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @minions/shared run build
+      - run: MWF_HAS_GIT=1 pnpm -r run test
       - run: pnpm --filter @minions/web run build
+      - run: pnpm --filter @minions/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @minions/web run test:e2e
+      - run: pnpm --filter @minions/engine run smoke
 
+  chaos:
+    if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/heads/release/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @minions/shared run build
+      - run: pnpm --filter @minions/engine run test:chaos
+
+  dogfood:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: npm install -g @anthropic-ai/claude-code@2.1.141
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @minions/shared run build
+      - run: pnpm --filter @minions/engine run dogfood:verify
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          MWF_DOGFOOD_REPORT: dogfood-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dogfood-report
+          path: dogfood-report.json
+          if-no-files-found: error

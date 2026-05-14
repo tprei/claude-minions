@@ -17,7 +17,7 @@ function wrap<E extends TranscriptEvent>(
   return Comp as unknown as EventComponent;
 }
 
-const EVENT_MAP: Partial<Record<TranscriptEvent["kind"], EventComponent>> = {
+const EVENT_MAP: Record<TranscriptEvent["kind"], EventComponent> = {
   assistant_text: wrap(AssistantText),
   thinking: wrap(Thinking),
   user_message: wrap(UserMessage),
@@ -28,8 +28,8 @@ const EVENT_MAP: Partial<Record<TranscriptEvent["kind"], EventComponent>> = {
   turn_completed: wrap(TurnCompleted),
 };
 
-export function pickComponent(event: TranscriptEvent): EventComponent | null {
-  return EVENT_MAP[event.kind] ?? null;
+export function pickComponent(event: TranscriptEvent): EventComponent {
+  return EVENT_MAP[event.kind];
 }
 
 export {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import QrScanner from "qr-scanner";
 import type { VersionInfo } from "@minions/shared";
 
@@ -27,8 +27,49 @@ function isConnectionPayload(v: unknown): v is ConnectionPayload {
 export function QrImportModal({ onImport, onClose }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerRef = useRef<QrScanner | null>(null);
+  const statusRef = useRef<"scanning" | "validating" | "error" | "done">("scanning");
   const [status, setStatus] = useState<"scanning" | "validating" | "error" | "done">("scanning");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [manualPayload, setManualPayload] = useState("");
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  const importPayload = useCallback(async (data: string): Promise<void> => {
+    setStatus("validating");
+    setErrorMsg(null);
+
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        throw new Error("QR code is not valid JSON");
+      }
+
+      if (!isConnectionPayload(parsed)) {
+        throw new Error("QR payload missing required fields: label, baseUrl, token");
+      }
+
+      const url = `${parsed.baseUrl.replace(/\/$/, "")}/version`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${parsed.token}` },
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server responded ${res.status} - check baseUrl and token`);
+      }
+
+      await res.json() as VersionInfo;
+
+      setStatus("done");
+      onImport(parsed);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Validation failed");
+      setStatus("error");
+    }
+  }, [onImport]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -37,39 +78,9 @@ export function QrImportModal({ onImport, onClose }: Props) {
     const scanner = new QrScanner(
       video,
       async (result) => {
-        if (status !== "scanning") return;
+        if (statusRef.current !== "scanning") return;
         scanner.stop();
-        setStatus("validating");
-
-        try {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(result.data);
-          } catch {
-            throw new Error("QR code is not valid JSON");
-          }
-
-          if (!isConnectionPayload(parsed)) {
-            throw new Error("QR payload missing required fields: label, baseUrl, token");
-          }
-
-          const url = `${parsed.baseUrl.replace(/\/$/, "")}/api/version`;
-          const res = await fetch(url, {
-            headers: { Authorization: `Bearer ${parsed.token}` },
-          });
-
-          if (!res.ok) {
-            throw new Error(`Server responded ${res.status} — check baseUrl and token`);
-          }
-
-          await res.json() as VersionInfo;
-
-          setStatus("done");
-          onImport(parsed);
-        } catch (err) {
-          setErrorMsg(err instanceof Error ? err.message : "Validation failed");
-          setStatus("error");
-        }
+        await importPayload(result.data);
       },
       {
         returnDetailedScanResult: true,
@@ -89,7 +100,7 @@ export function QrImportModal({ onImport, onClose }: Props) {
       scanner.stop();
       scanner.destroy();
     };
-  }, []);
+  }, [importPayload]);
 
   function retry() {
     setErrorMsg(null);
@@ -98,6 +109,13 @@ export function QrImportModal({ onImport, onClose }: Props) {
       setStatus("error");
       setErrorMsg("Camera unavailable");
     });
+  }
+
+  function submitManualPayload(e: FormEvent): void {
+    e.preventDefault();
+    const data = manualPayload.trim();
+    if (!data) return;
+    void importPayload(data);
   }
 
   return (
@@ -144,7 +162,33 @@ export function QrImportModal({ onImport, onClose }: Props) {
             Point camera at a Minions connection QR code
           </p>
         )}
+
+        <form className="flex flex-col gap-2" onSubmit={submitManualPayload}>
+          <label className="text-xs text-fg-muted" htmlFor="qr-payload">QR payload</label>
+          <textarea
+            id="qr-payload"
+            data-testid="qr-payload-input"
+            className="input min-h-20 text-xs"
+            value={manualPayload}
+            onChange={e => setManualPayload(e.target.value)}
+            spellCheck={false}
+          />
+          <ButtonLikeSubmit disabled={status === "validating"} />
+        </form>
       </div>
     </div>
+  );
+}
+
+function ButtonLikeSubmit({ disabled }: { disabled: boolean }) {
+  return (
+    <button
+      type="submit"
+      data-testid="qr-payload-submit"
+      disabled={disabled}
+      className="btn text-sm justify-center"
+    >
+      Import payload
+    </button>
   );
 }

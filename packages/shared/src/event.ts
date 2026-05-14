@@ -1,112 +1,174 @@
-import type { Session } from "./session.js";
-import type { TranscriptEvent } from "./transcript.js";
-import type { DAG, DAGNode } from "./dag.js";
-import type { Memory } from "./memory.js";
-import type { ResourceSnapshot } from "./resource.js";
+export const TASK_EXECUTION_STATUSES = [
+  "pending",
+  "ready",
+  "running",
+  "completed",
+  "finalizing",
+  "quality-pending",
+  "ci-pending",
+  "pr-open",
+  "merged",
+  "failed",
+  "cancelled",
+  "needs-review",
+] as const;
 
-export interface SessionCreatedEvent {
-  kind: "session_created";
-  session: Session;
+export type TaskExecutionStatus = (typeof TASK_EXECUTION_STATUSES)[number];
+
+export const TASK_STACK_STATUSES = [
+  "clean",
+  "restack-pending",
+  "restacking",
+  "restack-conflict",
+  "stale-artifacts",
+] as const;
+
+export type TaskStackStatus = (typeof TASK_STACK_STATUSES)[number];
+
+export type WorkflowStatus = "active" | "completed" | "failed" | "cancelled";
+export type GraphOperationKind = "restack";
+export type GraphOperationStatus = "pending" | "running" | "completed" | "conflict" | "failed";
+
+export type NodeRunTerminalReason =
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "recovered"
+  | "timeout"
+  | "interrupted";
+
+export const TRANSITION_KINDS = [
+  "mark-ready",
+  "mark-running",
+  "update-run",
+  "complete-runtime",
+  "start-finalization",
+  "open-review",
+  "start-quality-gate",
+  "complete-quality-gate",
+  "start-ci-gate",
+  "complete-ci-gate",
+  "merge-task",
+  "complete-without-pr",
+  "merge-conflict",
+  "cancel-task",
+  "recover-task",
+  "mark-interrupted",
+  "fail-task",
+] as const;
+
+export type TransitionKind = (typeof TRANSITION_KINDS)[number];
+
+export const WORKFLOW_EVENT_KINDS = [
+  "task-transitioned",
+  "graph-operation-changed",
+  "run-started",
+  "run-ended",
+  "workflow-status-changed",
+  "provider-event",
+  "merge-phase",
+  "ci-poll-result",
+] as const;
+
+export type WorkflowEventKind = (typeof WORKFLOW_EVENT_KINDS)[number];
+
+export type ProviderEvent =
+  | { kind: "assistant_text"; text: string }
+  | { kind: "thinking"; text: string }
+  | { kind: "tool_call"; id: string; name: string; input: unknown }
+  | { kind: "tool_result"; id: string; output: unknown; isError?: boolean }
+  | { kind: "permission_request"; id: string; tool: string; input: unknown }
+  | { kind: "usage"; inputTokens: number; outputTokens: number; cachedInputTokens?: number; reasoningTokens?: number; costUsd?: number }
+  | { kind: "error"; recoverable: boolean; message: string; source?: string }
+  | { kind: "final"; sessionRef: string; exitMetadata?: Record<string, unknown> };
+
+export interface TaskTransitionedPayload {
+  taskId: string;
+  transitionKind?: TransitionKind;
+  fromExecutionStatus: TaskExecutionStatus;
+  toExecutionStatus: TaskExecutionStatus;
+  fromStackStatus: TaskStackStatus;
+  toStackStatus: TaskStackStatus;
+  taskVersion: number;
 }
 
-export interface SessionUpdatedEvent {
-  kind: "session_updated";
-  session: Session;
+export interface GraphOperationChangedPayload {
+  operationId: string;
+  kind: GraphOperationKind;
+  fromStatus: GraphOperationStatus | null;
+  toStatus: GraphOperationStatus;
 }
 
-export interface SessionDeletedEvent {
-  kind: "session_deleted";
-  slug: string;
+export interface RunStartedPayload {
+  runId: string;
+  taskId: string;
+  attempt: number;
+  runtimeSessionId: string;
+  providerSessionRef?: string;
+  providerType: string;
+  runtimeType: string;
 }
 
-export interface DagCreatedEvent {
-  kind: "dag_created";
-  dag: DAG;
+export interface RunEndedPayload {
+  runId: string;
+  taskId: string;
+  attempt: number;
+  terminalReason: NodeRunTerminalReason;
+  providerSessionRef?: string;
 }
 
-export interface DagUpdatedEvent {
-  kind: "dag_updated";
-  dag: DAG;
+export interface WorkflowStatusChangedPayload {
+  fromStatus: WorkflowStatus;
+  toStatus: WorkflowStatus;
 }
 
-export interface DagDeletedEvent {
-  kind: "dag_deleted";
-  id: string;
+export interface ProviderEventPayload {
+  taskId: string;
+  runId: string;
+  providerEvent: ProviderEvent;
 }
 
-export interface DagNodeUpdatedEvent {
-  kind: "dag_node_updated";
-  dagId: string;
-  node: DAGNode;
+export type MergePhase = "prepareMerge" | "commit" | "squash" | "rebase" | "applyMerge" | "finalize";
+
+export interface MergePhasePayload {
+  taskId: string;
+  phase: MergePhase;
+  status: "started" | "completed";
+  error?: string;
 }
 
-export interface TranscriptEventEvent {
-  kind: "transcript_event";
-  sessionSlug: string;
-  event: TranscriptEvent;
+export type CIPollOverallStatus = "pending" | "success" | "failure" | "neutral";
+
+export interface CIPollCheck {
+  name: string;
+  status: "queued" | "in_progress" | "completed";
+  conclusion?: string | null;
+  url?: string;
 }
 
-export interface ResourceEvent {
-  kind: "resource";
-  snapshot: ResourceSnapshot;
+export interface CIPollResultPayload {
+  taskId: string;
+  runId?: string;
+  prNumber: number;
+  headSha: string;
+  overallStatus: CIPollOverallStatus;
+  checks: CIPollCheck[];
 }
 
-export interface SessionScreenshotCapturedEvent {
-  kind: "session_screenshot_captured";
-  sessionSlug: string;
-  filename: string;
-  url: string;
-  capturedAt: string;
-  description?: string;
+interface EventBase {
+  cursor: number;
+  workflowId: string;
+  occurredAt: string;
 }
 
-export interface MemoryProposedEvent {
-  kind: "memory_proposed";
-  memory: Memory;
-}
-
-export interface MemoryUpdatedEvent {
-  kind: "memory_updated";
-  memory: Memory;
-}
-
-export interface MemoryReviewedEvent {
-  kind: "memory_reviewed";
-  memory: Memory;
-}
-
-export interface MemoryDeletedEvent {
-  kind: "memory_deleted";
-  id: string;
-}
-
-export interface HelloEvent {
-  kind: "hello";
-  serverTime: string;
-  apiVersion: string;
-}
-
-export interface PingEvent {
-  kind: "ping";
-  serverTime: string;
-}
-
-export type ServerEvent =
-  | HelloEvent
-  | PingEvent
-  | SessionCreatedEvent
-  | SessionUpdatedEvent
-  | SessionDeletedEvent
-  | DagCreatedEvent
-  | DagUpdatedEvent
-  | DagDeletedEvent
-  | DagNodeUpdatedEvent
-  | TranscriptEventEvent
-  | ResourceEvent
-  | SessionScreenshotCapturedEvent
-  | MemoryProposedEvent
-  | MemoryUpdatedEvent
-  | MemoryReviewedEvent
-  | MemoryDeletedEvent;
-
-export type ServerEventKind = ServerEvent["kind"];
+export type WorkflowEvent = EventBase &
+  (
+    | { kind: "task-transitioned"; payload: TaskTransitionedPayload }
+    | { kind: "graph-operation-changed"; payload: GraphOperationChangedPayload }
+    | { kind: "run-started"; payload: RunStartedPayload }
+    | { kind: "run-ended"; payload: RunEndedPayload }
+    | { kind: "workflow-status-changed"; payload: WorkflowStatusChangedPayload }
+    | { kind: "provider-event"; payload: ProviderEventPayload }
+    | { kind: "merge-phase"; payload: MergePhasePayload }
+    | { kind: "ci-poll-result"; payload: CIPollResultPayload }
+  );

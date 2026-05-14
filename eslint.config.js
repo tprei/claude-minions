@@ -4,6 +4,13 @@ import globals from "globals";
 
 export default [
   {
+    linterOptions: {
+      noInlineConfig: true,
+      reportUnusedDisableDirectives: "error",
+      reportUnusedInlineConfigs: "error",
+    },
+  },
+  {
     ignores: [
       "**/dist/**",
       "**/node_modules/**",
@@ -14,12 +21,28 @@ export default [
       "**/dev-dist/**",
       "**/.vite/**",
       "packages/web/dev-dist/**",
+      "packages/engine/pwa/**",
+      "packages/engine/test/fixtures/pwa-*/**",
     ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["packages/*/src/**/*.{ts,tsx}"],
+    files: ["scripts/**/*.mjs", "packages/*/scripts/**/*.mjs"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: globals.node,
+    },
+  },
+  {
+    files: [
+      "packages/*/src/**/*.{ts,tsx}",
+      "packages/*/test/**/*.{ts,tsx}",
+      "packages/*/tests-e2e/**/*.{ts,tsx}",
+      "packages/*/scripts/**/*.ts",
+      "packages/*/playwright.config.ts",
+    ],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
@@ -27,6 +50,7 @@ export default [
       globals: { ...globals.node, ...globals.browser },
     },
     rules: {
+      "no-console": "off",
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": [
         "warn",

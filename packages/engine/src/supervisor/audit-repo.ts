@@ -11,6 +11,7 @@ import {
   SQL_LIST_AUDIT_EVENTS_WORKFLOW,
   SQL_LIST_AUDIT_EVENTS_WORKFLOW_BEFORE,
 } from "../persistence/audit-schema.js";
+import { configureSqliteDatabase } from "../persistence/sqlite-options.js";
 
 interface AuditRow {
   id: string;
@@ -56,6 +57,7 @@ export class AuditRepo {
   private readonly stmtListWorkflowBefore: Statement<[string, string, number], AuditRow>;
 
   constructor(db: Database.Database) {
+    configureSqliteDatabase(db);
     db.exec(AUDIT_SCHEMA_DDL);
     this.stmtInsert = db.prepare(SQL_INSERT_AUDIT_EVENT);
     this.stmtList = db.prepare(SQL_LIST_AUDIT_EVENTS);

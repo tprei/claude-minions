@@ -12,9 +12,11 @@
     }
   },
   "scripts": {
-    "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
+    "build": "pnpm --filter @minions/shared run build && tsc --noEmit",
+    "typecheck": "pnpm --filter @minions/shared run build && tsc --noEmit",
     "test": "vitest run",
+    "test:chaos": "MWF_CHAOS=1 vitest run test/chaos/regressions.chaos.test.ts",
+    "dogfood:verify": "tsx scripts/dogfood.ts",
     "start": "tsx src/main.ts",
     "dev": "MWF_DB_PATH=${MWF_DB_PATH:-/tmp/engine-port-dev.db} MWF_PORT=${MWF_PORT:-3000} MWF_DATA_DIR=${MWF_DATA_DIR:-/tmp/engine-port-data} tsx watch src/main.ts",
     "smoke": "rm -f /tmp/engine-port-smoke.db && tsx scripts/smoke.ts"
@@ -28,6 +30,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
+    "@minions/shared": "workspace:*",
     "@hono/node-server": "^2.0.1",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.9.0",

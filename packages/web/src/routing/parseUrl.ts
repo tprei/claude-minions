@@ -1,4 +1,4 @@
-export type ViewKind = "list" | "kanban" | "dag" | "ship" | "memory" | "loops" | "new" | "doctor" | "inbox";
+export type ViewKind = "list" | "dag" | "new";
 
 export interface ParsedUrl {
   connectionId: string | null;
@@ -7,7 +7,7 @@ export interface ParsedUrl {
   query: Record<string, string>;
 }
 
-const VALID_VIEWS = new Set<ViewKind>(["list", "kanban", "dag", "ship", "memory", "loops", "new", "doctor", "inbox"]);
+const VALID_VIEWS = new Set<ViewKind>(["list", "dag", "new"]);
 
 function isViewKind(v: string): v is ViewKind {
   return VALID_VIEWS.has(v as ViewKind);

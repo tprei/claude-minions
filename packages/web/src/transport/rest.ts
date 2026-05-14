@@ -4,6 +4,7 @@ import type {
   WorkflowSpec,
   TranscriptEntry,
 } from "@minions/engine";
+import type { VersionInfo } from "@minions/shared";
 
 export class ApiError extends Error {
   readonly code: string;
@@ -60,6 +61,10 @@ export function listWorkflows(
   return apiFetch<Workflow[]>(conn, `/workflows${qs}`);
 }
 
+export function getVersion(conn: Connection): Promise<VersionInfo> {
+  return apiFetch<VersionInfo>(conn, "/version");
+}
+
 export function getWorkflow(conn: Connection, id: string): Promise<Workflow> {
   return apiFetch<Workflow>(conn, `/workflows/${encodeURIComponent(id)}`);
 }
@@ -99,10 +104,16 @@ export interface TransitionTaskInput {
   };
 }
 
+export interface LandWorkflowInput {
+  kind: "land-workflow";
+  workflowId: string;
+}
+
 export type DispatchCommandInput =
   | ContinueTaskInput
   | RetryTaskInput
-  | TransitionTaskInput;
+  | TransitionTaskInput
+  | LandWorkflowInput;
 
 export function dispatchCommand(
   conn: Connection,

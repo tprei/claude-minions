@@ -1,4 +1,4 @@
-import type { Command, SessionMode } from "@minions/shared";
+import type { DispatchCommandInput } from "../transport/rest.js";
 
 export interface SlashArg {
   name: string;
@@ -9,33 +9,19 @@ export interface SlashArg {
 
 export interface SlashCommandResult {
   kind: "command";
-  payload: Command;
-}
-
-export interface SlashMessageResult {
-  kind: "message";
-  payload: { prompt: string; mode?: SessionMode };
+  payload: DispatchCommandInput;
 }
 
 export interface SlashUiResult {
   kind: "ui";
-  action:
-    | "help"
-    | "stats"
-    | "loops"
-    | "config"
-    | "doctor"
-    | "status"
-    | "diff"
-    | "cost"
-    | "execute-plan";
+  action: "help" | "cost";
 }
 
-export type SlashResult = SlashCommandResult | SlashMessageResult | SlashUiResult;
+export type SlashResult = SlashCommandResult | SlashUiResult;
 
 export interface SlashContext {
-  sessionSlug?: string;
-  dagId?: string;
+  workflowId?: string;
+  taskId?: string;
 }
 
 export interface SlashCommand {
@@ -45,135 +31,23 @@ export interface SlashCommand {
   build(args: string[], ctx: SlashContext): SlashResult;
 }
 
-function requireSession(ctx: SlashContext, cmd: string): string {
-  if (!ctx.sessionSlug) throw new Error(`/${cmd} requires an active session`);
-  return ctx.sessionSlug;
+function requireWorkflowId(ctx: SlashContext, cmd: string): string {
+  if (!ctx.workflowId) throw new Error(`/${cmd} requires an active workflow`);
+  return ctx.workflowId;
 }
 
-function requireDag(ctx: SlashContext, cmd: string): string {
-  if (!ctx.dagId) throw new Error(`/${cmd} requires an active DAG`);
-  return ctx.dagId;
+function requireTaskId(ctx: SlashContext, cmd: string): string {
+  if (!ctx.taskId) throw new Error(`/${cmd} requires an active task`);
+  return ctx.taskId;
+}
+
+function requirePrompt(args: string[], cmd: string): string {
+  const prompt = args.join(" ").trim();
+  if (!prompt) throw new Error(`/${cmd} requires text`);
+  return prompt;
 }
 
 export const slashCommands: SlashCommand[] = [
-  {
-    name: "task",
-    args: [{ name: "prompt", type: "string", required: true }],
-    hint: "Start a task session",
-    build: (args) => ({
-      kind: "message",
-      payload: { prompt: args.join(" "), mode: "task" },
-    }),
-  },
-  {
-    name: "plan",
-    args: [{ name: "prompt", type: "string", required: true }],
-    hint: "Start a plan session",
-    build: (args) => ({
-      kind: "message",
-      payload: { prompt: args.join(" "), mode: "plan" },
-    }),
-  },
-  {
-    name: "think",
-    args: [{ name: "prompt", type: "string", required: true }],
-    hint: "Start a think session",
-    build: (args) => ({
-      kind: "message",
-      payload: { prompt: args.join(" "), mode: "think" },
-    }),
-  },
-  {
-    name: "review",
-    args: [{ name: "prompt", type: "string", required: true }],
-    hint: "Start a review session",
-    build: (args) => ({
-      kind: "message",
-      payload: { prompt: args.join(" "), mode: "review" },
-    }),
-  },
-  {
-    name: "ship",
-    args: [{ name: "prompt", type: "string", required: true }],
-    hint: "Start a ship session",
-    build: (args) => ({
-      kind: "message",
-      payload: { prompt: args.join(" "), mode: "ship" },
-    }),
-  },
-  {
-    name: "retry",
-    args: [],
-    hint: "Retry the current session",
-    build: (_args, ctx) => ({
-      kind: "command",
-      payload: { kind: "retry", sessionSlug: requireSession(ctx, "retry") },
-    }),
-  },
-  {
-    name: "done",
-    args: [],
-    hint: "Mark session as done",
-    build: (_args, ctx) => ({
-      kind: "command",
-      payload: { kind: "done", sessionSlug: requireSession(ctx, "done") },
-    }),
-  },
-  {
-    name: "clean",
-    args: [],
-    hint: "Clean the session workspace",
-    build: (_args, ctx) => ({
-      kind: "command",
-      payload: { kind: "clean", sessionSlug: requireSession(ctx, "clean") },
-    }),
-  },
-  {
-    name: "feedback",
-    args: [
-      { name: "rating", type: "enum", options: ["up", "down"], required: true },
-      { name: "reason", type: "string", required: false },
-    ],
-    hint: "Submit feedback: up or down [reason]",
-    build: (args, ctx) => {
-      const rating = args[0] as "up" | "down";
-      if (rating !== "up" && rating !== "down") {
-        throw new Error("/feedback requires 'up' or 'down'");
-      }
-      const reason = args.slice(1).join(" ") || undefined;
-      return {
-        kind: "command",
-        payload: {
-          kind: "submit-feedback",
-          sessionSlug: requireSession(ctx, "feedback"),
-          rating,
-          reason,
-        },
-      };
-    },
-  },
-  {
-    name: "force",
-    args: [
-      {
-        name: "action",
-        type: "enum",
-        options: ["release-mutex", "skip-stage", "mark-ready"],
-        required: true,
-      },
-    ],
-    hint: "Force an action on the session",
-    build: (args, ctx) => {
-      const action = args[0] as "release-mutex" | "skip-stage" | "mark-ready";
-      if (!["release-mutex", "skip-stage", "mark-ready"].includes(action)) {
-        throw new Error("/force requires release-mutex | skip-stage | mark-ready");
-      }
-      return {
-        kind: "command",
-        payload: { kind: "force", sessionSlug: requireSession(ctx, "force"), action },
-      };
-    },
-  },
   {
     name: "help",
     args: [],
@@ -181,144 +55,38 @@ export const slashCommands: SlashCommand[] = [
     build: () => ({ kind: "ui", action: "help" }),
   },
   {
-    name: "judge",
-    args: [{ name: "rubric", type: "string", required: false }],
-    hint: "Run judge on variant sessions",
-    build: (args, ctx) => ({
-      kind: "command",
-      payload: {
-        kind: "judge",
-        variantParentSlug: requireSession(ctx, "judge"),
-        rubric: args.join(" ") || undefined,
-      },
-    }),
-  },
-  {
-    name: "land",
-    args: [
-      {
-        name: "strategy",
-        type: "enum",
-        options: ["merge", "squash", "rebase"],
-        required: false,
-      },
-    ],
-    hint: "Land the session PR",
-    build: (args, ctx) => {
-      const strategy = (args[0] as "merge" | "squash" | "rebase") || undefined;
-      return {
-        kind: "command",
-        payload: {
-          kind: "land",
-          sessionSlug: requireSession(ctx, "land"),
-          strategy,
-        },
-      };
-    },
-  },
-  {
-    name: "stats",
+    name: "cost",
     args: [],
-    hint: "Show usage stats",
-    build: () => ({ kind: "ui", action: "stats" }),
-  },
-  {
-    name: "usage",
-    args: [],
-    hint: "Alias for /stats",
-    build: () => ({ kind: "ui", action: "stats" }),
-  },
-  {
-    name: "loops",
-    args: [],
-    hint: "Open loops view",
-    build: () => ({ kind: "ui", action: "loops" }),
-  },
-  {
-    name: "config",
-    args: [],
-    hint: "Open runtime config drawer",
-    build: () => ({ kind: "ui", action: "config" }),
-  },
-  {
-    name: "doctor",
-    args: [],
-    hint: "Run diagnostics",
-    build: () => ({ kind: "ui", action: "doctor" }),
-  },
-  {
-    name: "split",
-    args: [
-      { name: "nodeId", type: "string", required: true },
-      { name: "title", type: "string", required: true },
-      { name: "prompt", type: "string", required: true },
-    ],
-    hint: 'Split a DAG node: <nodeId> "<title>" "<prompt>"',
-    build: (args, ctx) => {
-      const dagId = requireDag(ctx, "split");
-      const nodeId = args[0];
-      if (!nodeId) throw new Error("/split requires <nodeId>");
-      const rest = args.slice(1).join(" ");
-      const match = rest.match(/^"([^"]+)"\s+"([^"]+)"$/);
-      if (!match) throw new Error('/split requires "<title>" "<prompt>"');
-      const title = match[1];
-      const prompt = match[2];
-      if (!title || !prompt) throw new Error('/split requires "<title>" "<prompt>"');
-      return {
-        kind: "command",
-        payload: {
-          kind: "split",
-          dagId,
-          nodeId,
-          newNodes: [{ title, prompt, dependsOn: [nodeId] }],
-        },
-      };
-    },
-  },
-  {
-    name: "stack",
-    args: [
-      {
-        name: "action",
-        type: "enum",
-        options: ["show", "restack", "land-all"],
-        required: true,
-      },
-    ],
-    hint: "Stack operations: show | restack | land-all",
-    build: (args, ctx) => {
-      const action = args[0] as "show" | "restack" | "land-all";
-      if (!["show", "restack", "land-all"].includes(action)) {
-        throw new Error("/stack requires show | restack | land-all");
-      }
-      return {
-        kind: "command",
-        payload: {
-          kind: "stack",
-          sessionSlug: requireSession(ctx, "stack"),
-          action,
-        },
-      };
-    },
+    hint: "Show task cost",
+    build: () => ({ kind: "ui", action: "cost" }),
   },
   {
     name: "reply",
     args: [{ name: "text", type: "string", required: true }],
-    hint: "Reply to the active session",
+    hint: "Reply to the active task",
     build: (args, ctx) => ({
       kind: "command",
       payload: {
-        kind: "reply",
-        sessionSlug: requireSession(ctx, "reply"),
-        text: args.join(" "),
+        kind: "continue-task",
+        workflowId: requireWorkflowId(ctx, "reply"),
+        taskId: requireTaskId(ctx, "reply"),
+        prompt: requirePrompt(args, "reply"),
       },
     }),
   },
   {
-    name: "status",
-    args: [],
-    hint: "Show session status panel",
-    build: () => ({ kind: "ui", action: "status" }),
+    name: "retry",
+    args: [{ name: "prompt", type: "string", required: true }],
+    hint: "Retry the active task with a fresh prompt",
+    build: (args, ctx) => ({
+      kind: "command",
+      payload: {
+        kind: "retry-task",
+        workflowId: requireWorkflowId(ctx, "retry"),
+        taskId: requireTaskId(ctx, "retry"),
+        prompt: requirePrompt(args, "retry"),
+      },
+    }),
   },
   {
     name: "clear",
@@ -326,7 +94,12 @@ export const slashCommands: SlashCommand[] = [
     hint: "Clear conversation",
     build: (_args, ctx) => ({
       kind: "command",
-      payload: { kind: "reply", sessionSlug: requireSession(ctx, "clear"), text: "/clear" },
+      payload: {
+        kind: "continue-task",
+        workflowId: requireWorkflowId(ctx, "clear"),
+        taskId: requireTaskId(ctx, "clear"),
+        prompt: "/clear",
+      },
     }),
   },
   {
@@ -335,28 +108,43 @@ export const slashCommands: SlashCommand[] = [
     hint: "Compact conversation",
     build: (_args, ctx) => ({
       kind: "command",
-      payload: { kind: "reply", sessionSlug: requireSession(ctx, "compact"), text: "/compact" },
+      payload: {
+        kind: "continue-task",
+        workflowId: requireWorkflowId(ctx, "compact"),
+        taskId: requireTaskId(ctx, "compact"),
+        prompt: "/compact",
+      },
     }),
   },
   {
-    name: "cost",
+    name: "cancel",
     args: [],
-    hint: "Show session cost",
-    build: () => ({ kind: "ui", action: "cost" }),
+    hint: "Cancel the active task",
+    build: (_args, ctx) => ({
+      kind: "command",
+      payload: {
+        kind: "transition-task",
+        workflowId: requireWorkflowId(ctx, "cancel"),
+        transition: {
+          kind: "cancel",
+          taskId: requireTaskId(ctx, "cancel"),
+          now: new Date().toISOString(),
+        },
+      },
+    }),
   },
   {
-    name: "diff",
+    name: "land",
     args: [],
-    hint: "Open diff view",
-    build: () => ({ kind: "ui", action: "diff" }),
-  },
-  {
-    name: "execute-plan",
-    args: [],
-    hint: "Open the execute-plan modal for this think thread",
+    hint: "Land the active workflow",
     build: (_args, ctx) => {
-      requireSession(ctx, "execute-plan");
-      return { kind: "ui", action: "execute-plan" };
+      return {
+        kind: "command",
+        payload: {
+          kind: "land-workflow",
+          workflowId: requireWorkflowId(ctx, "land"),
+        },
+      };
     },
   },
 ];

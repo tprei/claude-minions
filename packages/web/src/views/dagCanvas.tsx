@@ -28,7 +28,7 @@ import { dispatchCommand } from "../transport/rest.js";
 import { cx } from "../util/classnames.js";
 import { PANEL_DAG_CANVAS, usePanelLayout, type Breakpoint } from "../util/panelLayout.js";
 import { getViewport, setViewport, type Viewport } from "./dagViewport.js";
-import { STATUS_DOT, STATUS_LABEL, getTaskVisual } from "./statusToVisual.js";
+import { STATUS_LABEL, getTaskVisual } from "./statusToVisual.js";
 import "reactflow/dist/style.css";
 
 const DAG_DEFAULT_WIDTH = 720;
@@ -273,12 +273,12 @@ function DagCanvasInner({ workflow, connectionId, breakpoint }: CanvasProps) {
 
   const [retryFor, setRetryFor] = useState<string | null>(null);
 
-  const retryMutation = useApiMutation<{ conn: Connection; workflowId: string; taskId: string }, unknown>(
-    ({ conn: c, workflowId, taskId }) => dispatchCommand(c, {
+  const retryMutation = useApiMutation<{ conn: Connection; workflowId: string; taskId: string; prompt: string }, unknown>(
+    ({ conn: c, workflowId, taskId, prompt }) => dispatchCommand(c, {
       kind: "retry-task",
       workflowId,
       taskId,
-      prompt: "",
+      prompt,
     }),
     {
       onSuccess: () => {
@@ -316,9 +316,9 @@ function DagCanvasInner({ workflow, connectionId, breakpoint }: CanvasProps) {
   }, [resetRetryMutation]);
 
   const handleConfirmRetry = useCallback(() => {
-    if (!conn || !retryFor) return;
-    void runRetryMutation({ conn, workflowId: workflow.id, taskId: retryFor });
-  }, [conn, retryFor, workflow.id, runRetryMutation]);
+    if (!conn || !retryTask) return;
+    void runRetryMutation({ conn, workflowId: workflow.id, taskId: retryTask.id, prompt: retryTask.prompt });
+  }, [conn, retryTask, workflow.id, runRetryMutation]);
 
   const stored = useMemo<Viewport | null>(() => {
     if (!connectionId) return null;

@@ -27,6 +27,7 @@ export interface HarnessOptions {
   ciBabysitterCadence?: PollCadence;
   providerFactory?: EngineConfig["providerFactory"];
   now?: () => string;
+  runtime?: EngineConfig["runtime"];
   baseDir?: string;
   dbPath?: string;
   repoPath?: string;
@@ -98,6 +99,7 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<PipelineHa
     workspace,
     log: silentLogger(),
     ...(opts.now !== undefined ? { now: opts.now } : {}),
+    ...(opts.runtime !== undefined ? { runtime: opts.runtime } : {}),
     ...(opts.scm !== undefined ? { scm: opts.scm, githubRepo: { owner: "fake", repo: "fake" } } : {}),
     ...(opts.githubClient !== undefined ? { githubClient: opts.githubClient } : {}),
     ...(opts.ciBabysitterCadence !== undefined ? { ciBabysitterCadence: opts.ciBabysitterCadence } : {}),

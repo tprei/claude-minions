@@ -7,6 +7,7 @@ import {
   SQL_LIST_SUBS_BY_WORKFLOW,
   SQL_UPSERT_SUBSCRIPTION,
 } from "./schema.js";
+import { configureSqliteDatabase } from "./sqlite-options.js";
 
 interface SubRow {
   endpoint: string;
@@ -25,6 +26,7 @@ export class SQLiteSubscriptionRepository implements SubscriptionRepository {
   private readonly stmtListByWorkflow: Statement<[string], SubRow>;
 
   constructor(db: Database.Database) {
+    configureSqliteDatabase(db);
     db.exec(PUSH_SUBSCRIPTIONS_DDL);
     this.stmtUpsert = db.prepare<[string, string, string, string, string]>(SQL_UPSERT_SUBSCRIPTION);
     this.stmtDelete = db.prepare<[string, string]>(SQL_DELETE_SUBSCRIPTION);

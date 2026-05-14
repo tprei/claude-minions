@@ -68,27 +68,111 @@ export function statusToVisual(status: TaskExecutionStatus): StatusVisual {
   };
 }
 
-/**
- * Whether a task is in an "active" state (occupying an agent slot or
- * waiting on gating condition). Used for filter chips.
- */
+function assertNever(value: never): never {
+  throw new Error(`Unhandled task status: ${String(value)}`);
+}
+
 export function isRunning(status: TaskExecutionStatus): boolean {
-  return status === "running" || status === "ready" || status === "finalizing";
+  switch (status) {
+    case "ready":
+    case "running":
+    case "finalizing":
+      return true;
+    case "pending":
+    case "completed":
+    case "quality-pending":
+    case "ci-pending":
+    case "pr-open":
+    case "merged":
+    case "failed":
+    case "cancelled":
+    case "needs-review":
+      return false;
+    default:
+      return assertNever(status);
+  }
 }
 
 export function isWaiting(status: TaskExecutionStatus): boolean {
-  return status === "quality-pending" || status === "ci-pending" || status === "needs-review";
+  switch (status) {
+    case "quality-pending":
+    case "ci-pending":
+    case "needs-review":
+      return true;
+    case "pending":
+    case "ready":
+    case "running":
+    case "completed":
+    case "finalizing":
+    case "pr-open":
+    case "merged":
+    case "failed":
+    case "cancelled":
+      return false;
+    default:
+      return assertNever(status);
+  }
 }
 
 export function isTerminal(status: TaskExecutionStatus): boolean {
-  return status === "completed" || status === "pr-open" || status === "merged"
-    || status === "failed" || status === "cancelled";
+  switch (status) {
+    case "completed":
+    case "pr-open":
+    case "merged":
+    case "failed":
+    case "cancelled":
+      return true;
+    case "pending":
+    case "ready":
+    case "running":
+    case "finalizing":
+    case "quality-pending":
+    case "ci-pending":
+    case "needs-review":
+      return false;
+    default:
+      return assertNever(status);
+  }
 }
 
 export function isCompleted(status: TaskExecutionStatus): boolean {
-  return status === "completed" || status === "pr-open" || status === "merged";
+  switch (status) {
+    case "completed":
+    case "pr-open":
+    case "merged":
+      return true;
+    case "pending":
+    case "ready":
+    case "running":
+    case "finalizing":
+    case "quality-pending":
+    case "ci-pending":
+    case "failed":
+    case "cancelled":
+    case "needs-review":
+      return false;
+    default:
+      return assertNever(status);
+  }
 }
 
 export function isFailed(status: TaskExecutionStatus): boolean {
-  return status === "failed";
+  switch (status) {
+    case "failed":
+      return true;
+    case "pending":
+    case "ready":
+    case "running":
+    case "completed":
+    case "finalizing":
+    case "quality-pending":
+    case "ci-pending":
+    case "pr-open":
+    case "merged":
+    case "cancelled":
+    case "needs-review":
+      return false;
+    default:
+      return assertNever(status);
+  }
 }

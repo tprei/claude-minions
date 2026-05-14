@@ -68,7 +68,6 @@ export class RunOrchestrator {
     const { workflowId, taskId, runtimeSessionId, provider, runtime, applyCommand, now, workspace, workspaceId, log } = this.deps;
 
     let latestOffset: number | undefined;
-    let latestSessionRef: string | undefined;
     let lastNonRecoverableError: ProviderEvent | undefined;
     let finalReceived = false;
 
@@ -116,7 +115,7 @@ export class RunOrchestrator {
         if (event.kind !== "final") {
           continue;
         }
-        const effectiveSessionRef = event.sessionRef || latestSessionRef;
+        const effectiveSessionRef = event.sessionRef || undefined;
 
         // Only persist providerSessionRef on the success path — never outputOffset.
         // outputOffset is for resume on interrupted runs; writing it here would advance
@@ -161,7 +160,7 @@ export class RunOrchestrator {
         }
         return;
       }
-    } catch (err) {
+    } catch {
       // Graceful shutdown: signal was aborted, leave the task running so boot can re-spawn it.
       if (this.deps.signal?.aborted === true) {
         log.info("run-orchestrator exiting due to signal abort, leaving task running");

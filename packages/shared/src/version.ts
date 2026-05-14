@@ -1,28 +1,26 @@
 export type FeatureFlag =
-  | "sessions"
-  | "dags"
-  | "ship"
-  | "loops"
-  | "variants"
-  | "judge"
-  | "checkpoints"
-  | "memory"
-  | "memory-mcp"
-  | "audit"
-  | "resources"
-  | "push"
-  | "external-tasks"
-  | "runtime-overrides"
-  | "github"
+  | "workflows"
+  | "workflow-planning"
+  | "task-transitions"
+  | "scheduler"
+  | "provider-orchestration"
+  | "transcripts"
+  | "recovery"
+  | "restack"
   | "quality-gates"
-  | "readiness"
+  | "github-prs"
   | "ci-babysit"
-  | "screenshots"
-  | "diff"
-  | "pr-preview"
-  | "stack"
-  | "split"
-  | "voice-input";
+  | "local-finalize"
+  | "push"
+  | "supervisor"
+  | "audit"
+  | "observability"
+  | "pwa-connections"
+  | "snapshot-cache"
+  | "status-rendering"
+  | "slash-commands"
+  | "voice-input"
+  | "runtime-diagnostics";
 
 export interface RepoBinding {
   id: string;
@@ -39,10 +37,12 @@ export interface PendingFeature {
 export interface VersionInfo {
   apiVersion: string;
   libraryVersion: string;
+  buildSha: string;
   features: FeatureFlag[];
   featuresPending: PendingFeature[];
   provider: string;
   providers: string[];
   repos: RepoBinding[];
+  pluginSet: string[];
   startedAt: string;
 }

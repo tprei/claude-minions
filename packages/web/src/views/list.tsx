@@ -12,7 +12,7 @@ import { SessionActionsMenu } from "../chat/SessionActionsMenu.js";
 import { usePullToRefresh } from "../pwa/gestures.js";
 import { Spinner } from "../components/Spinner.js";
 import { RepoTabs } from "./RepoTabs.js";
-import { STATUS_DOT, STATUS_LABEL, isRunning, isWaiting, isCompleted, isFailed } from "./statusToVisual.js";
+import { getTaskVisual, STATUS_LABEL, isRunning, isWaiting, isCompleted, isFailed } from "./statusToVisual.js";
 
 type FilterStatus = "all" | "running" | "waiting_input" | "completed" | "failed";
 type FilterMode = "all" | "task" | "dag-task";
@@ -174,7 +174,7 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterRepo,
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto relative">
+      <div ref={scrollRef} data-testid="task-list-scroll" className="flex-1 overflow-y-auto relative">
         <div
           aria-hidden={!pull.refreshing && !pull.dragging}
           className={cx(
@@ -294,6 +294,7 @@ function DagPill({ workflowId, onOpen }: { workflowId: string; onOpen: (id: stri
 
 function TaskCard({ row, conn, onClick, onOpenDag }: RowProps) {
   const isMultiTask = Object.keys(row.workflow.graph).length > 1;
+  const visual = getTaskVisual(row.status, row.task.stackStatus);
   return (
     <div
       onClick={onClick}
@@ -309,9 +310,12 @@ function TaskCard({ row, conn, onClick, onOpenDag }: RowProps) {
         <KindPill kind={row.kind} />
         {isMultiTask && <DagPill workflowId={row.workflowId} onOpen={onOpenDag} />}
         <span className="inline-flex items-center gap-1.5 pill bg-bg-elev text-fg-muted text-[10px]">
-          <span className={cx("w-2 h-2 rounded-full", STATUS_DOT[row.status])} />
-          {STATUS_LABEL[row.status]}
+          <span className={cx("w-2 h-2 rounded-full", visual.dotClass)} />
+          {visual.label}
         </span>
+        {visual.badgeLabel && (
+          <span className="pill bg-amber-900/30 text-amber-300 text-[10px]">{visual.badgeLabel}</span>
+        )}
       </div>
       <div className="flex items-center gap-2 text-[10px] text-fg-subtle">
         <span>{relTime(row.updatedAt)}</span>
@@ -322,6 +326,7 @@ function TaskCard({ row, conn, onClick, onOpenDag }: RowProps) {
 
 function TaskRow({ row, conn, onClick, onOpenDag }: RowProps) {
   const isMultiTask = Object.keys(row.workflow.graph).length > 1;
+  const visual = getTaskVisual(row.status, row.task.stackStatus);
   return (
     <tr
       onClick={onClick}
@@ -335,9 +340,12 @@ function TaskRow({ row, conn, onClick, onOpenDag }: RowProps) {
         </div>
       </td>
       <td className="px-4 py-2">
-        <div className="flex items-center gap-1.5">
-          <span className={cx("w-2 h-2 rounded-full shrink-0", STATUS_DOT[row.status])} />
-          <span className="text-fg-muted text-xs">{STATUS_LABEL[row.status]}</span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={cx("w-2 h-2 rounded-full shrink-0", visual.dotClass)} />
+          <span className="text-fg-muted text-xs">{visual.label}</span>
+          {visual.badgeLabel && (
+            <span className="pill bg-amber-900/30 text-amber-300 text-[10px]">{visual.badgeLabel}</span>
+          )}
         </div>
       </td>
       <td className="px-4 py-2 text-fg-subtle text-xs whitespace-nowrap">

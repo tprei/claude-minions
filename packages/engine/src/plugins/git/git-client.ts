@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 export interface GitClientConfig {
   gitBin?: string;
   commandPrefix?: readonly string[];
+  timeoutMs?: number;
 }
 
 export class GitError extends Error {
@@ -26,18 +27,22 @@ export interface WorktreeEntry {
 }
 
 export class GitClient {
+  private static readonly DEFAULT_TIMEOUT_MS = 120_000;
+
   private readonly bin: string;
   private readonly commandPrefix: readonly string[];
+  private readonly timeoutMs: number;
 
   constructor(config: GitClientConfig = {}) {
     this.bin = config.gitBin ?? "git";
     this.commandPrefix = config.commandPrefix ?? [];
+    this.timeoutMs = config.timeoutMs ?? GitClient.DEFAULT_TIMEOUT_MS;
   }
 
   run(
     cwd: string,
     args: readonly string[],
-    opts?: { env?: Record<string, string> },
+    opts?: { env?: Record<string, string>; timeoutMs?: number },
   ): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
       const [spawnBin, spawnArgs] =
@@ -55,13 +60,31 @@ export class GitClient {
       const proc = spawn(spawnBin, spawnArgs, { cwd, ...(spawnEnv !== undefined ? { env: spawnEnv } : {}) });
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      const timeoutMs = opts?.timeoutMs ?? this.timeoutMs;
+      let timedOut = false;
+      let killTimer: NodeJS.Timeout | undefined;
+      let sigkillTimer: NodeJS.Timeout | undefined;
 
       proc.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
       proc.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
+      if (timeoutMs > 0) {
+        killTimer = setTimeout(() => {
+          timedOut = true;
+          proc.kill("SIGTERM");
+          sigkillTimer = setTimeout(() => proc.kill("SIGKILL"), 1_000);
+        }, timeoutMs);
+      }
+
       proc.on("close", (code) => {
+        if (killTimer !== undefined) clearTimeout(killTimer);
+        if (sigkillTimer !== undefined) clearTimeout(sigkillTimer);
         const stdout = Buffer.concat(stdoutChunks).toString("utf8");
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        if (timedOut) {
+          reject(new GitError(`git timed out after ${timeoutMs}ms`, stdout, stderr, 124));
+          return;
+        }
         const exitCode = code ?? 1;
         if (exitCode === 0) {
           resolve({ stdout, stderr });
@@ -70,7 +93,11 @@ export class GitClient {
         }
       });
 
-      proc.on("error", (err) => reject(err));
+      proc.on("error", (err) => {
+        if (killTimer !== undefined) clearTimeout(killTimer);
+        if (sigkillTimer !== undefined) clearTimeout(sigkillTimer);
+        reject(err);
+      });
     });
   }
 

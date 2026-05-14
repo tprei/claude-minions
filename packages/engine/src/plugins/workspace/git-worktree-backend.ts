@@ -12,6 +12,7 @@ export interface GitWorktreeBackendConfig {
   repoPath: string;
   workspaceRoot: string;
   gitCommandPrefix?: readonly string[];
+  operationTimeoutMs?: number;
 }
 
 function isNotFoundError(err: unknown): boolean {
@@ -27,12 +28,14 @@ function isNotFoundError(err: unknown): boolean {
 }
 
 export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
+  private static readonly DEFAULT_OPERATION_TIMEOUT_MS = 120_000;
   private static readonly locks: Map<string, Promise<void>> = new Map();
 
   private readonly gitClient: GitClient;
   private readonly workspaceRoot: string;
   private readonly fs: WorkspaceFs;
   private readonly dockerMode: boolean;
+  private readonly operationTimeoutMs: number;
   private readonly handles: Map<string, WorkspaceHandle> = new Map();
 
   private repoPath: string;
@@ -43,12 +46,14 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     workspaceRoot: string,
     fs: WorkspaceFs,
     dockerMode: boolean,
+    operationTimeoutMs: number,
   ) {
     this.gitClient = gitClient;
     this.repoPath = repoPath;
     this.workspaceRoot = workspaceRoot;
     this.fs = fs;
     this.dockerMode = dockerMode;
+    this.operationTimeoutMs = operationTimeoutMs;
   }
 
   static async create(config: GitWorktreeBackendConfig): Promise<GitWorktreeWorkspaceBackend> {
@@ -75,7 +80,14 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       }
     }
 
-    return new GitWorktreeWorkspaceBackend(config.gitClient, repoPath, workspaceRoot, fs, dockerMode);
+    return new GitWorktreeWorkspaceBackend(
+      config.gitClient,
+      repoPath,
+      workspaceRoot,
+      fs,
+      dockerMode,
+      config.operationTimeoutMs ?? GitWorktreeWorkspaceBackend.DEFAULT_OPERATION_TIMEOUT_MS,
+    );
   }
 
   private async validateContainment(candidate: string): Promise<void> {
@@ -118,18 +130,38 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     }
   }
 
-  private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  private async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const locks = GitWorktreeWorkspaceBackend.locks;
     const prev = locks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
-    locks.set(key, prev.then(() => gate));
-    return prev.then(async () => {
-      try {
-        return await fn();
-      } finally {
-        release();
-      }
+    const current = prev.catch(() => undefined).then(() => gate);
+    locks.set(key, current);
+
+    await prev.catch(() => undefined);
+    try {
+      return await this.withOperationTimeout(fn());
+    } finally {
+      release();
+      if (locks.get(key) === current) locks.delete(key);
+    }
+  }
+
+  private withOperationTimeout<T>(promise: Promise<T>): Promise<T> {
+    if (this.operationTimeoutMs <= 0) return promise;
+    let timer: NodeJS.Timeout | undefined;
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new WorkspaceError("lock_timeout", "workspace operation timed out", {
+            repoPath: this.repoPath,
+            timeoutMs: this.operationTimeoutMs,
+          }));
+        }, this.operationTimeoutMs);
+      }),
+    ]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
     });
   }
 

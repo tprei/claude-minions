@@ -11,6 +11,7 @@ import {
   SQL_DELETE_ALERT_SUBSCRIPTION,
   SQL_LIST_ALERT_SUBSCRIPTIONS,
 } from "../persistence/audit-schema.js";
+import { configureSqliteDatabase } from "../persistence/sqlite-options.js";
 
 interface AlertRow {
   id: string;
@@ -54,6 +55,7 @@ export class AlertRepo {
   private readonly stmtListBefore: Statement<[string, number], AlertRow>;
 
   constructor(db: Database.Database) {
+    configureSqliteDatabase(db);
     db.exec(AUDIT_SCHEMA_DDL);
     this.stmtInsert = db.prepare(SQL_INSERT_ALERT);
     this.stmtList = db.prepare(SQL_LIST_ALERTS);
@@ -88,6 +90,7 @@ export class AlertSubscriptionRepo {
   private readonly stmtList: Statement<[], AlertSubRow>;
 
   constructor(db: Database.Database) {
+    configureSqliteDatabase(db);
     db.exec(AUDIT_SCHEMA_DDL);
     this.stmtUpsert = db.prepare(SQL_UPSERT_ALERT_SUBSCRIPTION);
     this.stmtDelete = db.prepare(SQL_DELETE_ALERT_SUBSCRIPTION);

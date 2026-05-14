@@ -74,8 +74,70 @@ function applyWorkflowEvent(workflow: Workflow, event: WorkflowEvent): Workflow 
       };
     }
 
-    case "run-started":
-    case "run-ended":
+    case "run-started": {
+      const task = workflow.graph[event.payload.taskId];
+      if (!task) return workflow;
+      if (task.runs.some((run) => run.id === event.payload.runId)) return workflow;
+      return {
+        ...workflow,
+        updatedAt: event.occurredAt,
+        graph: {
+          ...workflow.graph,
+          [event.payload.taskId]: {
+            ...task,
+            runs: [
+              ...task.runs,
+              {
+                id: event.payload.runId,
+                taskId: event.payload.taskId,
+                attempt: event.payload.attempt,
+                providerType: event.payload.providerType,
+                runtimeType: event.payload.runtimeType,
+                runtimeSessionId: event.payload.runtimeSessionId,
+                ...(event.payload.providerSessionRef !== undefined
+                  ? { providerSessionRef: event.payload.providerSessionRef }
+                  : {}),
+                startedAt: event.occurredAt,
+              },
+            ],
+            updatedAt: event.occurredAt,
+          },
+        },
+      };
+    }
+
+    case "run-ended": {
+      const task = workflow.graph[event.payload.taskId];
+      if (!task) return workflow;
+      let changed = false;
+      const runs = task.runs.map((run) => {
+        if (run.id !== event.payload.runId) return run;
+        if (run.endedAt === event.occurredAt && run.terminalReason === event.payload.terminalReason) return run;
+        changed = true;
+        return {
+          ...run,
+          ...(event.payload.providerSessionRef !== undefined
+            ? { providerSessionRef: event.payload.providerSessionRef }
+            : {}),
+          endedAt: event.occurredAt,
+          terminalReason: event.payload.terminalReason,
+        };
+      });
+      if (!changed) return workflow;
+      return {
+        ...workflow,
+        updatedAt: event.occurredAt,
+        graph: {
+          ...workflow.graph,
+          [event.payload.taskId]: {
+            ...task,
+            runs,
+            updatedAt: event.occurredAt,
+          },
+        },
+      };
+    }
+
     case "provider-event":
     case "merge-phase":
     case "ci-poll-result":

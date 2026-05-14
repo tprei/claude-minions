@@ -1,5 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { getTaskVisual, isRunning } from "../statusToVisual.js";
+import { TASK_EXECUTION_STATUSES, TASK_STACK_STATUSES } from "@minions/engine";
+import { getTaskVisual, isRunning, statusToVisual } from "../statusToVisual.js";
+
+describe("status mapper exhaustiveness", () => {
+  it("maps every task execution status", () => {
+    for (const status of TASK_EXECUTION_STATUSES) {
+      const visual = statusToVisual(status);
+      expect(visual.dotClass.length).toBeGreaterThan(0);
+      expect(visual.label.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("maps every stack status with every execution status", () => {
+    for (const executionStatus of TASK_EXECUTION_STATUSES) {
+      for (const stackStatus of TASK_STACK_STATUSES) {
+        const visual = getTaskVisual(executionStatus, stackStatus);
+        expect(visual.dotClass.length).toBeGreaterThan(0);
+        expect(visual.label.length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
 
 describe("getTaskVisual", () => {
   it("returns no badgeLabel when stackStatus is clean", () => {

@@ -116,7 +116,7 @@ describe("applyEventToSnapshot", () => {
     expect(result.workflows[0]?.graph["t-1"]?.executionStatus).toBe("pending");
   });
 
-  it("returns same snapshot reference for run-started (streaming only)", () => {
+  it("applies run-started to the matching task", () => {
     const snap = makeSnapshot([makeWorkflow()]);
     const event: WorkflowEvent = {
       cursor: 4,
@@ -134,6 +134,52 @@ describe("applyEventToSnapshot", () => {
     };
 
     const result = applyEventToSnapshot(snap, event);
-    expect(result).toBe(snap);
+    const run = result.workflows[0]?.graph["t-1"]?.runs[0];
+    expect(run).toMatchObject({
+      id: "run-1",
+      taskId: "t-1",
+      attempt: 1,
+      runtimeSessionId: "sess-1",
+      providerType: "claude",
+      runtimeType: "tmux",
+      startedAt: "2026-01-01T00:01:00Z",
+    });
+  });
+
+  it("applies run-ended to the matching run", () => {
+    const workflow = makeWorkflow();
+    const started = applyEventToSnapshot(makeSnapshot([workflow]), {
+      cursor: 4,
+      workflowId: "wf-1",
+      occurredAt: "2026-01-01T00:01:00Z",
+      kind: "run-started",
+      payload: {
+        runId: "run-1",
+        taskId: "t-1",
+        attempt: 1,
+        runtimeSessionId: "sess-1",
+        providerType: "claude",
+        runtimeType: "tmux",
+      },
+    });
+    const event: WorkflowEvent = {
+      cursor: 5,
+      workflowId: "wf-1",
+      occurredAt: "2026-01-01T00:03:00Z",
+      kind: "run-ended",
+      payload: {
+        runId: "run-1",
+        taskId: "t-1",
+        attempt: 1,
+        terminalReason: "completed",
+      },
+    };
+
+    const result = applyEventToSnapshot(started, event);
+    expect(result.workflows[0]?.graph["t-1"]?.runs[0]).toMatchObject({
+      id: "run-1",
+      endedAt: "2026-01-01T00:03:00Z",
+      terminalReason: "completed",
+    });
   });
 });

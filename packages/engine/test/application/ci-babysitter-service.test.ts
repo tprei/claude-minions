@@ -341,11 +341,11 @@ describe("CIBabysitterService", () => {
     expect(continueTaskService.run).not.toHaveBeenCalled();
   });
 
-  it("max-attempts cap — task pre-seeded with 1 ci-report; no GitHub calls", async () => {
+  it("max-attempts cap — task pre-seeded with same-head ci-report; no check polling", async () => {
     const repo = makeRepo();
     const existingReport: Artifact = {
       kind: "ci-report",
-      ref: JSON.stringify({ prNumber: 1, failed: [] }),
+      ref: JSON.stringify({ prNumber: 1, headSha: HEAD_SHA, failed: [] }),
       producedBy: "ci-babysitter",
       createdAt: NOW,
     };
@@ -376,7 +376,49 @@ describe("CIBabysitterService", () => {
     await new Promise((r) => setTimeout(r, 100));
     ctrl.abort();
 
+    expect(github.getPR).toHaveBeenCalled();
     expect(listCheckRuns).not.toHaveBeenCalled();
+    expect(continueTaskService.run).not.toHaveBeenCalled();
+  });
+
+  it("reset-on-green — prior ci-report on old head does not cap polling for new head", async () => {
+    const repo = makeRepo();
+    const existingReport: Artifact = {
+      kind: "ci-report",
+      ref: JSON.stringify({ prNumber: 1, headSha: "old-head", failed: [] }),
+      producedBy: "ci-babysitter",
+      createdAt: NOW,
+    };
+    await makeTaskUpToFinalizing(repo, [existingReport]);
+
+    const ctrl = new AbortController();
+    const listCheckRuns = vi.fn().mockResolvedValue([
+      { name: "ci", status: "completed", conclusion: "success" } satisfies GhCheckRun,
+    ]);
+    const github = makeGithub({ listCheckRuns });
+    const continueTaskService = makeContinueTaskService();
+
+    const service = new CIBabysitterService({
+      workflowRepo: repo,
+      github,
+      repoCoords: { owner: OWNER, repo: REPO },
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      continueTaskService,
+      signal: ctrl.signal,
+      now,
+      sleep: immediateSleep,
+      cadence: FAST_CADENCE,
+      log: silentLogger(),
+    });
+
+    service.attach(WORKFLOW_ID);
+    await new Promise((r) => setImmediate(r));
+
+    await openPR(repo, [existingReport]);
+    await new Promise((r) => setTimeout(r, 100));
+    ctrl.abort();
+
+    expect(listCheckRuns).toHaveBeenCalled();
     expect(continueTaskService.run).not.toHaveBeenCalled();
   });
 

@@ -53,6 +53,13 @@ describe("SQLiteWorkflowRepository", () => {
     repo.close();
   });
 
+  it("enables WAL, foreign keys, and a busy timeout", () => {
+    const pragmas = repo.getPragmas();
+    expect(pragmas.journalMode.toLowerCase()).toBe("wal");
+    expect(pragmas.busyTimeout).toBeGreaterThanOrEqual(5000);
+    expect(pragmas.foreignKeys).toBe(1);
+  });
+
   it("accepts a first save at version 1", async () => {
     const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
     await expect(repo.save(workflow, [])).resolves.toBeUndefined();

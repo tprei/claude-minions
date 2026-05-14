@@ -7,12 +7,14 @@ vi.mock("node:child_process");
 interface MockProc extends EventEmitter {
   stdout: EventEmitter;
   stderr: EventEmitter;
+  kill: Mock;
 }
 
 function makeMockProc(stdoutData: string, stderrData: string, exitCode: number): MockProc {
   const proc = new EventEmitter() as MockProc;
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
+  proc.kill = vi.fn();
 
   setImmediate(() => {
     proc.stdout.emit("data", Buffer.from(stdoutData));
@@ -20,6 +22,17 @@ function makeMockProc(stdoutData: string, stderrData: string, exitCode: number):
     proc.emit("close", exitCode);
   });
 
+  return proc;
+}
+
+function makeHangingProc(): MockProc {
+  const proc = new EventEmitter() as MockProc;
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = vi.fn(() => {
+    proc.emit("close", null);
+    return true;
+  });
   return proc;
 }
 
@@ -215,6 +228,24 @@ describe("GitClient", () => {
   });
 
   describe("error handling", () => {
+    it("kills and rejects a timed-out command", async () => {
+      vi.useFakeTimers();
+      try {
+        const client = new GitClient({ timeoutMs: 50 });
+        const proc = makeHangingProc();
+        spawnMock.mockReturnValue(proc);
+
+        const promise = client.run("/repo", ["fetch"]);
+        const assertion = expect(promise).rejects.toMatchObject({ exitCode: 124 });
+        await vi.advanceTimersByTimeAsync(50);
+
+        await assertion;
+        expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("spawn non-zero exit surfaces as GitError", async () => {
       const client = new GitClient();
       spawnMock.mockReturnValue(makeMockProc("", "fatal: not a git repository", 128));

@@ -1,22 +1,26 @@
 export type DoctorCheckStatus = "ok" | "degraded" | "error";
 
 export type DoctorCheckName =
-  | "provider-auth"
-  | "github-auth"
+  | "sqlite-wal"
+  | "sqlite-busy-timeout"
   | "repo-state"
   | "worktree-health"
+  | "tmux-runtime"
+  | "github-auth"
+  | "disk-free"
   | "dependency-cache"
-  | "mcp-availability"
-  | "push-config"
-  | "sidecar-status"
-  | "git-push-auth"
-  | "rest-pr-create-permission"
-  | "rest-checks-read";
+  | "push-config";
 
 export interface DoctorCheck {
   name: DoctorCheckName;
   status: DoctorCheckStatus;
   detail?: string;
+  checkedAt: string;
+}
+
+export interface DoctorReport {
+  status: DoctorCheckStatus;
+  checks: DoctorCheck[];
   checkedAt: string;
 }
 
