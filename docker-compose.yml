@@ -45,11 +45,24 @@ services:
       MWF_WORKSPACE_ROOT: /data/workspace
       MWF_PWA_DIR: /app/packages/web/dist
       HOME: /data/home
+      # Pi provider opt-in. Leave unset to keep the default claude-code provider.
+      # Defaults for the Pi-specific knobs live in packages/engine/src/main.ts.
+      MWF_PROVIDER: ${MWF_PROVIDER:-}
+      MWF_PI_MODEL: ${MWF_PI_MODEL:-}
+      MWF_PI_REASONING: ${MWF_PI_REASONING:-}
+      MWF_PI_AGENT_DIR: ${MWF_PI_AGENT_DIR:-}
+      MWF_PI_SESSION_DIR: ${MWF_PI_SESSION_DIR:-}
+      MWF_PI_TOOLS: ${MWF_PI_TOOLS:-}
     ports:
       - "8787:8787"
     volumes:
       - ./data:/data
       - ./secrets:/secrets:ro
+      # Pi CLI auth from the host. Writable on purpose: pi rotates the
+      # ChatGPT Codex tokens inside auth.json, and a read-only mount would
+      # silently break refresh and bounce the worker to logged-out after the
+      # first token expiry.
+      - ${HOME}/.pi:/data/home/.pi
     healthcheck:
       test: ["CMD","node","-e","require('http').get('http://127.0.0.1:8787/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
