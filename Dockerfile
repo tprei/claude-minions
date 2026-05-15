@@ -49,6 +49,11 @@ RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 # claude CLI for the claude-code provider
 RUN npm i -g @anthropic-ai/claude-code
 
+# pi CLI for the pi provider (ChatGPT Codex subscription auth). Pinned for
+# reproducible builds; bump deliberately when upgrading. The package was renamed
+# from @mariozechner/pi-coding-agent and the old name is deprecated.
+RUN npm i -g @earendil-works/pi-coding-agent@0.74.0
+
 COPY --from=builder /app/pnpm-workspace.yaml /app/pnpm-lock.yaml /app/package.json ./
 COPY --from=builder /app/packages/shared/package.json packages/shared/
 COPY --from=builder /app/packages/engine/package.json packages/engine/

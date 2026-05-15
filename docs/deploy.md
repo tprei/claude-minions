@@ -9,6 +9,7 @@ For unattended overnight runs and supervisor setup, see [docs/deploy/supervisor.
 - Docker + Compose (Docker Desktop or `docker.io` / `docker-ce`).
 - A GitHub App created on github.com with: Contents R/W, Pull requests R/W, Checks R, Metadata R, Actions R. Installed on the repos you want to operate on.
 - Your `claude` CLI logged in (or an `ANTHROPIC_API_KEY`). The compose file mounts `~/.claude` from the host into the container so the in-container claude reuses your auth.
+- Optional, only if you want to run the Pi provider: a host-side `pi` CLI logged in to ChatGPT Codex. See [Pi + ChatGPT Codex](#pi--chatgpt-codex) below.
 
 ## First-time setup
 
@@ -86,6 +87,58 @@ minions.your-domain.com {
 ```
 
 Caddy auto-provisions LetsEncrypt. Update `MWF_CORS_ORIGINS=https://minions.your-domain.com` in `.env.deploy`, restart.
+
+## Pi + ChatGPT Codex
+
+The engine ships with an optional `pi` provider that drives the [pi-coding-agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) CLI against OpenAI Codex with ChatGPT Plus/Pro subscription auth (no API key). Auth lives on the host and the container reuses it through a bind mount.
+
+Codex through a ChatGPT subscription is governed by the OpenAI Codex terms; long-running unattended agents are within the spirit of the product but you are still responsible for staying within the rate caps and the [OpenAI Codex usage policy](https://platform.openai.com/docs/guides/codex). Pi documents the same caveat in its [provider docs](https://github.com/earendil-works/pi-coding-agent#providers).
+
+### 1. Install + log in on the host
+
+The container can't drive an interactive `/login` flow itself (it has no TTY and the OAuth redirect needs a real browser), so do this on the host first:
+
+```bash
+npm i -g @earendil-works/pi-coding-agent@0.74.0
+pi
+# inside the pi REPL:
+/login
+# pick "ChatGPT Plus/Pro (Codex)" and finish the browser flow.
+# quit pi when done.
+```
+
+Confirm the auth blob landed:
+
+```bash
+test -s ~/.pi/agent/auth.json && echo "ok"
+```
+
+### 2. Flip the engine to Pi
+
+In `.env.deploy`:
+
+```
+MWF_PROVIDER=pi
+# Optional overrides — leave unset to take the defaults from packages/engine/src/main.ts
+# MWF_PI_MODEL=openai-codex/gpt-5.5
+# MWF_PI_REASONING=xhigh
+# MWF_PI_AGENT_DIR=/data/home/.pi/agent
+# MWF_PI_SESSION_DIR=/data/home/.pi/agent/sessions/minions
+# MWF_PI_TOOLS=read,write,edit,bash,grep,find,ls
+```
+
+Then:
+
+```bash
+docker compose up -d --build
+docker compose exec engine pi --version            # ≥ 0.74.0
+docker compose exec engine ls -l /data/home/.pi/agent/auth.json
+curl -s http://localhost:8787/api/version | jq .providers   # includes "pi"
+```
+
+The bind mount of `~/.pi` is intentionally writable: Pi rotates the Codex access/refresh tokens inside `auth.json`, and a read-only mount would silently break the refresh after the first expiry.
+
+If you ever need to re-auth, run `pi` on the host (not in the container) and `/login` again; the container picks it up immediately on the next session because both sides point at the same file.
 
 ## Health + diagnostics
 
