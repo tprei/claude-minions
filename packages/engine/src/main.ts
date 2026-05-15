@@ -1,6 +1,9 @@
 import { serve } from "@hono/node-server";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ClaudeCodeProvider } from "./plugins/providers/claude-code.js";
 import { CodexProvider } from "./plugins/providers/codex.js";
+import { PiProvider, type PiProviderConfig } from "./plugins/providers/pi.js";
 import { TmuxRuntimeBackend } from "./plugins/tmux/tmux-runtime.js";
 import { ExecQualityPlugin } from "./plugins/quality/exec-quality-plugin.js";
 import { StubQualityPlugin } from "./plugins/quality/stub-quality-plugin.js";
@@ -22,6 +25,26 @@ function optional(name: string): string | undefined {
   return value === undefined || value === "" ? undefined : value;
 }
 
+const PI_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+
+function buildPiProviderFactory(): () => PiProvider {
+  const model = optional("MWF_PI_MODEL") ?? "openai-codex/gpt-5.5";
+  const reasoning = optional("MWF_PI_REASONING") ?? "xhigh";
+  if (!(PI_REASONING_LEVELS as readonly string[]).includes(reasoning)) {
+    throw new Error(
+      `invalid MWF_PI_REASONING="${reasoning}"; must be one of ${PI_REASONING_LEVELS.join("|")}`,
+    );
+  }
+  const agentDir = optional("MWF_PI_AGENT_DIR") ?? join(homedir(), ".pi", "agent");
+  const sessionDir = optional("MWF_PI_SESSION_DIR") ?? join(agentDir, "sessions", "minions");
+  const toolsAllowlist = optional("MWF_PI_TOOLS");
+
+  const config: PiProviderConfig = { model, reasoning, agentDir, sessionDir };
+  if (toolsAllowlist !== undefined) config.toolsAllowlist = toolsAllowlist;
+
+  return () => new PiProvider(config);
+}
+
 async function main(): Promise<void> {
   const port = Number(process.env["MWF_PORT"] ?? "3000");
   const dbPath = required("MWF_DB_PATH");
@@ -37,7 +60,9 @@ async function main(): Promise<void> {
   const providerName = (process.env["MWF_PROVIDER"] ?? "claude-code").toLowerCase();
   const providerFactory = providerName === "codex"
     ? () => new CodexProvider()
-    : () => new ClaudeCodeProvider();
+    : providerName === "pi"
+      ? buildPiProviderFactory()
+      : () => new ClaudeCodeProvider();
 
   const githubToken = optional("MWF_GITHUB_TOKEN");
   const githubOwner = optional("MWF_GITHUB_REPO_OWNER");
