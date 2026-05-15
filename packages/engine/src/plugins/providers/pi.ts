@@ -15,6 +15,23 @@ export interface PiProviderConfig {
   toolsAllowlist?: string;
 }
 
+const QUOTA_PATTERN = /quota/i;
+const RATE_PATTERN = /rate/i;
+const LIMIT_PATTERN = /limit/i;
+
+function isQuotaSignature(...values: Array<unknown>): boolean {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    if (QUOTA_PATTERN.test(value)) return true;
+    if (RATE_PATTERN.test(value) && LIMIT_PATTERN.test(value)) return true;
+  }
+  return false;
+}
+
+function readString(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
 export class PiProvider implements ProviderPlugin {
   readonly name = "pi";
 
@@ -87,8 +104,141 @@ USER QUESTION:
     throw new Error("PiProvider.resume not implemented");
   }
 
-  parseFrame(_line: string): ProviderEvent[] {
-    return [];
+  parseFrame(line: string): ProviderEvent[] {
+    if (line.trim().length === 0) return [];
+
+    let json: Record<string, unknown>;
+    try {
+      json = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return [];
+    }
+
+    const type = json["type"];
+    if (typeof type !== "string") return [];
+
+    switch (type) {
+      case "session": {
+        if (this.lastSessionId !== null) {
+          throw new Error("PiProvider instance reused across conversations; construct a fresh instance per run");
+        }
+        const id = json["id"];
+        this.lastSessionId = typeof id === "string" ? id : null;
+        return [];
+      }
+
+      case "agent_start":
+      case "turn_start":
+      case "message_start":
+      case "queue_update":
+      case "compaction_start":
+      case "compaction_end":
+      case "tool_execution_update":
+      case "turn_end":
+        return [];
+
+      case "message_update":
+      case "message_end": {
+        const block = json["content_block"] as Record<string, unknown> | undefined;
+        const blockType = block?.["type"];
+        const text = readString(block?.["text"], "");
+        if (blockType === "text") return [{ kind: "assistant_text", text }];
+        if (blockType === "thinking") return [{ kind: "thinking", text }];
+        return [];
+      }
+
+      case "tool_execution_start": {
+        return [
+          {
+            kind: "tool_call",
+            id: readString(json["tool_call_id"], ""),
+            name: readString(json["tool_name"], ""),
+            input: json["args"] ?? null,
+          },
+        ];
+      }
+
+      case "tool_execution_end": {
+        return [
+          {
+            kind: "tool_result",
+            id: readString(json["tool_call_id"], ""),
+            output: json["result"] ?? null,
+            isError: json["is_error"] === true,
+          },
+        ];
+      }
+
+      case "auto_retry_start": {
+        return [
+          {
+            kind: "error",
+            recoverable: true,
+            source: "auto_retry",
+            message: readString(json["message"], "auto retry"),
+          },
+        ];
+      }
+
+      case "auto_retry_end": {
+        if (json["success"] === false) {
+          return [
+            {
+              kind: "error",
+              recoverable: true,
+              source: "auto_retry_end",
+              message: readString(json["message"], "auto retry failed"),
+            },
+          ];
+        }
+        return [];
+      }
+
+      case "agent_end": {
+        const usage = json["usage"] as Record<string, unknown> | undefined;
+        const exitMetadata: Record<string, unknown> = {};
+        if (typeof json["exit_code"] === "number") exitMetadata["exit_code"] = json["exit_code"];
+        if (typeof json["reason"] === "string") exitMetadata["reason"] = json["reason"];
+        return [
+          {
+            kind: "usage",
+            inputTokens: typeof usage?.["input_tokens"] === "number" ? usage["input_tokens"] : 0,
+            outputTokens: typeof usage?.["output_tokens"] === "number" ? usage["output_tokens"] : 0,
+            ...(typeof usage?.["cached_input_tokens"] === "number"
+              ? { cachedInputTokens: usage["cached_input_tokens"] }
+              : {}),
+            ...(typeof usage?.["reasoning_tokens"] === "number"
+              ? { reasoningTokens: usage["reasoning_tokens"] }
+              : {}),
+            ...(typeof usage?.["cost_usd"] === "number" ? { costUsd: usage["cost_usd"] } : {}),
+          },
+          {
+            kind: "final",
+            sessionRef: this.lastSessionId ?? "",
+            exitMetadata,
+          },
+        ];
+      }
+
+      case "error": {
+        const category = json["category"];
+        const message = readString(json["message"], "pi error");
+        if (isQuotaSignature(category, message)) {
+          return [{ kind: "error", recoverable: false, source: "quota", message }];
+        }
+        return [{ kind: "error", recoverable: false, message }];
+      }
+
+      default: {
+        return [
+          {
+            kind: "error",
+            recoverable: false,
+            message: `unmapped pi type: ${type}`,
+          },
+        ];
+      }
+    }
   }
 
   loginStatus(): Promise<{ loggedIn: boolean; details?: string }> {
