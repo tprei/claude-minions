@@ -4,7 +4,10 @@ import { useConnectionStore, type Connection } from "./store.js";
 import { AddDialog } from "./addDialog.js";
 import { Modal } from "../components/Modal.js";
 import { Button } from "../components/Button.js";
+import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { QrImportModal } from "../pwa/QrImportModal.js";
+import { parseUrl } from "../routing/parseUrl.js";
+import { setUrlState } from "../routing/urlState.js";
 import { cx } from "../util/classnames.js";
 import { sseStatusStore, type SseStatus } from "../transport/sseStatus.js";
 
@@ -43,7 +46,17 @@ function useSseStatus(connectionId: string): SseStatus | undefined {
   );
 }
 
-function ConnectionRow({ conn, active, onSelect }: { conn: Connection; active: boolean; onSelect: () => void }): ReactElement {
+function ConnectionRow({
+  conn,
+  active,
+  onSelect,
+  onRemove,
+}: {
+  conn: Connection;
+  active: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+}): ReactElement {
   const status = useSseStatus(conn.id);
   const dot = status ? HEALTH_DOT[status] : "bg-fg-subtle/40";
   const label = status ? HEALTH_LABEL[status] : "idle";
@@ -83,6 +96,19 @@ function ConnectionRow({ conn, active, onSelect }: { conn: Connection; active: b
           ↻
         </button>
       )}
+      <button
+        type="button"
+        data-testid={`picker-remove-${conn.id}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="text-xs w-6 h-6 rounded-full text-fg-subtle hover:text-err hover:bg-err/10 transition-colors"
+        aria-label={`Remove ${conn.label}`}
+        title="Remove connection"
+      >
+        ×
+      </button>
       {active && <span className="text-accent text-xs">●</span>}
     </div>
   );
@@ -167,14 +193,16 @@ function QrConfirmDialog({
 }
 
 export function ConnectionPicker({ onClose }: PickerProps): ReactElement {
-  const { connections, activeId, setActive } = useConnectionStore(useShallow(s => ({
+  const { connections, activeId, setActive, remove } = useConnectionStore(useShallow(s => ({
     connections: s.connections,
     activeId: s.activeId,
     setActive: s.setActive,
+    remove: s.remove,
   })));
   const [showAdd, setShowAdd] = useState(false);
   const [showQr, setShowQr] = useState(false);
   const [qrCandidate, setQrCandidate] = useState<QrCandidate | null>(null);
+  const [removeCandidate, setRemoveCandidate] = useState<Connection | null>(null);
 
   function handleSelect(id: string): void {
     setActive(id);
@@ -191,6 +219,19 @@ export function ConnectionPicker({ onClose }: PickerProps): ReactElement {
     });
   }
 
+  async function handleRemove(): Promise<void> {
+    if (!removeCandidate) return;
+    const removingActive = removeCandidate.id === activeId;
+    const nextActiveId = removingActive
+      ? connections.find((conn) => conn.id !== removeCandidate.id)?.id ?? null
+      : activeId;
+    remove(removeCandidate.id);
+    if (removingActive) {
+      const { view, query } = parseUrl();
+      setUrlState({ connectionId: nextActiveId, view, sessionSlug: null, query });
+    }
+  }
+
   return (
     <>
       <div className="card p-2 min-w-[260px] shadow-2xl">
@@ -204,6 +245,7 @@ export function ConnectionPicker({ onClose }: PickerProps): ReactElement {
             conn={conn}
             active={conn.id === activeId}
             onSelect={() => handleSelect(conn.id)}
+            onRemove={() => setRemoveCandidate(conn)}
           />
         ))}
         <div className="border-t border-border mt-1 pt-1 flex flex-col">
@@ -253,6 +295,24 @@ export function ConnectionPicker({ onClose }: PickerProps): ReactElement {
             setQrCandidate(null);
             onClose();
           }}
+        />
+      )}
+
+      {removeCandidate && (
+        <ConfirmDialog
+          open
+          title="Remove connection?"
+          body={
+            <div className="space-y-2">
+              <p>
+                Remove <span className="font-medium text-fg">{removeCandidate.label}</span> from this browser.
+              </p>
+              <p className="text-xs text-fg-subtle break-all">{removeCandidate.baseUrl}</p>
+            </div>
+          }
+          confirmLabel="Remove"
+          onClose={() => setRemoveCandidate(null)}
+          onConfirm={handleRemove}
         />
       )}
     </>
