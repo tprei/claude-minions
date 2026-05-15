@@ -3,6 +3,7 @@ export type WorkspaceMode = "worktree" | "existing";
 export interface WorkspaceCreateSpec {
   workflowId: string;
   taskId: string;
+  repoId: string;
   branch: string;
   baseRef?: string;
   mode?: WorkspaceMode;
@@ -11,6 +12,7 @@ export interface WorkspaceCreateSpec {
 
 export interface WorkspaceHandle {
   workspaceId: string;
+  repoId: string;
   mode: WorkspaceMode;
   path: string;
   containerPath: string;

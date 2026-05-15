@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import { dirname, basename, join, isAbsolute, resolve, relative } from "node:path";
+import { dirname, join, isAbsolute, resolve, relative } from "node:path";
 import { statfs } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { PiProvider } from "./plugins/providers/pi.js";
@@ -49,6 +49,7 @@ import type { Level } from "./observability/types.js";
 import { ObservabilityService } from "./observability/observability-service.js";
 import { createSupervisor } from "./supervisor/supervisor.js";
 import type { SupervisorWithRepos } from "./supervisor/supervisor.js";
+import { buildRepoRegistry, type RepoBindingInput, type RepoRegistry } from "./application/repo-registry.js";
 
 export interface EngineConfig {
   dbPath: string;
@@ -60,7 +61,8 @@ export interface EngineConfig {
   staleGateMs?: number;
   now?: () => string;
   workspace?: WorkspaceBackend;
-  repoPath?: string;
+  repos: RepoBindingInput[];
+  reposRoot?: string;
   workspaceRoot?: string;
   gitCommandPrefix?: readonly string[];
   vapid?: VapidConfig;
@@ -73,8 +75,6 @@ export interface EngineConfig {
    */
   pwaDir?: string;
   githubToken?: string;
-  githubRepo?: { owner: string; repo: string };
-  githubBaseBranch?: string;
   qualityPlugin?: QualityPlugin;
   qualityDefaultTimeoutMs?: number;
   log?: Logger;
@@ -197,22 +197,63 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   const staleReadyMs = config.staleReadyMs ?? 5 * 60 * 1000;
   const staleGateMs = config.staleGateMs ?? 30 * 60 * 1000;
 
+  const reposRoot = config.reposRoot ?? join(dataDir, "repos");
+  const repoRegistry: RepoRegistry = buildRepoRegistry(config.repos, { reposRoot });
+  const githubBackedBinding = repoRegistry.all().find((b) => b.github !== undefined);
+
   let workspace: WorkspaceBackend;
   let sharedGitClient: GitClient | undefined;
   if (config.workspace) {
     workspace = config.workspace;
-  } else if (config.repoPath) {
-    const gitCommandPrefix = config.gitCommandPrefix ?? [];
-    sharedGitClient = new GitClient(gitCommandPrefix.length > 0 ? { commandPrefix: gitCommandPrefix } : {});
-    const workspaceRoot = config.workspaceRoot ?? join(dirname(config.repoPath), `${basename(config.repoPath)}-worktrees`);
-    workspace = await GitWorktreeWorkspaceBackend.create({
-      gitClient: sharedGitClient,
-      repoPath: config.repoPath,
-      workspaceRoot,
-      gitCommandPrefix,
-    });
   } else {
-    workspace = new StubWorkspaceBackend();
+    const { existsSync } = await import("node:fs");
+    const { rename, mkdir } = await import("node:fs/promises");
+
+    // Legacy migration: data/repo → data/repos/<firstId>. Runs once when the new
+    // layout dir is empty and the old single-clone exists.
+    const firstBinding = repoRegistry.all()[0]!;
+    const legacyRepoPath = join(dataDir, "repo");
+    if (existsSync(legacyRepoPath) && !existsSync(firstBinding.localPath)) {
+      await mkdir(reposRoot, { recursive: true });
+      log.info("migrating legacy data/repo into data/repos/<id>", {
+        from: legacyRepoPath,
+        to: firstBinding.localPath,
+        repoId: firstBinding.id,
+      });
+      await rename(legacyRepoPath, firstBinding.localPath);
+    }
+
+    // Clone any missing remotes. Skipped in tests (no remote configured).
+    const githubToken = config.githubToken ?? process.env["MWF_GITHUB_TOKEN"];
+    for (const binding of repoRegistry.all()) {
+      if (existsSync(binding.localPath)) continue;
+      if (!binding.remote) continue;
+      const remoteUrl = githubToken && binding.remote.startsWith("https://github.com/")
+        ? binding.remote.replace("https://github.com/", `https://x-access-token:${githubToken}@github.com/`)
+        : binding.remote;
+      await mkdir(reposRoot, { recursive: true });
+      log.info("cloning bound repo", { repoId: binding.id, remote: binding.remote, localPath: binding.localPath });
+      const tempClient = new GitClient();
+      await tempClient.run(reposRoot, ["clone", "--filter=blob:none", remoteUrl, binding.localPath]);
+    }
+
+    const localExists = existsSync(firstBinding.localPath);
+    const hasRemote = firstBinding.remote !== undefined;
+    if (hasRemote || localExists) {
+      const gitCommandPrefix = config.gitCommandPrefix ?? [];
+      sharedGitClient = new GitClient(gitCommandPrefix.length > 0 ? { commandPrefix: gitCommandPrefix } : {});
+      const workspaceRoot = config.workspaceRoot ?? `${firstBinding.localPath}-worktrees`;
+      workspace = await GitWorktreeWorkspaceBackend.create({
+        gitClient: sharedGitClient,
+        repoPath: firstBinding.localPath,
+        workspaceRoot,
+        gitCommandPrefix,
+        registry: repoRegistry,
+        defaultRepoId: firstBinding.id,
+      });
+    } else {
+      workspace = new StubWorkspaceBackend();
+    }
   }
 
   let executor: RestackExecutor;
@@ -380,12 +421,12 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   const githubToken = config.githubToken ?? process.env["MWF_GITHUB_TOKEN"];
   const scmOverride = config.scm;
   const ghClientOverride = config.githubClient;
-  const githubEnabled = Boolean((githubToken && config.githubRepo) ||
-                        (config.githubRepo && (scmOverride !== undefined || ghClientOverride !== undefined)));
+  const githubEnabled = Boolean((githubToken && githubBackedBinding) ||
+                        (githubBackedBinding && (scmOverride !== undefined || ghClientOverride !== undefined)));
 
-  if (githubEnabled && config.githubRepo) {
+  if (githubEnabled && githubBackedBinding) {
     if (workspace instanceof StubWorkspaceBackend) {
-      throw new Error("github integration requires a real workspace backend (set repoPath)");
+      throw new Error("github integration requires a real workspace backend (configure repos[].localPath)");
     }
     const gitClient = sharedGitClient ?? new GitClient();
 
@@ -405,8 +446,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: config.githubRepo,
-      baseBranch: config.githubBaseBranch ?? "main",
+      repoRegistry,
       now,
       log: log.child({ component: "merge" }),
     });
@@ -422,7 +462,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       const babysitterDeps: ConstructorParameters<typeof CIBabysitterService>[0] = {
         workflowRepo: repo,
         github: ghClient,
-        repoCoords: config.githubRepo,
+        repoRegistry,
         applyCommand: (cmd) => applyCommand(repo, cmd),
         continueTaskService: serverDeps.continueTaskService,
         mergeService: serverDeps.mergeService,
@@ -480,11 +520,10 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       now,
       log: log.child({ component: "local-finalize" }),
     };
-    if (config.repoPath && sharedGitClient) {
+    if (sharedGitClient) {
       localFinalizeDeps.workspace = workspace;
       localFinalizeDeps.gitClient = sharedGitClient;
-      localFinalizeDeps.repoPath = config.repoPath;
-      localFinalizeDeps.baseBranch = config.githubBaseBranch ?? "main";
+      localFinalizeDeps.repoRegistry = repoRegistry;
     }
     const localFinalizeService = new LocalFinalizeService(localFinalizeDeps);
     const recoverableWorkflows = await repo.listRecoverable();
@@ -528,7 +567,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     featuresPending: [],
     provider: config.providerName ?? process.env["MWF_PROVIDER"] ?? (config.providerFactory ? "configured" : "stub"),
     providers: ["claude-code", "codex", "pi", "stub"],
-    repos: buildRepoBindings(config),
+    repos: buildRepoBindings(repoRegistry),
     pluginSet: buildPluginSet({
       runtime,
       workspace,
@@ -550,7 +589,8 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       pushEnabled: vapid !== undefined,
       now,
     };
-    if (config.repoPath !== undefined) input.repoPath = config.repoPath;
+    const firstLocalPath = repoRegistry.all()[0]?.localPath;
+    if (firstLocalPath !== undefined) input.repoPath = firstLocalPath;
     const providerName = config.providerName ?? process.env["MWF_PROVIDER"];
     if (providerName !== undefined) input.providerName = providerName.toLowerCase();
     return buildDoctorReport(input);
@@ -612,23 +652,16 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   };
 }
 
-function buildRepoBindings(config: EngineConfig): Array<{ id: string; label: string; remote?: string; defaultBranch?: string }> {
-  if (config.githubRepo !== undefined) {
-    return [{
-      id: `${config.githubRepo.owner}/${config.githubRepo.repo}`,
-      label: `${config.githubRepo.owner}/${config.githubRepo.repo}`,
-      remote: `https://github.com/${config.githubRepo.owner}/${config.githubRepo.repo}.git`,
-      defaultBranch: config.githubBaseBranch ?? "main",
-    }];
-  }
-  if (config.repoPath !== undefined) {
-    return [{
-      id: config.repoPath,
-      label: basename(config.repoPath),
-      defaultBranch: config.githubBaseBranch ?? "main",
-    }];
-  }
-  return [];
+function buildRepoBindings(registry: RepoRegistry): Array<{ id: string; label: string; remote?: string; defaultBranch?: string }> {
+  return registry.all().map((b) => {
+    const out: { id: string; label: string; remote?: string; defaultBranch?: string } = {
+      id: b.id,
+      label: b.label,
+      defaultBranch: b.defaultBranch,
+    };
+    if (b.remote !== undefined) out.remote = b.remote;
+    return out;
+  });
 }
 
 function buildPluginSet(input: {

@@ -76,6 +76,7 @@ export class RetryTaskService {
     const handle = await workspace.create({
       workflowId,
       taskId,
+      repoId: workflow.repoId,
       branch: deriveBranch(workflowId, taskId),
       mode: "worktree",
       resetBranch: true,

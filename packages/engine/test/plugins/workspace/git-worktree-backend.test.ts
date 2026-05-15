@@ -53,7 +53,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       const handle = await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
       });
@@ -76,7 +76,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       const handle = await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "main",
         mode: "existing",
       });
@@ -93,7 +93,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       const gitClient = makeGitClient();
       const backend = await makeBackend(gitClient);
 
-      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "worktree" });
+      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" });
 
       expect(handle.containerPath).toBe(handle.path);
     });
@@ -119,8 +119,8 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       const backend = await makeBackend(gitClient);
 
-      const p1 = backend.create({ workflowId: "wf-a", taskId: "task-a", branch: "b-a", mode: "worktree" });
-      const p2 = backend.create({ workflowId: "wf-b", taskId: "task-b", branch: "b-b", mode: "worktree" });
+      const p1 = backend.create({ workflowId: "wf-a", taskId: "task-a", repoId: "fixture-repo", branch: "b-a", mode: "worktree" });
+      const p2 = backend.create({ workflowId: "wf-b", taskId: "task-b", repoId: "fixture-repo", branch: "b-b", mode: "worktree" });
 
       // Let p1 start
       await new Promise((r) => setImmediate(r));
@@ -160,8 +160,8 @@ describe("GitWorktreeWorkspaceBackend", () => {
         workspaceRoot: FAKE_ROOT,
       });
 
-      const pA = backendA.create({ workflowId: "wf-a", taskId: "t-a", branch: "b-a", mode: "worktree" });
-      const pB = backendB.create({ workflowId: "wf-b", taskId: "t-b", branch: "b-b", mode: "worktree" });
+      const pA = backendA.create({ workflowId: "wf-a", taskId: "t-a", repoId: "fixture-repo", branch: "b-a", mode: "worktree" });
+      const pB = backendB.create({ workflowId: "wf-b", taskId: "t-b", repoId: "fixture-repo", branch: "b-b", mode: "worktree" });
 
       await new Promise((r) => setImmediate(r));
       // B should have started while A is still held
@@ -178,7 +178,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       const backend = await makeBackend(gitClient);
 
       await expect(
-        backend.create({ workflowId: "wf-1", taskId: "task_1", branch: "b", mode: "worktree" }),
+        backend.create({ workflowId: "wf-1", taskId: "task_1", repoId: "fixture-repo", branch: "b", mode: "worktree" }),
       ).resolves.toBeDefined();
     });
 
@@ -186,7 +186,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       const gitClient = makeGitClient();
       const backend = await makeBackend(gitClient);
 
-      const handle = await backend.create({ workflowId: "..", taskId: "task1", branch: "b", mode: "worktree" });
+      const handle = await backend.create({ workflowId: "..", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" });
       // ".." sanitizes to "" but hash "5ec1f7" is used; workspaceId must not contain ".."
       expect(handle.workspaceId).not.toContain("..");
       expect(handle.workspaceId).toContain("5ec1f7");
@@ -233,7 +233,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       const handle = await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
       });
@@ -279,7 +279,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
       });
@@ -300,7 +300,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       const backend = await makeBackend(gitClient);
 
       await expect(
-        backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "worktree" }),
+        backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" }),
       ).resolves.toBeDefined();
     });
   });
@@ -318,7 +318,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       const gitClient = makeGitClient();
       const backend = await makeBackend(gitClient);
 
-      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "existing" });
+      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "existing" });
       await backend.cleanup(handle.workspaceId);
 
       expect(gitClient.worktreeRemove).not.toHaveBeenCalled();
@@ -331,7 +331,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       const gitClient = makeGitClient();
       const backend = await makeBackend(gitClient);
 
-      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "worktree" });
+      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" });
       await backend.cleanup(handle.workspaceId);
       await expect(backend.cleanup(handle.workspaceId)).resolves.toBeUndefined();
     });
@@ -344,7 +344,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       );
 
       const backend = await makeBackend(gitClient);
-      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "worktree" });
+      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" });
 
       await expect(backend.cleanup(handle.workspaceId)).resolves.toBeUndefined();
     });
@@ -371,7 +371,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
         resetBranch: true,
@@ -389,7 +389,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
         resetBranch: false,
@@ -417,7 +417,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       const handle = await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
       });
@@ -440,7 +440,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
         resetBranch: true,
@@ -471,7 +471,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
 
       await backend.create({
         workflowId: "wf1",
-        taskId: "task1",
+        taskId: "task1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
       });
@@ -487,7 +487,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       const backend = await makeBackend(gitClient);
       const fsp = vi.mocked(await import("node:fs/promises"));
 
-      const created = await backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "worktree" });
+      const created = await backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" });
 
       // Simulate worktree still present so cache-hit re-validation passes
       fsp.access.mockImplementation(async (p) => {
@@ -543,7 +543,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
       const gitClient = makeGitClient();
       const backend = await makeBackend(gitClient);
 
-      const created = await backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "worktree" });
+      const created = await backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" });
       await backend.cleanup(created.workspaceId);
 
       const got = await backend.get(created.workspaceId);
@@ -563,7 +563,7 @@ describe("GitWorktreeWorkspaceBackend", () => {
         throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       });
 
-      const created = await backend.create({ workflowId: "wf1", taskId: "task1", branch: "b", mode: "worktree" });
+      const created = await backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" });
 
       // Simulate out-of-band deletion: .git no longer accessible
       fsp.access.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
@@ -678,7 +678,7 @@ describe("GitWorktreeWorkspaceBackend — docker mode", () => {
 
     const handle = await backend.create({
       workflowId: "wf1",
-      taskId: "task1",
+      taskId: "task1", repoId: "fixture-repo",
       branch: "minions/wf1",
       mode: "worktree",
     });
@@ -702,7 +702,7 @@ describe("GitWorktreeWorkspaceBackend — docker mode", () => {
 
     const handle = await backend.create({
       workflowId: "wf1",
-      taskId: "task1",
+      taskId: "task1", repoId: "fixture-repo",
       branch: "minions/wf1",
       mode: "worktree",
     });
@@ -723,7 +723,7 @@ describe("GitWorktreeWorkspaceBackend — docker mode", () => {
 
     await backend.create({
       workflowId: "wf1",
-      taskId: "task1",
+      taskId: "task1", repoId: "fixture-repo",
       branch: "minions/wf1",
       mode: "worktree",
     });

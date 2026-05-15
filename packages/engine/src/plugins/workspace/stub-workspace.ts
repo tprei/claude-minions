@@ -9,6 +9,7 @@ export class StubWorkspaceBackend implements WorkspaceBackend {
     const taskSlug = slugify(spec.taskId);
     const handle: WorkspaceHandle = {
       workspaceId: `stub-${wfSlug}_${taskSlug}`,
+      repoId: spec.repoId,
       mode: "existing",
       path: "/stub-workspace",
       containerPath: "/stub-workspace",

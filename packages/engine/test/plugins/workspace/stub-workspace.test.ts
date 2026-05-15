@@ -6,7 +6,7 @@ describe("StubWorkspaceBackend", () => {
     const backend = new StubWorkspaceBackend();
     const handle = await backend.create({
       workflowId: "wf-1",
-      taskId: "task-1",
+      taskId: "task-1", repoId: "fixture-repo",
       branch: "minions/wf1_task1",
     });
 
@@ -19,8 +19,8 @@ describe("StubWorkspaceBackend", () => {
 
   it("creates are idempotent (same id for same inputs)", async () => {
     const backend = new StubWorkspaceBackend();
-    const h1 = await backend.create({ workflowId: "wf-1", taskId: "t-1", branch: "b" });
-    const h2 = await backend.create({ workflowId: "wf-1", taskId: "t-1", branch: "b" });
+    const h1 = await backend.create({ workflowId: "wf-1", taskId: "t-1", repoId: "fixture-repo", branch: "b" });
+    const h2 = await backend.create({ workflowId: "wf-1", taskId: "t-1", repoId: "fixture-repo", branch: "b" });
 
     expect(h1.workspaceId).toBe(h2.workspaceId);
   });
@@ -33,7 +33,7 @@ describe("StubWorkspaceBackend", () => {
 
   it("get returns handle after create", async () => {
     const backend = new StubWorkspaceBackend();
-    const handle = await backend.create({ workflowId: "wf-1", taskId: "task-1", branch: "b" });
+    const handle = await backend.create({ workflowId: "wf-1", taskId: "task-1", repoId: "fixture-repo", branch: "b" });
     const got = await backend.get(handle.workspaceId);
 
     expect(got).toBeDefined();
@@ -50,7 +50,7 @@ describe("StubWorkspaceBackend", () => {
 
   it("get returns undefined after cleanup", async () => {
     const backend = new StubWorkspaceBackend();
-    const handle = await backend.create({ workflowId: "wf-1", taskId: "task-1", branch: "b" });
+    const handle = await backend.create({ workflowId: "wf-1", taskId: "task-1", repoId: "fixture-repo", branch: "b" });
     await backend.cleanup(handle.workspaceId);
     const got = await backend.get(handle.workspaceId);
 

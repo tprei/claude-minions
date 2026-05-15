@@ -7,6 +7,7 @@ import type { WorkspaceBackend, WorkspaceHandle } from "../../src/plugins/worksp
 import type { GitClient } from "../../src/plugins/git/git-client.js";
 import { GitError } from "../../src/plugins/git/git-client.js";
 import { silentLogger } from "../test-helpers.js";
+import { buildRepoRegistry } from "../../src/application/repo-registry.js";
 
 const NOW = "2026-05-10T00:00:00.000Z";
 const now = () => NOW;
@@ -16,10 +17,15 @@ const WORKSPACE_ID = "ws-wf-merge-test-abc123_task-def456";
 const BRANCH = "minions/wf-merge-test_task";
 const BASE_BRANCH = "main";
 const REPO_PATH = "/fake/repo";
+const REPO_REGISTRY = buildRepoRegistry(
+  [{ id: "fixture-repo", label: "fixture-repo", localPath: REPO_PATH, defaultBranch: BASE_BRANCH }],
+  { reposRoot: "/fake/repos" },
+);
 
 function makeHandle(): WorkspaceHandle {
   return {
     workspaceId: WORKSPACE_ID,
+    repoId: "fixture-repo",
     mode: "worktree",
     path: "/fake/workspaces/wf_task",
     containerPath: "/fake/workspaces/wf_task",
@@ -143,8 +149,7 @@ describe("LocalFinalizeService — real merge path", () => {
       log: silentLogger(),
       workspace,
       gitClient,
-      repoPath: REPO_PATH,
-      baseBranch: BASE_BRANCH,
+      repoRegistry: REPO_REGISTRY,
     });
 
     svc.attach(WORKFLOW_ID);
@@ -172,8 +177,7 @@ describe("LocalFinalizeService — real merge path", () => {
       log: silentLogger(),
       workspace,
       gitClient,
-      repoPath: REPO_PATH,
-      baseBranch: BASE_BRANCH,
+      repoRegistry: REPO_REGISTRY,
     });
 
     svc.attach(WORKFLOW_ID);
@@ -200,8 +204,7 @@ describe("LocalFinalizeService — real merge path", () => {
       log: silentLogger(),
       workspace,
       gitClient,
-      repoPath: REPO_PATH,
-      baseBranch: BASE_BRANCH,
+      repoRegistry: REPO_REGISTRY,
     });
 
     svc.attach(WORKFLOW_ID);
@@ -232,8 +235,7 @@ describe("LocalFinalizeService — real merge path", () => {
       log: silentLogger(),
       workspace,
       gitClient,
-      repoPath: REPO_PATH,
-      baseBranch: BASE_BRANCH,
+      repoRegistry: REPO_REGISTRY,
     });
 
     svc.attach(WORKFLOW_ID);
@@ -262,8 +264,7 @@ describe("LocalFinalizeService — real merge path", () => {
       log: silentLogger(),
       workspace,
       gitClient,
-      repoPath: REPO_PATH,
-      baseBranch: BASE_BRANCH,
+      repoRegistry: REPO_REGISTRY,
     });
 
     svc.attach(WORKFLOW_ID);
@@ -290,8 +291,7 @@ describe("LocalFinalizeService — real merge path", () => {
       log: silentLogger(),
       workspace,
       gitClient,
-      repoPath: REPO_PATH,
-      baseBranch: BASE_BRANCH,
+      repoRegistry: REPO_REGISTRY,
     });
 
     svc.attach(WORKFLOW_ID);

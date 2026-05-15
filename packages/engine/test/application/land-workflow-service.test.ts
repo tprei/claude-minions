@@ -9,13 +9,17 @@ import type { Workflow } from "../../src/domain/types.js";
 import type { MergeOutcome, MergeResult, SCMPlugin } from "../../src/plugins/scm-plugin.js";
 import type { WorkspaceBackend, WorkspaceHandle } from "../../src/plugins/workspace-backend.js";
 import { silentLogger } from "../test-helpers.js";
+import { buildRepoRegistry } from "../../src/application/repo-registry.js";
+
+const TEST_REGISTRY = buildRepoRegistry([{ id: "fixture-repo", label: "fixture-repo", remote: "https://github.com/o/r.git", localPath: "/tmp/fixture-repo" }], { reposRoot: "/tmp" });
+
 
 const NOW = "2026-05-10T00:00:00.000Z";
 const now = () => NOW;
 const WORKFLOW_ID = "wf-land";
 
 function makeHandle(branch: string): WorkspaceHandle {
-  return { workspaceId: `ws-${branch}`, mode: "worktree", path: `/tmp/${branch}`, containerPath: `/tmp/${branch}`, branch };
+  return { workspaceId: `ws-${branch}`, repoId: "fixture-repo", mode: "worktree", path: `/tmp/${branch}`, containerPath: `/tmp/${branch}`, branch };
 }
 
 function makeWorkspace(): WorkspaceBackend {
@@ -117,8 +121,7 @@ function makeLandService(
     applyCommand: (cmd) => applyCommand(repo, cmd),
     scm,
     workspace,
-    repoCoords: { owner: "o", repo: "r" },
-    baseBranch: "main",
+    repoRegistry: TEST_REGISTRY,
     now,
     log: silentLogger(),
   });

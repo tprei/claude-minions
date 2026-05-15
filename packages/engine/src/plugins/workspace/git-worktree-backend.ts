@@ -6,6 +6,7 @@ import type { WorkspaceBackend, WorkspaceCreateSpec, WorkspaceHandle } from "../
 import { WorkspaceError, slugify } from "../workspace-backend.js";
 import type { WorkspaceFs } from "./workspace-fs.js";
 import { HostFs, DockerFs } from "./workspace-fs.js";
+import type { RepoRegistry } from "../../application/repo-registry.js";
 
 export interface GitWorktreeBackendConfig {
   gitClient: GitClient;
@@ -13,6 +14,8 @@ export interface GitWorktreeBackendConfig {
   workspaceRoot: string;
   gitCommandPrefix?: readonly string[];
   operationTimeoutMs?: number;
+  registry?: RepoRegistry;
+  defaultRepoId?: string;
 }
 
 function isNotFoundError(err: unknown): boolean {
@@ -37,6 +40,8 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
   private readonly dockerMode: boolean;
   private readonly operationTimeoutMs: number;
   private readonly handles: Map<string, WorkspaceHandle> = new Map();
+  private readonly registry: RepoRegistry | undefined;
+  private readonly defaultRepoId: string;
 
   private repoPath: string;
 
@@ -47,6 +52,8 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     fs: WorkspaceFs,
     dockerMode: boolean,
     operationTimeoutMs: number,
+    registry: RepoRegistry | undefined,
+    defaultRepoId: string,
   ) {
     this.gitClient = gitClient;
     this.repoPath = repoPath;
@@ -54,6 +61,17 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     this.fs = fs;
     this.dockerMode = dockerMode;
     this.operationTimeoutMs = operationTimeoutMs;
+    this.registry = registry;
+    this.defaultRepoId = defaultRepoId;
+  }
+
+  private resolveRepoPath(repoId: string): string {
+    if (!this.registry) return this.repoPath;
+    const binding = this.registry.get(repoId);
+    if (!binding) {
+      throw new WorkspaceError("not_found", `unknown repoId ${repoId}`, { repoId });
+    }
+    return binding.localPath;
   }
 
   static async create(config: GitWorktreeBackendConfig): Promise<GitWorktreeWorkspaceBackend> {
@@ -80,6 +98,8 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       }
     }
 
+    const defaultRepoId = config.defaultRepoId ?? (config.registry?.all()[0]?.id ?? "");
+
     return new GitWorktreeWorkspaceBackend(
       config.gitClient,
       repoPath,
@@ -87,6 +107,8 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       fs,
       dockerMode,
       config.operationTimeoutMs ?? GitWorktreeWorkspaceBackend.DEFAULT_OPERATION_TIMEOUT_MS,
+      config.registry,
+      defaultRepoId,
     );
   }
 
@@ -171,6 +193,17 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     return "absent";
   }
 
+  private parseWorkspaceId(workspaceId: string): { repoId: string; tail: string } | undefined {
+    if (!workspaceId.startsWith("ws-")) return undefined;
+    const rest = workspaceId.slice(3);
+    const sepIdx = rest.indexOf("--");
+    if (sepIdx === -1) {
+      // legacy format without repoId encoded; fall back to default
+      return { repoId: this.defaultRepoId, tail: rest };
+    }
+    return { repoId: rest.slice(0, sepIdx), tail: rest.slice(sepIdx + 2) };
+  }
+
   async get(workspaceId: string): Promise<WorkspaceHandle | undefined> {
     const cached = this.handles.get(workspaceId);
     if (cached) {
@@ -183,10 +216,13 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
 
     if (workspaceId.startsWith("existing-")) return undefined;
 
-    if (!workspaceId.startsWith("ws-")) return undefined;
+    const parsed = this.parseWorkspaceId(workspaceId);
+    if (!parsed) return undefined;
 
-    const slug = workspaceId.slice(3);
-    const worktreePath = join(this.workspaceRoot, slug);
+    const isMultiRepoFormat = workspaceId.includes("--");
+    const worktreePath = this.registry && isMultiRepoFormat
+      ? join(this.workspaceRoot, slugify(parsed.repoId), parsed.tail)
+      : join(this.workspaceRoot, parsed.tail);
 
     try {
       await this.validateContainment(worktreePath);
@@ -206,6 +242,7 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
 
     const handle: WorkspaceHandle = {
       workspaceId,
+      repoId: parsed.repoId,
       mode: "worktree",
       path: worktreePath,
       containerPath: worktreePath,
@@ -218,43 +255,55 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     const mode = spec.mode ?? "worktree";
     const wfSlug = slugify(spec.workflowId);
     const taskSlug = slugify(spec.taskId);
+    const repoSlug = slugify(spec.repoId);
 
-    if (!wfSlug || !taskSlug) {
-      throw new WorkspaceError("path_escape", "workflowId and taskId must produce non-empty slugs", {
+    if (!wfSlug || !taskSlug || !repoSlug) {
+      throw new WorkspaceError("path_escape", "workflowId, taskId, and repoId must produce non-empty slugs", {
         workflowId: spec.workflowId,
         taskId: spec.taskId,
+        repoId: spec.repoId,
       });
     }
 
+    const repoPath = this.resolveRepoPath(spec.repoId);
+
     if (mode === "existing") {
-      const workspaceId = `existing-${wfSlug}_${taskSlug}`;
+      const workspaceId = this.registry
+        ? `existing-${repoSlug}--${wfSlug}_${taskSlug}`
+        : `existing-${wfSlug}_${taskSlug}`;
       const handle: WorkspaceHandle = {
         workspaceId,
+        repoId: spec.repoId,
         mode: "existing",
-        path: this.repoPath,
-        containerPath: this.repoPath,
+        path: repoPath,
+        containerPath: repoPath,
         branch: spec.branch,
       };
       this.handles.set(workspaceId, handle);
       return handle;
     }
 
-    const worktreePath = join(this.workspaceRoot, `${wfSlug}_${taskSlug}`);
+    const worktreePath = this.registry
+      ? join(this.workspaceRoot, repoSlug, `${wfSlug}_${taskSlug}`)
+      : join(this.workspaceRoot, `${wfSlug}_${taskSlug}`);
     await this.validateContainment(worktreePath);
 
-    const workspaceId = `ws-${wfSlug}_${taskSlug}`;
+    const workspaceId = this.registry
+      ? `ws-${repoSlug}--${wfSlug}_${taskSlug}`
+      : `ws-${wfSlug}_${taskSlug}`;
 
-    return this.withLock(this.repoPath, async () => {
+    return this.withLock(repoPath, async () => {
       const existingWorktree = await this.probeWorktree(worktreePath);
 
       if (existingWorktree === "worktree") {
         if (spec.resetBranch === true) {
-          await this.gitClient.worktreeRemove(this.repoPath, worktreePath, { force: true });
-          await this.gitClient.worktreePrune(this.repoPath);
+          await this.gitClient.worktreeRemove(repoPath, worktreePath, { force: true });
+          await this.gitClient.worktreePrune(repoPath);
           await this.fs.removeRecursive(worktreePath);
         } else {
           const handle: WorkspaceHandle = {
             workspaceId,
+            repoId: spec.repoId,
             mode: "worktree",
             path: worktreePath,
             containerPath: worktreePath,
@@ -267,18 +316,28 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
         await this.fs.removeRecursive(worktreePath);
       }
 
+      if (this.registry && !this.dockerMode) {
+        const parentDir = dirname(worktreePath);
+        try {
+          await access(parentDir);
+        } catch {
+          await mkdir(parentDir, { recursive: true });
+        }
+      }
+
       const addOpts: { path: string; branch: string; baseRef?: string; resetBranch?: boolean } = {
         path: worktreePath,
         branch: spec.branch,
       };
       if (spec.baseRef !== undefined) addOpts.baseRef = spec.baseRef;
       if (spec.resetBranch !== undefined) addOpts.resetBranch = spec.resetBranch;
-      await this.gitClient.worktreeAdd(this.repoPath, addOpts);
+      await this.gitClient.worktreeAdd(repoPath, addOpts);
 
-      await this.seedNodeModules(worktreePath);
+      await this.seedNodeModules(worktreePath, repoPath);
 
       const handle: WorkspaceHandle = {
         workspaceId,
+        repoId: spec.repoId,
         mode: "worktree",
         path: worktreePath,
         containerPath: worktreePath,
@@ -293,12 +352,12 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
   // Chosen over a fresh `pnpm install` because pnpm's per-package node_modules contain
   // relative symlinks into the root .pnpm store; an absolute symlink at each node_modules
   // boundary preserves those relatives and avoids re-downloading/re-linking the universe.
-  private async seedNodeModules(worktreePath: string): Promise<void> {
+  private async seedNodeModules(worktreePath: string, sourceRepoPath: string): Promise<void> {
     if (this.dockerMode) return; // operator handles container-side setup
 
-    await this.linkNodeModules(this.repoPath, worktreePath);
+    await this.linkNodeModules(sourceRepoPath, worktreePath);
 
-    const packagesDir = join(this.repoPath, "packages");
+    const packagesDir = join(sourceRepoPath, "packages");
     let entries: Array<{ name: string; isDirectory: () => boolean }>;
     try {
       entries = await readdir(packagesDir, { withFileTypes: true });
@@ -339,12 +398,14 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       return;
     }
 
-    if (!workspaceId.startsWith("ws-")) {
-      return;
-    }
+    const parsed = this.parseWorkspaceId(workspaceId);
+    if (!parsed) return;
 
-    const slug = workspaceId.slice(3);
-    const worktreePath = join(this.workspaceRoot, slug);
+    const repoPath = this.resolveRepoPath(parsed.repoId);
+    const isMultiRepoFormat = workspaceId.includes("--");
+    const worktreePath = this.registry && isMultiRepoFormat
+      ? join(this.workspaceRoot, slugify(parsed.repoId), parsed.tail)
+      : join(this.workspaceRoot, parsed.tail);
 
     try {
       await this.validateContainment(worktreePath);
@@ -352,15 +413,15 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       return;
     }
 
-    await this.withLock(this.repoPath, async () => {
+    await this.withLock(repoPath, async () => {
       try {
-        await this.gitClient.worktreeRemove(this.repoPath, worktreePath, { force: true });
+        await this.gitClient.worktreeRemove(repoPath, worktreePath, { force: true });
       } catch (err) {
         if (!isNotFoundError(err)) throw err;
       }
 
       try {
-        await this.gitClient.worktreePrune(this.repoPath);
+        await this.gitClient.worktreePrune(repoPath);
       } catch {
         // prune failure is non-fatal; reclaimable via future sweep
       }

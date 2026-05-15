@@ -5,6 +5,7 @@ import type { Logger } from "../observability/logger.js";
 import type { WorkspaceBackend } from "../plugins/workspace-backend.js";
 import type { GitClient } from "../plugins/git/git-client.js";
 import { GitError } from "../plugins/git/git-client.js";
+import type { RepoRegistry } from "./repo-registry.js";
 
 export interface LocalFinalizeServiceDeps {
   workflowRepo: WorkflowRepository;
@@ -14,8 +15,7 @@ export interface LocalFinalizeServiceDeps {
   log: Logger;
   workspace?: WorkspaceBackend;
   gitClient?: GitClient;
-  repoPath?: string;
-  baseBranch?: string;
+  repoRegistry?: RepoRegistry;
 }
 
 export class LocalFinalizeService {
@@ -133,9 +133,9 @@ export class LocalFinalizeService {
     workflowId: string,
     taskId: string,
   ): Promise<{ kind: "merged" } | { kind: "needs-review"; reason: string }> {
-    const { workspace, gitClient, repoPath } = this.deps;
+    const { workspace, gitClient, repoRegistry } = this.deps;
 
-    if (!workspace || !gitClient || !repoPath) {
+    if (!workspace || !gitClient || !repoRegistry) {
       return { kind: "merged" };
     }
 
@@ -150,8 +150,10 @@ export class LocalFinalizeService {
       return { kind: "needs-review", reason: `workspace ${task.workspaceId} not found` };
     }
 
+    const binding = repoRegistry.require(workflow!.repoId);
+    const repoPath = binding.localPath;
     const branch = handle.branch;
-    const baseBranch = task.mergeTarget ?? this.deps.baseBranch ?? "main";
+    const baseBranch = task.mergeTarget ?? binding.defaultBranch;
 
     // Check whether the worktree branch has any commits ahead of the base branch.
     // mergeBase...branch gives commits reachable from branch but not from base.

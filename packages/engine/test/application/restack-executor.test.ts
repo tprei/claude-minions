@@ -99,7 +99,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeRestackExecutor", () => {
 
       const parentHandle = await workspace.create({
         workflowId: "wf-1",
-        taskId: "parent",
+        taskId: "parent", repoId: "fixture-repo",
         branch: "minions/parent",
         mode: "worktree",
       });
@@ -109,7 +109,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeRestackExecutor", () => {
 
       const childHandle = await workspace.create({
         workflowId: "wf-1",
-        taskId: "child",
+        taskId: "child", repoId: "fixture-repo",
         branch: "minions/child",
         mode: "worktree",
         baseRef: "minions/parent",
@@ -191,7 +191,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeRestackExecutor", () => {
 
       const parentHandle = await workspace.create({
         workflowId: "wf-1",
-        taskId: "parent",
+        taskId: "parent", repoId: "fixture-repo",
         branch: "minions/parent",
         mode: "worktree",
       });
@@ -201,7 +201,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeRestackExecutor", () => {
 
       const childHandle = await workspace.create({
         workflowId: "wf-1",
-        taskId: "child",
+        taskId: "child", repoId: "fixture-repo",
         branch: "minions/child",
         mode: "worktree",
         baseRef: "minions/parent",
@@ -263,7 +263,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeRestackExecutor", () => {
 
       const parentHandle = await workspace.create({
         workflowId: "wf-1",
-        taskId: "parent",
+        taskId: "parent", repoId: "fixture-repo",
         branch: "minions/parent",
         mode: "worktree",
       });
@@ -271,7 +271,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeRestackExecutor", () => {
 
       const childHandle = await workspace.create({
         workflowId: "wf-1",
-        taskId: "child",
+        taskId: "child", repoId: "fixture-repo",
         branch: "minions/child",
         mode: "worktree",
         baseRef: "minions/parent",

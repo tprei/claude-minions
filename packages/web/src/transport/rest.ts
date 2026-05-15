@@ -225,10 +225,11 @@ export function listTranscript(
 export function planWorkflow(
   conn: Connection,
   prompt: string,
+  repoId: string,
 ): Promise<{ spec: WorkflowSpec }> {
   return apiFetch<{ spec: WorkflowSpec }>(conn, "/workflows/plan", {
     method: "POST",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, repoId }),
   });
 }
 

@@ -91,6 +91,7 @@ describe("push integration: VAPID-signed delivery and 410 cleanup", () => {
     const dir = mkdtempSync(join(tmpdir(), "push-int-test-"));
     engine = await createEngine({
       dbPath: join(dir, "test.db"),
+      repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }],
       vapid,
       pushSender,
     });

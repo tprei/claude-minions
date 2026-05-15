@@ -100,7 +100,9 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
 
   const trimmedPrompt = prompt.trim();
   const promptValid = trimmedPrompt.length >= 5;
-  const canSubmit = promptValid && !submitting && !!conn;
+  const hasRepos = (repos?.length ?? 0) > 0;
+  const repoSelected = hasRepos && repoId !== NONE_REPO;
+  const canSubmit = promptValid && !submitting && !!conn && repoSelected;
 
   const effectiveTitle = useMemo(() => {
     const t = title.trim();
@@ -163,7 +165,7 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
       }
       let spec: WorkflowSpec;
       try {
-        const result = await planWorkflow(conn, trimmedPrompt);
+        const result = await planWorkflow(conn, trimmedPrompt, repoId);
         spec = result.spec;
       } catch (planErr) {
         // 503 means planner unavailable/disabled — fall back to single-task
