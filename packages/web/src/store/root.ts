@@ -14,23 +14,28 @@ export const useRootStore = create<RootStore>(() => ({
   },
 }));
 
-const _disposeMap = new Map<string, () => void>();
+const _disposeMap = new Map<string, { conn: Connection; dispose: () => void }>();
 
-function syncConnections(connections: Connection[]): void {
-  const removedIds = [..._disposeMap.keys()].filter(id => !connections.find(c => c.id === id));
-  for (const id of removedIds) {
-    _disposeMap.get(id)?.();
-    _disposeMap.delete(id);
+function shouldReplaceAttached(prev: Connection, next: Connection): boolean {
+  return prev.baseUrl !== next.baseUrl || prev.token !== next.token;
+}
+
+function syncActiveConnection(connections: Connection[], activeId: string | null): void {
+  const activeConn = activeId ? connections.find(c => c.id === activeId) ?? null : null;
+
+  for (const [id, attached] of _disposeMap) {
+    if (!activeConn || id !== activeConn.id || shouldReplaceAttached(attached.conn, activeConn)) {
+      attached.dispose();
+      _disposeMap.delete(id);
+    }
   }
 
-  const newConns = connections.filter(c => !_disposeMap.has(c.id));
-  newConns.forEach((conn, idx) => {
-    const delay = idx * 250;
-    const dispose = attachConnection(conn, delay);
-    _disposeMap.set(conn.id, dispose);
-  });
+  if (activeConn && !_disposeMap.has(activeConn.id)) {
+    const dispose = attachConnection(activeConn, 0);
+    _disposeMap.set(activeConn.id, { conn: activeConn, dispose });
+  }
 }
 
 useConnectionStore.subscribe(state => {
-  syncConnections(state.connections);
+  syncActiveConnection(state.connections, state.activeId);
 });
