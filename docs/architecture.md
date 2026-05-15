@@ -190,6 +190,7 @@ Every user-visible feature row must have a code owner and a gate. A feature in c
 | Task transitions and workflow OCC | `engine/src/application/transitions.ts`, `engine/src/application/commands.ts` | transition tests, SSE tests |
 | Scheduler concurrency and claim checks | `engine/src/application/scheduler-service.ts`, `engine/src/application/scheduler.ts` | scheduler tests, integration tests |
 | Provider orchestration and transcripts | `engine/src/application/run-orchestrator.ts`, provider plugins | orchestrator tests, transcript tests |
+| Pi provider plugin (opt-in via `MWF_PROVIDER=pi`) | `engine/src/plugins/providers/pi.ts` | Pi provider tests |
 | Recovery boot and periodic scan | `engine/src/application/boot.ts`, `engine/src/application/recovery*.ts` | recovery tests, runtime self-check tests |
 | Restack graph operation | `engine/src/application/restack*.ts` | restack tests, integration tests |
 | Quality gates | `engine/src/application/quality-gate-service.ts`, quality plugins | quality tests, smoke matrix |
