@@ -16,6 +16,7 @@
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
     "lint": "eslint . --max-warnings=0 && node scripts/check-no-disabled-rules.mjs",
+    "check:no-new-docs": "node scripts/check-no-doc-additions.mjs",
     "clean": "rm -rf packages/*/dist packages/*/.tsbuildinfo packages/web/dist"
   },
   "devDependencies": {
