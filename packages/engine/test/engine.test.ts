@@ -40,6 +40,16 @@ describe("createEngine", () => {
     await expect(engine.close()).resolves.toBeUndefined();
   });
 
+  it("GET /version exposes pi in providers list", async () => {
+    engine = await createEngine({ dbPath, log: silentLogger() });
+    const res = await engine.server.fetch(new Request("http://localhost/version"));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { providers: string[] };
+    expect(body.providers).toContain("pi");
+    expect(body.providers).toContain("claude-code");
+    expect(body.providers).toContain("codex");
+  });
+
   it("rebuild sees workflows saved in a prior instance", async () => {
     const now = "2026-05-04T11:19:00.000Z";
     const spec = {

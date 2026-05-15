@@ -39,7 +39,7 @@ describe("GET /health", () => {
         features: ["workflows"],
         featuresPending: [],
         provider: "stub",
-        providers: ["stub"],
+        providers: ["claude-code", "codex", "pi", "stub"],
         repos: [],
         pluginSet: ["runtime:stub"],
         startedAt: "2026-05-10T00:00:00.000Z",
@@ -48,9 +48,10 @@ describe("GET /health", () => {
 
     const res = await app.request("/version");
     expect(res.status).toBe(200);
-    const body = await res.json() as { buildSha: string; features: string[] };
+    const body = await res.json() as { buildSha: string; features: string[]; providers: string[] };
     expect(body.buildSha).toBe("abc123");
     expect(body.features).toContain("workflows");
+    expect(body.providers).toContain("pi");
   });
 
   it("returns doctor report and maps error status to 503", async () => {

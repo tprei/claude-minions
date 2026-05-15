@@ -525,7 +525,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     features: [...ENGINE_FEATURES],
     featuresPending: [],
     provider: config.providerName ?? process.env["MWF_PROVIDER"] ?? (config.providerFactory ? "configured" : "stub"),
-    providers: ["claude-code", "codex", "stub"],
+    providers: ["claude-code", "codex", "pi", "stub"],
     repos: buildRepoBindings(config),
     pluginSet: buildPluginSet({
       runtime,
