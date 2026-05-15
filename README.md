@@ -194,7 +194,12 @@ MWF_GITHUB_BASE_BRANCH=main   # optional, defaults to main
 | `MWF_DATA_DIR` | tmux sessions + log dir | optional |
 | `MWF_WORKSPACE_ROOT` | git worktree root | optional |
 | `MWF_REPO_PATH` | single-repo mode: path to a local repo | optional |
-| `MWF_PROVIDER` | `claude-code` or `codex` | `claude-code` |
+| `MWF_PROVIDER` | `claude-code`, `codex`, or `pi` | `claude-code` |
+| `MWF_PI_MODEL` | Pi model id (used when `MWF_PROVIDER=pi`) | `openai-codex/gpt-5.5` |
+| `MWF_PI_REASONING` | Pi reasoning depth, one of `off` / `minimal` / `low` / `medium` / `high` / `xhigh` | `xhigh` |
+| `MWF_PI_AGENT_DIR` | Pi agent home dir | `~/.pi/agent` |
+| `MWF_PI_SESSION_DIR` | Pi session store dir | `<agentDir>/sessions/minions` |
+| `MWF_PI_TOOLS` | Override the Pi tools allowlist (comma-separated) | optional |
 | `MWF_LOG_LEVEL` | `debug` / `info` / `warn` / `error` | `info` |
 | `MWF_PWA_DIR` | Path to built PWA (serves from `/`) | optional |
 | `MWF_VAPID_PUBLIC_KEY` / `MWF_VAPID_PRIVATE_KEY` / `MWF_VAPID_SUBJECT` | web-push (optional) | unset |
