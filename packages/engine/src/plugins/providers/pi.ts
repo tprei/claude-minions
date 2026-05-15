@@ -46,6 +46,8 @@ export class PiProvider implements ProviderPlugin {
 
   static readonly DEFAULT_MODEL = "openai-codex/gpt-5.5";
   static readonly DEFAULT_REASONING = "xhigh";
+  static readonly DEFAULT_AGENT_DIR = "/workspace";
+  static readonly DEFAULT_SESSION_DIR = "/workspace/.pi-sessions";
   static readonly DEFAULT_TOOLS = "read,write,edit,bash,grep,find,ls";
   static readonly THINK_ALLOWED_TOOLS = "read,grep,find,ls";
 
@@ -79,8 +81,8 @@ USER QUESTION:
 
   readonly model: string;
   readonly reasoning: string;
-  readonly agentDir: string | undefined;
-  readonly sessionDir: string | undefined;
+  readonly agentDir: string;
+  readonly sessionDir: string;
   readonly toolsAllowlist: string;
 
   // This state ties one provider instance to one conversation; the engine MUST construct a fresh instance per run.
@@ -89,19 +91,71 @@ USER QUESTION:
   constructor(config: PiProviderConfig = {}) {
     this.model = config.model ?? PiProvider.DEFAULT_MODEL;
     this.reasoning = config.reasoning ?? PiProvider.DEFAULT_REASONING;
-    this.agentDir = config.agentDir;
-    this.sessionDir = config.sessionDir;
+    this.agentDir = config.agentDir ?? PiProvider.DEFAULT_AGENT_DIR;
+    this.sessionDir = config.sessionDir ?? PiProvider.DEFAULT_SESSION_DIR;
     this.toolsAllowlist = config.toolsAllowlist ?? PiProvider.DEFAULT_TOOLS;
   }
 
   async prepare(spec: ProviderPrepareSpec): Promise<ProviderInvocation> {
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
-    throw new Error("PiProvider.prepare not implemented");
+    const isThink = spec.workflowKind === "think-thread";
+    const preamble = isThink ? PiProvider.THINK_PREAMBLE : PiProvider.COMMIT_PREAMBLE;
+    const tools = isThink ? PiProvider.THINK_ALLOWED_TOOLS : this.toolsAllowlist;
+
+    return {
+      command: [
+        "pi",
+        "--mode",
+        "json",
+        "-p",
+        "--provider",
+        "openai-codex",
+        "--model",
+        this.model,
+        "--thinking",
+        this.reasoning,
+        "--no-context-files",
+        "--tools",
+        tools,
+        "--session-dir",
+        this.sessionDir,
+        `${preamble}${spec.prompt}`,
+      ],
+      env: this.buildEnv(),
+      providerType: "pi",
+    };
   }
 
   async resume(spec: ProviderResumeSpec): Promise<ProviderInvocation> {
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
-    throw new Error("PiProvider.resume not implemented");
+    const isThink = spec.workflowKind === "think-thread";
+    const preamble = isThink ? PiProvider.THINK_PREAMBLE : PiProvider.COMMIT_PREAMBLE;
+    const tools = isThink ? PiProvider.THINK_ALLOWED_TOOLS : this.toolsAllowlist;
+
+    return {
+      command: [
+        "pi",
+        "--mode",
+        "json",
+        "-p",
+        "--provider",
+        "openai-codex",
+        "--model",
+        this.model,
+        "--thinking",
+        this.reasoning,
+        "--no-context-files",
+        "--tools",
+        tools,
+        "--session-dir",
+        this.sessionDir,
+        "--session",
+        spec.sessionRef,
+        `${preamble}${spec.prompt}`,
+      ],
+      env: this.buildEnv(),
+      providerType: "pi",
+    };
   }
 
   parseFrame(line: string): ProviderEvent[] {
@@ -243,5 +297,20 @@ USER QUESTION:
 
   loginStatus(): Promise<{ loggedIn: boolean; details?: string }> {
     return Promise.resolve({ loggedIn: false });
+  }
+
+  private buildEnv(): Record<string, string> {
+    const env: Record<string, string> = {
+      PI_CODING_AGENT_DIR: this.agentDir,
+      PI_OFFLINE: "1",
+      PI_SKIP_VERSION_CHECK: "1",
+    };
+    if (process.env["MWF_PI_API_KEY_PASSTHROUGH"] === "1") {
+      const key = process.env["OPENAI_API_KEY"];
+      if (typeof key === "string" && key.length > 0) {
+        env["OPENAI_API_KEY"] = key;
+      }
+    }
+    return env;
   }
 }
