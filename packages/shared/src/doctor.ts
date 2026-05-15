@@ -9,7 +9,9 @@ export type DoctorCheckName =
   | "github-auth"
   | "disk-free"
   | "dependency-cache"
-  | "push-config";
+  | "push-config"
+  | "pi-version"
+  | "pi-auth";
 
 export interface DoctorCheck {
   name: DoctorCheckName;
