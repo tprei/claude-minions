@@ -22,7 +22,7 @@ describe("WorkflowPlannerService", () => {
     });
 
     const planner = makePlanner(async () => raw);
-    const spec = await planner.plan({ prompt: "Do the thing" });
+    const spec = await planner.plan({ prompt: "Do the thing", repoId: "fixture-repo" });
 
     expect(spec.kind).toBe("single-task");
     expect(spec.tasks).toHaveLength(1);
@@ -42,7 +42,7 @@ describe("WorkflowPlannerService", () => {
     const fenced = "```json\n" + inner + "\n```";
 
     const planner = makePlanner(async () => fenced);
-    const spec = await planner.plan({ prompt: "Fenced" });
+    const spec = await planner.plan({ prompt: "Fenced", repoId: "fixture-repo" });
 
     expect(spec.kind).toBe("single-task");
     expect(spec.tasks[0]?.title).toBe("Fenced task");
@@ -59,7 +59,7 @@ describe("WorkflowPlannerService", () => {
     });
 
     const planner = makePlanner(async () => raw);
-    const spec = await planner.plan({ prompt: "Setup, build, and test the project" });
+    const spec = await planner.plan({ prompt: "Setup, build, and test the project", repoId: "fixture-repo" });
 
     expect(spec.kind).toBe("manual-dag");
     expect(spec.tasks).toHaveLength(3);
@@ -80,15 +80,15 @@ describe("WorkflowPlannerService", () => {
 
   it("rejects malformed JSON", async () => {
     const planner = makePlanner(async () => "not json at all {{{{");
-    await expect(planner.plan({ prompt: "do something" })).rejects.toThrow(DomainError);
-    await expect(planner.plan({ prompt: "do something" })).rejects.toMatchObject({ code: "invalid_plan" });
+    await expect(planner.plan({ prompt: "do something", repoId: "fixture-repo" })).rejects.toThrow(DomainError);
+    await expect(planner.plan({ prompt: "do something", repoId: "fixture-repo" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
   it("rejects a plan with zero tasks", async () => {
     const raw = JSON.stringify({ kind: "single-task", tasks: [] });
     const planner = makePlanner(async () => raw);
-    await expect(planner.plan({ prompt: "do something" })).rejects.toThrow(DomainError);
-    await expect(planner.plan({ prompt: "do something" })).rejects.toMatchObject({ code: "invalid_plan" });
+    await expect(planner.plan({ prompt: "do something", repoId: "fixture-repo" })).rejects.toThrow(DomainError);
+    await expect(planner.plan({ prompt: "do something", repoId: "fixture-repo" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
   it("rejects a plan with unknown dependsOn reference", async () => {
@@ -99,8 +99,8 @@ describe("WorkflowPlannerService", () => {
       ],
     });
     const planner = makePlanner(async () => raw);
-    await expect(planner.plan({ prompt: "do A" })).rejects.toThrow(DomainError);
-    await expect(planner.plan({ prompt: "do A" })).rejects.toMatchObject({ code: "invalid_plan" });
+    await expect(planner.plan({ prompt: "do A", repoId: "fixture-repo" })).rejects.toThrow(DomainError);
+    await expect(planner.plan({ prompt: "do A", repoId: "fixture-repo" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
   it("rejects a plan with a cycle", async () => {
@@ -112,14 +112,14 @@ describe("WorkflowPlannerService", () => {
       ],
     });
     const planner = makePlanner(async () => raw);
-    await expect(planner.plan({ prompt: "A and B depend on each other" })).rejects.toThrow(DomainError);
-    await expect(planner.plan({ prompt: "A and B depend on each other" })).rejects.toMatchObject({ code: "invalid_plan" });
+    await expect(planner.plan({ prompt: "A and B depend on each other", repoId: "fixture-repo" })).rejects.toThrow(DomainError);
+    await expect(planner.plan({ prompt: "A and B depend on each other", repoId: "fixture-repo" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
   it("rejects an invalid kind", async () => {
     const raw = JSON.stringify({ kind: "unknown-kind", tasks: [{ id: "t0", title: "A", prompt: "do A", dependsOn: [] }] });
     const planner = makePlanner(async () => raw);
-    await expect(planner.plan({ prompt: "do A" })).rejects.toMatchObject({ code: "invalid_plan" });
+    await expect(planner.plan({ prompt: "do A", repoId: "fixture-repo" })).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
   it("remaps llm task ids to unique engine-generated ids", async () => {
@@ -132,7 +132,7 @@ describe("WorkflowPlannerService", () => {
     });
 
     const planner = makePlanner(async () => raw);
-    const spec = await planner.plan({ prompt: "do two tasks" });
+    const spec = await planner.plan({ prompt: "do two tasks", repoId: "fixture-repo" });
 
     // LLM ids must not appear in the output
     const ids = spec.tasks.map((t) => t.id);
@@ -156,7 +156,7 @@ describe("WorkflowPlannerService", () => {
     const wrapped = `Here is the plan:\n${inner}\nHope that helps!`;
 
     const planner = makePlanner(async () => wrapped);
-    const spec = await planner.plan({ prompt: "Prose" });
+    const spec = await planner.plan({ prompt: "Prose", repoId: "fixture-repo" });
 
     expect(spec.kind).toBe("single-task");
     expect(spec.tasks[0]?.title).toBe("Prose task");

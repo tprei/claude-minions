@@ -110,6 +110,7 @@ describe("SchedulerService", () => {
       const wf = createWorkflow({
         id: "wf-single",
         kind: "single-task",
+        repoId: "fixture-repo",
         tasks: [{ id: "t1", title: "Task 1", prompt: "do stuff" }],
       }, now);
       await repo.save(wf, []);
@@ -145,6 +146,7 @@ describe("SchedulerService", () => {
       const wf = createWorkflow({
         id: "wf-dag",
         kind: "manual-dag",
+        repoId: "fixture-repo",
         tasks: [
           { id: "tA", title: "Task A", prompt: "do A" },
           { id: "tB", title: "Task B", prompt: "do B", dependsOn: ["tA"] },
@@ -337,6 +339,7 @@ describe("SchedulerService", () => {
       const wf = createWorkflow({
         id: "wf-no-redispatch",
         kind: "single-task",
+        repoId: "fixture-repo",
         tasks: [{ id: "t1", title: "T", prompt: "P" }],
       }, now);
       await repo.save(wf, []);

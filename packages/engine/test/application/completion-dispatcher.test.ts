@@ -30,6 +30,7 @@ async function makeWorkflowInFinalizing(repo: InMemoryWorkflowRepository, autoLa
   const wf = createWorkflow({
     id: WORKFLOW_ID,
     kind: "single-task",
+    repoId: "fixture-repo",
     tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
     policy: { maxConcurrent: 1, autoLand, autoMergeOnGreen: false },
   }, now);
@@ -79,6 +80,7 @@ describe("CompletionDispatcher", () => {
     const wf = createWorkflow({
       id: WORKFLOW_ID,
       kind: "single-task",
+      repoId: "fixture-repo",
       tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
     }, now);
     await repo.save(wf, []);
@@ -218,6 +220,7 @@ describe("CompletionDispatcher", () => {
     const wf = createWorkflow({
       id: WORKFLOW_ID,
       kind: "single-task",
+      repoId: "fixture-repo",
       tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
       policy: { maxConcurrent: 1, autoLand: true, autoMergeOnGreen: false },
     }, now);

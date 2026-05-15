@@ -195,7 +195,7 @@ export class WorkflowPlannerService {
     this.claudeCommand = deps.claudeCommand ?? ["claude", "-p"];
   }
 
-  async plan({ prompt, signal }: { prompt: string; signal?: AbortSignal }): Promise<WorkflowSpec> {
+  async plan({ prompt, repoId, signal }: { prompt: string; repoId: string; signal?: AbortSignal }): Promise<WorkflowSpec> {
     const { log } = this.deps;
 
     log.info("planner: requesting plan", { prompt: prompt.slice(0, 80) });
@@ -258,10 +258,11 @@ export class WorkflowPlannerService {
     const spec: WorkflowSpec = {
       id: workflowId,
       kind: raw.kind as WorkflowSpec["kind"],
+      repoId,
       tasks: taskSpecs,
     };
 
-    log.info("planner: plan complete", { workflowId, taskCount: taskSpecs.length, kind: spec.kind });
+    log.info("planner: plan complete", { workflowId, taskCount: taskSpecs.length, kind: spec.kind, repoId });
     return spec;
   }
 }

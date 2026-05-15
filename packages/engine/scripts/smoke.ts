@@ -125,6 +125,7 @@ async function createWorkflow(
   const res = await client.post("/workflows", {
     id: input.id,
     kind: "single-task",
+    repoId: "fixture-repo",
     tasks: [{ id: input.taskId, title: `Smoke ${input.taskId}`, prompt: "exercise the smoke matrix" }],
     ...(input.policy !== undefined ? { policy: input.policy } : {}),
   });

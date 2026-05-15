@@ -7,6 +7,7 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
   return {
     id: "wf-1",
     kind: "single-task",
+    repoId: "fixture-repo",
     status: "active",
     graph: {
       "t-1": {

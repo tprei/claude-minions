@@ -55,6 +55,7 @@ describe("createEngine", () => {
     const spec = {
       id: "wf-engine-1",
       kind: "single-task" as const,
+      repoId: "fixture-repo",
       tasks: [{ id: "t1", title: "T", prompt: "P" }],
     };
 

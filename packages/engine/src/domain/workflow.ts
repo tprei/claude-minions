@@ -14,6 +14,12 @@ export function createWorkflow(spec: WorkflowSpec, clock: Clock = systemClock): 
     });
   }
 
+  if (typeof spec.repoId !== "string" || spec.repoId.length === 0) {
+    throw new DomainError("invalid_workflow", "workflow must declare a repoId", {
+      workflowId: spec.id,
+    });
+  }
+
   if (spec.tasks.length === 0) {
     throw new DomainError("invalid_workflow", "workflow must contain at least one task", {
       workflowId: spec.id,
@@ -51,6 +57,7 @@ export function createWorkflow(spec: WorkflowSpec, clock: Clock = systemClock): 
     id: spec.id,
     kind: spec.kind,
     status: "active",
+    repoId: spec.repoId,
     graph,
     operations: {},
     policy: {
@@ -69,15 +76,21 @@ export function createWorkflow(spec: WorkflowSpec, clock: Clock = systemClock): 
   return workflow;
 }
 
+// Test fixture default. Production code goes through validateWorkflowSpec +
+// POST /workflows which require an explicit repoId tied to a real binding.
+export const FIXTURE_REPO_ID = "fixture-repo";
+
 export function createSingleTaskWorkflow(
   id: string,
   task: Omit<TaskSpec, "id"> & { id?: string },
   clock: Clock = systemClock,
+  repoId: string = FIXTURE_REPO_ID,
 ): Workflow {
   return createWorkflow(
     {
       id,
       kind: "single-task",
+      repoId,
       tasks: [{ ...task, id: task.id ?? `${id}:task` }],
       policy: { maxConcurrent: 1 },
     },
@@ -89,11 +102,13 @@ export function createThinkThreadWorkflow(
   id: string,
   task: Omit<TaskSpec, "id" | "mergeTarget"> & { id?: string },
   clock: Clock = systemClock,
+  repoId: string = FIXTURE_REPO_ID,
 ): Workflow {
   return createWorkflow(
     {
       id,
       kind: "think-thread",
+      repoId,
       tasks: [{ ...task, id: task.id ?? `${id}:think` }],
       policy: { maxConcurrent: 1 },
     },

@@ -262,7 +262,7 @@ async function main(): Promise<void> {
 
     const planPrompt = process.env["MWF_DOGFOOD_PROMPT"] ??
       `Create exactly one single-task workflow. The task must append one line containing "${DOGFOOD_LINE}" to DOGFOOD.md in the repository, make no other file changes, and commit the change.`;
-    const plan = await bound.client.post("/workflows/plan", { prompt: planPrompt });
+    const plan = await bound.client.post("/workflows/plan", { prompt: planPrompt, repoId: "fixture-repo" });
     assertStatus("POST /workflows/plan", plan.status, 200, plan.data);
     const spec = getSpec(plan.data);
     report.workflowId = spec.id;

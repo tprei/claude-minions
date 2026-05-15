@@ -138,6 +138,7 @@ export interface Workflow {
   id: string;
   kind: WorkflowKind;
   status: WorkflowStatus;
+  repoId: string;
   directorSessionId?: string;
   graph: Record<string, TaskNode>;
   operations: Record<string, GraphOperation>;
@@ -204,6 +205,7 @@ export interface TaskSpec {
 export interface WorkflowSpec {
   id: string;
   kind: WorkflowKind;
+  repoId: string;
   tasks: TaskSpec[];
   policy?: Partial<WorkflowPolicy>;
   directorSessionId?: string;

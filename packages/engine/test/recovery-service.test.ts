@@ -256,6 +256,7 @@ describe("RecoveryService.scan", () => {
       {
         id: "wf-x",
         kind: "manual-dag",
+        repoId: "fixture-repo",
         tasks: [
           { id: "wf-x:a", title: "A", prompt: "A" },
           { id: "wf-x:b", title: "B", prompt: "B" },

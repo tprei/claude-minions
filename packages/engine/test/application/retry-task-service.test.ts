@@ -103,6 +103,7 @@ describe("RetryTaskService", () => {
     const wf = createWorkflow({
       id: "wf-2",
       kind: "single-task",
+      repoId: "fixture-repo",
       tasks: [
         { id: "wf-2:parent", title: "Parent", prompt: "do parent" },
         { id: "wf-2:child", title: "Child", prompt: "do child", dependsOn: ["wf-2:parent"] },

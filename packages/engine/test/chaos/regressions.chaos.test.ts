@@ -76,6 +76,7 @@ async function makeRunningWorkflow(repo: InMemoryWorkflowRepository, sessionId: 
   const wf = createWorkflow({
     id: WORKFLOW_ID,
     kind: "single-task",
+    repoId: "fixture-repo",
     tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
     policy: { maxConcurrent: 1 },
   }, now);
@@ -135,6 +136,7 @@ async function makeFinalizingWorkflow(repo: InMemoryWorkflowRepository): Promise
   const wf = createWorkflow({
     id: WORKFLOW_ID,
     kind: "single-task",
+    repoId: "fixture-repo",
     tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
     policy: { maxConcurrent: 1, autoLand: true, autoMergeOnGreen: false },
   }, now);
@@ -271,6 +273,7 @@ describeChaos("regression chaos probes", () => {
       const wf = createWorkflow({
         id: WORKFLOW_ID,
         kind: "single-task",
+        repoId: "fixture-repo",
         tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
       }, now);
       await engine1.repo.save(wf, []);
@@ -445,6 +448,7 @@ describeChaos("regression chaos probes", () => {
     const wf = createWorkflow({
       id: WORKFLOW_ID,
       kind: "single-task",
+      repoId: "fixture-repo",
       tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
       policy: { maxConcurrent: 1 },
     }, now);

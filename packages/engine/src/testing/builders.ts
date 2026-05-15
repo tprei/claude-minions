@@ -4,11 +4,14 @@ import { transitionTask } from "../application/transitions.js";
 
 export const fixedNow = "2026-05-04T11:19:00.000Z";
 
+export const TEST_REPO_ID = "test-repo";
+
 export function makeThreeNodeWorkflow(): Workflow {
   return createWorkflow(
     {
       id: "workflow-1",
       kind: "manual-dag",
+      repoId: TEST_REPO_ID,
       tasks: [
         {
           id: "backend",

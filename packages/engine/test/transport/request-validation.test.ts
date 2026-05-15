@@ -118,7 +118,7 @@ describe("request shape validation", () => {
   it("POST /workflows missing tasks returns 400 invalid_request with field tasks", async () => {
     const { app } = makeApp();
 
-    const res = await postWorkflow(app, { id: "wf-1", kind: "single-task" });
+    const res = await postWorkflow(app, { id: "wf-1", kind: "single-task", repoId: "fixture-repo" });
 
     expect(res.status).toBe(400);
     const body = await res.json() as { code: string; details: { field: string; expected: string } };
@@ -127,10 +127,42 @@ describe("request shape validation", () => {
     expect(body.details.expected).toBe("array");
   });
 
+  it("POST /workflows missing repoId returns 400 invalid_request with field repoId", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task",
+      tasks: [{ id: "t1", title: "T", prompt: "P" }],
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string; expected: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("repoId");
+    expect(body.details.expected).toBe("non-empty string");
+  });
+
+  it("POST /workflows empty repoId returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task",
+      repoId: "",
+      tasks: [{ id: "t1", title: "T", prompt: "P" }],
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string; expected: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("repoId");
+  });
+
   it("POST /workflows with empty tasks array passes validator and fails with invalid_workflow from domain", async () => {
     const { app } = makeApp();
 
-    const res = await postWorkflow(app, { id: "wf-1", kind: "single-task", tasks: [] });
+    const res = await postWorkflow(app, { id: "wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [] });
 
     expect(res.status).toBe(400);
     const body = await res.json() as { code: string };
@@ -209,8 +241,7 @@ describe("request shape validation", () => {
 
     const res = await postWorkflow(app, {
       id: "wf-1",
-      kind: "single-task",
-      tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
       policy: { autoLand: true },
     });
 
@@ -222,8 +253,7 @@ describe("request shape validation", () => {
 
     const res = await postWorkflow(app, {
       id: "wf-1",
-      kind: "single-task",
-      tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
       policy: { autoMergeOnGreen: true },
     });
 
@@ -235,8 +265,7 @@ describe("request shape validation", () => {
 
     const res = await postWorkflow(app, {
       id: "wf-1",
-      kind: "single-task",
-      tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
       policy: { autoLand: "yes" },
     });
 
@@ -251,8 +280,7 @@ describe("request shape validation", () => {
 
     const res = await postWorkflow(app, {
       id: "wf-1",
-      kind: "single-task",
-      tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
       policy: { autoMergeOnGreen: 1 },
     });
 
@@ -267,8 +295,7 @@ describe("request shape validation", () => {
 
     const res = await postWorkflow(app, {
       id: "wf-1",
-      kind: "single-task",
-      tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
       policy: {},
     });
 

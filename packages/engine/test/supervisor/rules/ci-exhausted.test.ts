@@ -32,7 +32,7 @@ describe("ciExhaustedRule", () => {
     const ctx = makeCtx(fireAlert);
     const repo = ctx.workflowRepo as InMemoryWorkflowRepository;
 
-    const wf = createWorkflow({ id: "wf-1", kind: "single-task", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
+    const wf = createWorkflow({ id: "wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
     const taskNode = wf.graph["t-1"]!;
     const updatedTask = { ...taskNode, executionStatus: "pr-open" as const };
     const updatedWf = { ...wf, graph: { ...wf.graph, "t-1": updatedTask } };
@@ -54,7 +54,7 @@ describe("ciExhaustedRule", () => {
     const ctx = makeCtx(fireAlert);
     const repo = ctx.workflowRepo as InMemoryWorkflowRepository;
 
-    const wf = createWorkflow({ id: "wf-1", kind: "single-task", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
+    const wf = createWorkflow({ id: "wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
     await repo.save(wf, []);
 
     ciExhaustedRule.onLogRecord!(makeCapRecord("t-1", "wf-1"), ctx);
@@ -68,7 +68,7 @@ describe("ciExhaustedRule", () => {
     const ctx = makeCtx(fireAlert);
     const repo = ctx.workflowRepo as InMemoryWorkflowRepository;
 
-    const wf = createWorkflow({ id: "wf-1", kind: "single-task", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
+    const wf = createWorkflow({ id: "wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
     const taskNode = wf.graph["t-1"]!;
     const updatedTask = { ...taskNode, executionStatus: "pr-open" as const };
     const updatedWf = { ...wf, graph: { ...wf.graph, "t-1": updatedTask } };
@@ -86,8 +86,8 @@ describe("ciExhaustedRule", () => {
     const ctx = makeCtx(fireAlert);
     const repo = ctx.workflowRepo as InMemoryWorkflowRepository;
 
-    const wf1 = createWorkflow({ id: "wf-1", kind: "single-task", tasks: [{ id: "build", title: "build", prompt: "build" }] });
-    const wf2 = createWorkflow({ id: "wf-2", kind: "single-task", tasks: [{ id: "build", title: "build", prompt: "build" }] });
+    const wf1 = createWorkflow({ id: "wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "build", title: "build", prompt: "build" }] });
+    const wf2 = createWorkflow({ id: "wf-2", kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "build", title: "build", prompt: "build" }] });
     const taskNodeWf2 = wf2.graph["build"]!;
     const updatedWf2 = { ...wf2, graph: { ...wf2.graph, build: { ...taskNodeWf2, executionStatus: "pr-open" as const } } };
     await repo.save(wf1, []);
@@ -106,7 +106,7 @@ describe("ciExhaustedRule", () => {
     const ctx = makeCtx(fireAlert);
     const repo = ctx.workflowRepo as InMemoryWorkflowRepository;
 
-    const wf = createWorkflow({ id: "wf-1", kind: "single-task", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
+    const wf = createWorkflow({ id: "wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
     const taskNode = wf.graph["t-1"]!;
     const updatedTask = { ...taskNode, executionStatus: "pr-open" as const };
     const updatedWf = { ...wf, graph: { ...wf.graph, "t-1": updatedTask } };

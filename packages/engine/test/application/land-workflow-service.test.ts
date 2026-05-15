@@ -79,6 +79,7 @@ async function buildChainWorkflow(): Promise<InMemoryWorkflowRepository> {
     {
       id: WORKFLOW_ID,
       kind: "manual-dag",
+      repoId: "fixture-repo",
       tasks: [
         { id: "A", title: "A", prompt: "do A" },
         { id: "B", title: "B", prompt: "do B", dependsOn: ["A"] },

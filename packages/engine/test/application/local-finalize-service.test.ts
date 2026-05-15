@@ -16,6 +16,7 @@ async function makeWorkflowInFinalizing(repo: InMemoryWorkflowRepository): Promi
   const wf = createWorkflow({
     id: WORKFLOW_ID,
     kind: "single-task",
+    repoId: "fixture-repo",
     tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
   }, now);
   await repo.save(wf, []);
@@ -46,6 +47,7 @@ describe("complete-without-pr transition", () => {
     let wf = createWorkflow({
       id: WORKFLOW_ID,
       kind: "single-task",
+      repoId: "fixture-repo",
       tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
     }, now);
 
@@ -66,6 +68,7 @@ describe("complete-without-pr transition", () => {
     let wf = createWorkflow({
       id: WORKFLOW_ID,
       kind: "single-task",
+      repoId: "fixture-repo",
       tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
     }, now);
     wf = transitionTask(wf, { kind: "mark-ready", taskId: TASK_ID, now: NOW });
@@ -105,6 +108,7 @@ describe("LocalFinalizeService", () => {
     const wf = createWorkflow({
       id: WORKFLOW_ID,
       kind: "single-task",
+      repoId: "fixture-repo",
       tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
     }, now);
     await repo.save(wf, []);

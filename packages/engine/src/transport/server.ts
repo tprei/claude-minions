@@ -238,8 +238,15 @@ export function createServer(deps: ServerDeps): Hono {
         !(body as Record<string, unknown>)["prompt"]) {
       return c.json({ code: "invalid_request", message: 'field "prompt" is required and must be a non-empty string' }, 400);
     }
+    if (typeof (body as Record<string, unknown>)?.["repoId"] !== "string" ||
+        !(body as Record<string, unknown>)["repoId"]) {
+      return c.json({ code: "invalid_request", message: 'field "repoId" is required and must be a non-empty string' }, 400);
+    }
 
-    const spec = await deps.plannerService.plan({ prompt: (body as Record<string, string>)["prompt"]! });
+    const spec = await deps.plannerService.plan({
+      prompt: (body as Record<string, string>)["prompt"]!,
+      repoId: (body as Record<string, string>)["repoId"]!,
+    });
     return c.json({ spec });
   });
 

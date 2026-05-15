@@ -94,6 +94,7 @@ async function makeWorkflowInFinalizing(
   const wf = createWorkflow({
     id: WORKFLOW_ID,
     kind: "single-task",
+    repoId: "fixture-repo",
     tasks: [{ id: TASK_ID, title: "T", prompt: "P" }],
   }, now);
   await repo.save(wf, []);
