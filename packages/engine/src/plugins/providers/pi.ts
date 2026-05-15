@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   ProviderCapabilities,
   ProviderEvent,
@@ -18,6 +21,7 @@ export interface PiProviderConfig {
 const QUOTA_PATTERN = /quota/i;
 const RATE_PATTERN = /rate/i;
 const LIMIT_PATTERN = /limit/i;
+const DEFAULT_PI_AGENT_DIR = join(homedir(), ".pi", "agent");
 
 function isQuotaSignature(...values: Array<unknown>): boolean {
   for (const value of values) {
@@ -46,8 +50,8 @@ export class PiProvider implements ProviderPlugin {
 
   static readonly DEFAULT_MODEL = "openai-codex/gpt-5.5";
   static readonly DEFAULT_REASONING = "xhigh";
-  static readonly DEFAULT_AGENT_DIR = "/workspace";
-  static readonly DEFAULT_SESSION_DIR = "/workspace/.pi-sessions";
+  static readonly DEFAULT_AGENT_DIR = DEFAULT_PI_AGENT_DIR;
+  static readonly DEFAULT_SESSION_DIR = join(DEFAULT_PI_AGENT_DIR, "sessions", "minions");
   static readonly DEFAULT_TOOLS = "read,write,edit,bash,grep,find,ls";
   static readonly THINK_ALLOWED_TOOLS = "read,grep,find,ls";
 
@@ -91,8 +95,8 @@ USER QUESTION:
   constructor(config: PiProviderConfig = {}) {
     this.model = config.model ?? PiProvider.DEFAULT_MODEL;
     this.reasoning = config.reasoning ?? PiProvider.DEFAULT_REASONING;
-    this.agentDir = config.agentDir ?? PiProvider.DEFAULT_AGENT_DIR;
-    this.sessionDir = config.sessionDir ?? PiProvider.DEFAULT_SESSION_DIR;
+    this.agentDir = config.agentDir ?? process.env["PI_CODING_AGENT_DIR"] ?? PiProvider.DEFAULT_AGENT_DIR;
+    this.sessionDir = config.sessionDir ?? join(this.agentDir, "sessions", "minions");
     this.toolsAllowlist = config.toolsAllowlist ?? PiProvider.DEFAULT_TOOLS;
   }
 
@@ -295,8 +299,36 @@ USER QUESTION:
     }
   }
 
-  loginStatus(): Promise<{ loggedIn: boolean; details?: string }> {
-    return Promise.resolve({ loggedIn: false });
+  async loginStatus(): Promise<{ loggedIn: boolean; details?: string }> {
+    const authPath = join(this.agentDir, "auth.json");
+
+    let raw: string;
+    try {
+      raw = await readFile(authPath, "utf8");
+    } catch {
+      return { loggedIn: false, details: "no auth.json" };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { loggedIn: false, details: "auth.json parse error" };
+    }
+
+    if (parsed === null || typeof parsed !== "object") {
+      return { loggedIn: false, details: "no codex subscription" };
+    }
+
+    const codex = (parsed as Record<string, unknown>)["openai-codex"];
+    if (codex !== null && typeof codex === "object") {
+      const type = (codex as Record<string, unknown>)["type"];
+      if (type === "oauth" || type === "subscription") {
+        return { loggedIn: true, details: "chatgpt-codex" };
+      }
+    }
+
+    return { loggedIn: false, details: "no codex subscription" };
   }
 
   private buildEnv(): Record<string, string> {

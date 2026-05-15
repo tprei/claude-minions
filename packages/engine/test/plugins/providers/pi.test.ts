@@ -1,10 +1,20 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fsp from "node:fs/promises";
+import { join } from "node:path";
 import { PiProvider } from "../../../src/plugins/providers/pi.js";
 import type { ProviderEvent } from "../../../src/plugins/provider-plugin.js";
+
+vi.mock("node:fs/promises", () => ({
+  readFile: vi.fn(),
+}));
 
 function encode(obj: unknown): string {
   return JSON.stringify(obj);
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("PiProvider", () => {
   describe("prepare", () => {
@@ -525,6 +535,77 @@ describe("PiProvider", () => {
       expect(provider.parseFrame(encode({ type: "tool_execution_update", tool_call_id: "tc-1" }))).toEqual([]);
       expect(provider.parseFrame(encode({ type: "agent_start" }))).toEqual([]);
       expect(provider.parseFrame(encode({ type: "message_start" }))).toEqual([]);
+    });
+  });
+
+  describe("loginStatus", () => {
+    it("missing file returns loggedIn false with no auth.json details", async () => {
+      vi.mocked(fsp.readFile).mockRejectedValue(
+        Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" }),
+      );
+
+      const provider = new PiProvider({ agentDir: "/agents/coding" });
+      const result = await provider.loginStatus();
+
+      expect(result).toEqual({ loggedIn: false, details: "no auth.json" });
+      expect(vi.mocked(fsp.readFile)).toHaveBeenCalledWith(
+        join("/agents/coding", "auth.json"),
+        "utf8",
+      );
+    });
+
+    it("parse error returns loggedIn false without leaking raw token content", async () => {
+      vi.mocked(fsp.readFile).mockResolvedValue("{ this is not valid json secret-token-xyz");
+
+      const provider = new PiProvider({ agentDir: "/agents/coding" });
+      const result = await provider.loginStatus();
+
+      expect(result).toEqual({ loggedIn: false, details: "auth.json parse error" });
+      expect(result.details).not.toContain("secret-token-xyz");
+    });
+
+    it("valid file with Codex oauth subscription entry returns loggedIn true", async () => {
+      const auth = {
+        "openai-codex": {
+          type: "oauth",
+          access_token: "sk-super-secret-token-must-not-leak",
+          refresh_token: "rt-super-secret",
+        },
+      };
+      vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify(auth));
+
+      const provider = new PiProvider({ agentDir: "/agents/coding" });
+      const result = await provider.loginStatus();
+
+      expect(result).toEqual({ loggedIn: true, details: "chatgpt-codex" });
+      expect(result.details).not.toContain("sk-super-secret-token-must-not-leak");
+    });
+
+    it("valid file with Codex subscription entry returns loggedIn true", async () => {
+      const auth = {
+        "openai-codex": {
+          type: "subscription",
+        },
+      };
+      vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify(auth));
+
+      const provider = new PiProvider({ agentDir: "/agents/coding" });
+      await expect(provider.loginStatus()).resolves.toEqual({
+        loggedIn: true,
+        details: "chatgpt-codex",
+      });
+    });
+
+    it("valid file without Codex entry returns loggedIn false", async () => {
+      const auth = {
+        "anthropic-claude": { type: "oauth", access_token: "x" },
+      };
+      vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify(auth));
+
+      const provider = new PiProvider({ agentDir: "/agents/coding" });
+      const result = await provider.loginStatus();
+
+      expect(result).toEqual({ loggedIn: false, details: "no codex subscription" });
     });
   });
 });
