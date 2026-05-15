@@ -113,9 +113,14 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
   }
 
   private async validateContainment(candidate: string): Promise<void> {
+    // Multi-repo layout adds a `<repoSlug>/` segment between workspaceRoot and the
+    // per-task dir, so 2 levels deep is legal when a registry is configured. The
+    // single-repo legacy path keeps the original 1-level constraint.
+    const maxDepth = this.registry !== undefined ? 2 : 1;
+
     if (this.dockerMode) {
       // In docker mode the host cannot realpath container-internal paths.
-      // Validate structurally: the candidate must be exactly one level under workspaceRoot.
+      // Validate structurally against workspaceRoot.
       if (!candidate.startsWith(this.workspaceRoot + sep)) {
         throw new WorkspaceError("path_escape", `candidate path escapes workspace root`, {
           candidate,
@@ -123,12 +128,26 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
         });
       }
       const relative = candidate.slice(this.workspaceRoot.length + 1);
-      if (relative.includes(sep) || relative === "" || relative === "." || relative === "..") {
-        throw new WorkspaceError("path_escape", `workspace path must be exactly one level deep`, {
+      if (relative === "" || relative === "." || relative === "..") {
+        throw new WorkspaceError("path_escape", `workspace path must not be empty`, { candidate });
+      }
+      const depth = relative.split(sep).length;
+      if (depth > maxDepth) {
+        throw new WorkspaceError("path_escape", `workspace path exceeds max depth (${maxDepth})`, {
           candidate,
+          depth,
         });
       }
       return;
+    }
+
+    // For multi-repo, the parent (repoSlug subdir) may not exist yet — create it.
+    if (this.registry !== undefined) {
+      try {
+        await access(dirname(candidate));
+      } catch {
+        await mkdir(dirname(candidate), { recursive: true });
+      }
     }
 
     const parentResolved = await realpath(dirname(candidate)).catch(() => null);
@@ -145,9 +164,11 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     }
 
     const relative = resolved.slice(this.workspaceRoot.length + 1);
-    if (relative.includes(sep)) {
-      throw new WorkspaceError("path_escape", `workspace path must be exactly one level deep`, {
+    const depth = relative === "" ? 0 : relative.split(sep).length;
+    if (depth > maxDepth) {
+      throw new WorkspaceError("path_escape", `workspace path exceeds max depth (${maxDepth})`, {
         candidate,
+        depth,
       });
     }
   }
