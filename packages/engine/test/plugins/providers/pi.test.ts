@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { PiProvider } from "../../../src/plugins/providers/pi.js";
 import type { ProviderEvent } from "../../../src/plugins/provider-plugin.js";
 
@@ -7,6 +7,268 @@ function encode(obj: unknown): string {
 }
 
 describe("PiProvider", () => {
+  describe("prepare", () => {
+    it("returns normal-mode argv in the documented order", async () => {
+      const provider = new PiProvider({
+        agentDir: "/agents/coding",
+        sessionDir: "/sessions/pi",
+      });
+
+      const inv = await provider.prepare({
+        taskId: "t1",
+        workflowId: "wf1",
+        prompt: "fix the bug",
+        dependencyArtifacts: [],
+      });
+
+      expect(inv.providerType).toBe("pi");
+      const cmd = inv.command;
+      expect(cmd[0]).toBe("pi");
+      expect(cmd.slice(1, 4)).toEqual(["--mode", "json", "-p"]);
+      expect(cmd.slice(4, 6)).toEqual(["--provider", "openai-codex"]);
+      expect(cmd.slice(6, 8)).toEqual(["--model", PiProvider.DEFAULT_MODEL]);
+      expect(cmd.slice(8, 10)).toEqual(["--thinking", PiProvider.DEFAULT_REASONING]);
+      expect(cmd[10]).toBe("--no-context-files");
+      expect(cmd.slice(11, 13)).toEqual(["--tools", PiProvider.DEFAULT_TOOLS]);
+      expect(cmd.slice(13, 15)).toEqual(["--session-dir", "/sessions/pi"]);
+
+      const finalArg = cmd[cmd.length - 1]!;
+      expect(finalArg.startsWith(PiProvider.COMMIT_PREAMBLE)).toBe(true);
+      expect(finalArg.endsWith("fix the bug")).toBe(true);
+      expect(cmd).toHaveLength(16);
+    });
+
+    it("think-thread swaps preamble to THINK and restricts tools", async () => {
+      const provider = new PiProvider({
+        agentDir: "/agents/coding",
+        sessionDir: "/sessions/pi",
+      });
+
+      const inv = await provider.prepare({
+        taskId: "t1",
+        workflowId: "wf1",
+        prompt: "why does feature X exist",
+        dependencyArtifacts: [],
+        workflowKind: "think-thread",
+      });
+
+      const cmd = inv.command;
+      const toolsIdx = cmd.indexOf("--tools");
+      expect(toolsIdx).toBeGreaterThan(-1);
+      const tools = new Set(cmd[toolsIdx + 1]!.split(","));
+      expect(tools.has("read")).toBe(true);
+      expect(tools.has("grep")).toBe(true);
+      expect(tools.has("find")).toBe(true);
+      expect(tools.has("ls")).toBe(true);
+      expect(tools.has("write")).toBe(false);
+      expect(tools.has("edit")).toBe(false);
+      expect(tools.has("bash")).toBe(false);
+
+      const finalArg = cmd[cmd.length - 1]!;
+      expect(finalArg.startsWith(PiProvider.THINK_PREAMBLE)).toBe(true);
+      expect(finalArg).toContain("why does feature X exist");
+      expect(finalArg).not.toContain("git add -A");
+    });
+
+    it("env block contains PI_CODING_AGENT_DIR, PI_OFFLINE, PI_SKIP_VERSION_CHECK", async () => {
+      const provider = new PiProvider({
+        agentDir: "/agents/coding",
+        sessionDir: "/sessions/pi",
+      });
+
+      const inv = await provider.prepare({
+        taskId: "t1",
+        workflowId: "wf1",
+        prompt: "do work",
+        dependencyArtifacts: [],
+      });
+
+      expect(inv.env).toEqual({
+        PI_CODING_AGENT_DIR: "/agents/coding",
+        PI_OFFLINE: "1",
+        PI_SKIP_VERSION_CHECK: "1",
+      });
+    });
+
+    it("never injects --api-key", async () => {
+      const provider = new PiProvider({ agentDir: "/a", sessionDir: "/s" });
+      const inv = await provider.prepare({
+        taskId: "t1",
+        workflowId: "wf1",
+        prompt: "do work",
+        dependencyArtifacts: [],
+      });
+      expect(inv.command).not.toContain("--api-key");
+    });
+
+    describe("OPENAI_API_KEY passthrough gate", () => {
+      const savedPassthrough = process.env["MWF_PI_API_KEY_PASSTHROUGH"];
+      const savedKey = process.env["OPENAI_API_KEY"];
+
+      afterEach(() => {
+        if (savedPassthrough === undefined) delete process.env["MWF_PI_API_KEY_PASSTHROUGH"];
+        else process.env["MWF_PI_API_KEY_PASSTHROUGH"] = savedPassthrough;
+        if (savedKey === undefined) delete process.env["OPENAI_API_KEY"];
+        else process.env["OPENAI_API_KEY"] = savedKey;
+      });
+
+      it("does not forward OPENAI_API_KEY when MWF_PI_API_KEY_PASSTHROUGH is unset", async () => {
+        delete process.env["MWF_PI_API_KEY_PASSTHROUGH"];
+        process.env["OPENAI_API_KEY"] = "sk-leak";
+
+        const provider = new PiProvider({ agentDir: "/a", sessionDir: "/s" });
+        const inv = await provider.prepare({
+          taskId: "t1",
+          workflowId: "wf1",
+          prompt: "do work",
+          dependencyArtifacts: [],
+        });
+
+        expect(inv.env).not.toHaveProperty("OPENAI_API_KEY");
+      });
+
+      it("forwards OPENAI_API_KEY only when MWF_PI_API_KEY_PASSTHROUGH=1", async () => {
+        process.env["MWF_PI_API_KEY_PASSTHROUGH"] = "1";
+        process.env["OPENAI_API_KEY"] = "sk-passthrough";
+
+        const provider = new PiProvider({ agentDir: "/a", sessionDir: "/s" });
+        const inv = await provider.prepare({
+          taskId: "t1",
+          workflowId: "wf1",
+          prompt: "do work",
+          dependencyArtifacts: [],
+        });
+
+        expect(inv.env?.["OPENAI_API_KEY"]).toBe("sk-passthrough");
+      });
+
+      it("does not forward OPENAI_API_KEY when MWF_PI_API_KEY_PASSTHROUGH has any other value", async () => {
+        process.env["MWF_PI_API_KEY_PASSTHROUGH"] = "true";
+        process.env["OPENAI_API_KEY"] = "sk-leak";
+
+        const provider = new PiProvider({ agentDir: "/a", sessionDir: "/s" });
+        const inv = await provider.prepare({
+          taskId: "t1",
+          workflowId: "wf1",
+          prompt: "do work",
+          dependencyArtifacts: [],
+        });
+
+        expect(inv.env).not.toHaveProperty("OPENAI_API_KEY");
+      });
+    });
+
+    it("custom config overrides propagate", async () => {
+      const provider = new PiProvider({
+        model: "openai-codex/o1-preview",
+        reasoning: "low",
+        agentDir: "/custom/agent",
+        sessionDir: "/custom/sessions",
+        toolsAllowlist: "read,grep",
+      });
+
+      const inv = await provider.prepare({
+        taskId: "t1",
+        workflowId: "wf1",
+        prompt: "go",
+        dependencyArtifacts: [],
+      });
+
+      const cmd = inv.command;
+      expect(cmd[cmd.indexOf("--model") + 1]).toBe("openai-codex/o1-preview");
+      expect(cmd[cmd.indexOf("--thinking") + 1]).toBe("low");
+      expect(cmd[cmd.indexOf("--tools") + 1]).toBe("read,grep");
+      expect(cmd[cmd.indexOf("--session-dir") + 1]).toBe("/custom/sessions");
+      expect(inv.env?.["PI_CODING_AGENT_DIR"]).toBe("/custom/agent");
+    });
+
+    it("throws on empty prompt", async () => {
+      const provider = new PiProvider();
+      await expect(
+        provider.prepare({ taskId: "t1", workflowId: "wf1", prompt: "", dependencyArtifacts: [] }),
+      ).rejects.toThrow("prompt must be non-empty");
+    });
+
+    it("throws on whitespace-only prompt", async () => {
+      const provider = new PiProvider();
+      await expect(
+        provider.prepare({ taskId: "t1", workflowId: "wf1", prompt: "   \t\n", dependencyArtifacts: [] }),
+      ).rejects.toThrow("prompt must be non-empty");
+    });
+  });
+
+  describe("resume", () => {
+    it("inserts --session and preserves model/reasoning/tools/session-dir args and the preamble from prepare", async () => {
+      const provider = new PiProvider({
+        agentDir: "/agents/coding",
+        sessionDir: "/sessions/pi",
+      });
+
+      const prep = await provider.prepare({
+        taskId: "t1",
+        workflowId: "wf1",
+        prompt: "first turn",
+        dependencyArtifacts: [],
+      });
+      const res = await provider.resume({
+        taskId: "t1",
+        workflowId: "wf1",
+        sessionRef: "sess-abc",
+        prompt: "second turn",
+      });
+
+      expect(res.providerType).toBe("pi");
+      expect(res.command).toContain("--session");
+      const sessionIdx = res.command.indexOf("--session");
+      expect(res.command[sessionIdx + 1]).toBe("sess-abc");
+
+      const sharedFlags = ["--mode", "json", "-p", "--provider", "openai-codex", "--no-context-files"];
+      for (const flag of sharedFlags) {
+        expect(res.command).toContain(flag);
+      }
+      expect(res.command[res.command.indexOf("--model") + 1]).toBe(prep.command[prep.command.indexOf("--model") + 1]);
+      expect(res.command[res.command.indexOf("--thinking") + 1]).toBe(prep.command[prep.command.indexOf("--thinking") + 1]);
+      expect(res.command[res.command.indexOf("--tools") + 1]).toBe(prep.command[prep.command.indexOf("--tools") + 1]);
+      expect(res.command[res.command.indexOf("--session-dir") + 1]).toBe(prep.command[prep.command.indexOf("--session-dir") + 1]);
+
+      const finalArg = res.command[res.command.length - 1]!;
+      expect(finalArg.startsWith(PiProvider.COMMIT_PREAMBLE)).toBe(true);
+      expect(finalArg.endsWith("second turn")).toBe(true);
+
+      expect(res.env).toEqual(prep.env);
+    });
+
+    it("think-thread resume uses THINK preamble and restricted tools", async () => {
+      const provider = new PiProvider({ agentDir: "/a", sessionDir: "/s" });
+      const res = await provider.resume({
+        taskId: "t1",
+        workflowId: "wf1",
+        sessionRef: "sess-xyz",
+        prompt: "follow up",
+        workflowKind: "think-thread",
+      });
+
+      expect(res.command[res.command.indexOf("--tools") + 1]).toBe(PiProvider.THINK_ALLOWED_TOOLS);
+      const finalArg = res.command[res.command.length - 1]!;
+      expect(finalArg.startsWith(PiProvider.THINK_PREAMBLE)).toBe(true);
+      expect(finalArg.endsWith("follow up")).toBe(true);
+    });
+
+    it("throws on empty prompt", async () => {
+      const provider = new PiProvider();
+      await expect(
+        provider.resume({ taskId: "t1", workflowId: "wf1", sessionRef: "s", prompt: "" }),
+      ).rejects.toThrow("prompt must be non-empty");
+    });
+
+    it("throws on whitespace-only prompt", async () => {
+      const provider = new PiProvider();
+      await expect(
+        provider.resume({ taskId: "t1", workflowId: "wf1", sessionRef: "s", prompt: "  " }),
+      ).rejects.toThrow("prompt must be non-empty");
+    });
+  });
+
   describe("parseFrame", () => {
     it("standard transcript: session → agent_start → turn_start → message_update text → tool_execution_start/end → turn_end → agent_end", () => {
       const provider = new PiProvider();
