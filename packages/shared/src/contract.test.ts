@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import type { DoctorCheckName } from "./doctor.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const SHARED_SRC_DIR = path.dirname(__filename);
@@ -49,6 +50,31 @@ describe("shared/index.ts public surface", () => {
       [],
       `index.ts exports stale pre-port modules: ${stale.join(", ")}.`,
     );
+  });
+});
+
+describe("DoctorCheckName surface", () => {
+  it("includes every doctor check the engine emits, including the pi-specific ones", () => {
+    const expected: DoctorCheckName[] = [
+      "sqlite-wal",
+      "sqlite-busy-timeout",
+      "repo-state",
+      "worktree-health",
+      "tmux-runtime",
+      "github-auth",
+      "disk-free",
+      "dependency-cache",
+      "push-config",
+      "pi-version",
+      "pi-auth",
+    ];
+    const doctorSrc = readFileSync(path.join(SHARED_SRC_DIR, "doctor.ts"), "utf8");
+    for (const name of expected) {
+      assert.ok(
+        doctorSrc.includes(`"${name}"`),
+        `doctor.ts is missing DoctorCheckName literal "${name}"`,
+      );
+    }
   });
 });
 

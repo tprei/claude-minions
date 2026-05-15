@@ -1,6 +1,8 @@
 import type { Hono } from "hono";
 import { dirname, basename, join, isAbsolute, resolve, relative } from "node:path";
 import { statfs } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { PiProvider } from "./plugins/providers/pi.js";
 import { runBootRecovery } from "./application/boot.js";
 import type { BootRecoveryReport, BootRespawnContext } from "./application/boot.js";
 import type { SCMPlugin } from "./plugins/scm-plugin.js";
@@ -549,6 +551,8 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       now,
     };
     if (config.repoPath !== undefined) input.repoPath = config.repoPath;
+    const providerName = config.providerName ?? process.env["MWF_PROVIDER"];
+    if (providerName !== undefined) input.providerName = providerName.toLowerCase();
     return buildDoctorReport(input);
   };
   serverDeps.metrics = () => {
@@ -643,7 +647,75 @@ function buildPluginSet(input: {
   ];
 }
 
-async function buildDoctorReport(input: {
+interface PiProbeResult {
+  status: DoctorStatus;
+  detail: string;
+}
+
+const PI_VERSION_TIMEOUT_MS = 5000;
+const PI_MIN_VERSION: readonly [number, number, number] = [0, 70, 0];
+
+function compareSemver(a: readonly [number, number, number], b: readonly [number, number, number]): number {
+  if (a[0] !== b[0]) return a[0] - b[0];
+  if (a[1] !== b[1]) return a[1] - b[1];
+  return a[2] - b[2];
+}
+
+function parseSemver(text: string): [number, number, number] | undefined {
+  const match = text.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (match === null) return undefined;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+export async function defaultPiVersionProbe(): Promise<PiProbeResult> {
+  return await new Promise<PiProbeResult>((resolvePromise) => {
+    let stdout = "";
+    let settled = false;
+    const child = spawn("pi", ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      resolvePromise({ status: "error", detail: `pi --version timed out after ${PI_VERSION_TIMEOUT_MS}ms` });
+    }, PI_VERSION_TIMEOUT_MS);
+    timer.unref?.();
+    child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+    child.on("error", (err: NodeJS.ErrnoException) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const detail = err.code === "ENOENT" ? "pi not on PATH" : err.message;
+      resolvePromise({ status: "error", detail });
+    });
+    child.on("close", (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) {
+        resolvePromise({ status: "error", detail: `pi --version exited with code ${code ?? "unknown"}` });
+        return;
+      }
+      const version = parseSemver(stdout);
+      if (version === undefined) {
+        resolvePromise({ status: "error", detail: `could not parse semver from "${stdout.trim()}"` });
+        return;
+      }
+      const detail = version.join(".");
+      const status: DoctorStatus = compareSemver(version, PI_MIN_VERSION) >= 0 ? "ok" : "degraded";
+      resolvePromise({ status, detail });
+    });
+  });
+}
+
+export async function defaultPiAuthProbe(): Promise<PiProbeResult> {
+  const provider = new PiProvider();
+  const result = await provider.loginStatus();
+  if (result.details === "no auth.json") return { status: "error", detail: "no auth.json" };
+  if (result.loggedIn) return { status: "ok", detail: result.details ?? "codex subscription present" };
+  return { status: "degraded", detail: result.details ?? "no codex subscription" };
+}
+
+export async function buildDoctorReport(input: {
   repo: WorkflowRepository;
   dbPath: string;
   dataDir: string;
@@ -654,6 +726,9 @@ async function buildDoctorReport(input: {
   githubTokenPresent: boolean;
   pushEnabled: boolean;
   now: () => string;
+  providerName?: string;
+  piVersionProbe?: () => Promise<PiProbeResult>;
+  piAuthProbe?: () => Promise<PiProbeResult>;
 }): Promise<{ status: DoctorStatus; checks: DoctorCheck[]; checkedAt: string }> {
   const checkedAt = input.now();
   const checks: DoctorCheck[] = [];
@@ -695,6 +770,17 @@ async function buildDoctorReport(input: {
       : { name: "disk-free", status: "error", detail: `${freeBytes}` });
   } catch (err) {
     add({ name: "disk-free", status: "error", detail: (err as Error).message });
+  }
+
+  if (input.providerName === "pi") {
+    const versionProbe = input.piVersionProbe ?? defaultPiVersionProbe;
+    const authProbe = input.piAuthProbe ?? defaultPiAuthProbe;
+    const [versionResult, authResult] = await Promise.all([
+      versionProbe().catch((err: unknown) => ({ status: "error" as DoctorStatus, detail: (err as Error).message })),
+      authProbe().catch((err: unknown) => ({ status: "error" as DoctorStatus, detail: (err as Error).message })),
+    ]);
+    add({ name: "pi-version", status: versionResult.status, detail: versionResult.detail });
+    add({ name: "pi-auth", status: authResult.status, detail: authResult.detail });
   }
 
   const status: DoctorStatus = checks.some((check) => check.status === "error")
