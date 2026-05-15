@@ -12,6 +12,15 @@ import type { WorkflowRepository } from "./repository.js";
 import type { ContinueTaskService } from "./continue-task-service.js";
 import { MergeAbortedError, MergeConflictError, MergeService, MergeServiceError } from "./merge-service.js";
 import type { Logger } from "../observability/logger.js";
+import type { RepoRegistry } from "./repo-registry.js";
+
+function requireGithubCoords(registry: RepoRegistry, repoId: string): { owner: string; repo: string } {
+  const binding = registry.require(repoId);
+  if (!binding.github) {
+    throw new Error(`repo ${binding.id} has no github coords`);
+  }
+  return binding.github;
+}
 
 export interface PollCadenceInterval {
   afterMs: number;
@@ -105,7 +114,7 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 export interface CIBabysitterServiceDeps {
   workflowRepo: WorkflowRepository;
   github: GitHubClient;
-  repoCoords: { owner: string; repo: string };
+  repoRegistry: RepoRegistry;
   applyCommand: (cmd: Command) => Promise<CommandResult>;
   continueTaskService: ContinueTaskService;
   mergeService?: MergeService;
@@ -234,10 +243,11 @@ export class CIBabysitterService {
   }
 
   private async pollPR(workflowId: string, taskId: string, signal: AbortSignal): Promise<void> {
-    const { workflowRepo, github, repoCoords, applyCommand, continueTaskService, now } = this.deps;
+    const { workflowRepo, github, repoRegistry, applyCommand, continueTaskService, now } = this.deps;
 
     const workflow = await workflowRepo.get(workflowId);
     if (!workflow) return;
+    const repoCoords = requireGithubCoords(repoRegistry, workflow.repoId);
 
     const task = workflow.graph[taskId];
     if (!task || task.executionStatus !== "pr-open") return;

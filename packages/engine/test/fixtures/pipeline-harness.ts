@@ -94,13 +94,24 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<PipelineHa
   });
   const workspace = new CountingWorkspaceBackend(innerWorkspace);
 
+  const fixtureRepoRemote = opts.scm !== undefined ? "https://github.com/fake/fake.git" : undefined;
+  const repos = [
+    {
+      id: "fixture-repo",
+      label: "fixture-repo",
+      localPath: repoPath,
+      defaultBranch: "main",
+      ...(fixtureRepoRemote ? { remote: fixtureRepoRemote } : {}),
+    },
+  ];
   const config: EngineConfig = {
     dbPath,
+    repos,
     workspace,
     log: silentLogger(),
     ...(opts.now !== undefined ? { now: opts.now } : {}),
     ...(opts.runtime !== undefined ? { runtime: opts.runtime } : {}),
-    ...(opts.scm !== undefined ? { scm: opts.scm, githubRepo: { owner: "fake", repo: "fake" } } : {}),
+    ...(opts.scm !== undefined ? { scm: opts.scm } : {}),
     ...(opts.githubClient !== undefined ? { githubClient: opts.githubClient } : {}),
     ...(opts.ciBabysitterCadence !== undefined ? { ciBabysitterCadence: opts.ciBabysitterCadence } : {}),
     ...(opts.providerFactory !== undefined ? { providerFactory: opts.providerFactory } : {}),

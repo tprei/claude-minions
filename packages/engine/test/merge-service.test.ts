@@ -9,11 +9,17 @@ import type { Command } from "../src/application/commands.js";
 import type { SCMPlugin, MergeResult, MergeOutcome } from "../src/plugins/scm-plugin.js";
 import type { WorkspaceBackend, WorkspaceHandle } from "../src/plugins/workspace-backend.js";
 import type { WorkflowEvent } from "../src/domain/events.js";
+import { buildRepoRegistry } from "../src/application/repo-registry.js";
 
 const now = "2026-05-06T10:00:00.000Z";
 
+const TEST_REGISTRY = buildRepoRegistry(
+  [{ id: "fixture-repo", label: "fixture-repo", remote: "https://github.com/o/r.git", defaultBranch: "main", localPath: "/tmp/fixture-repo" }],
+  { reposRoot: "/tmp" },
+);
+
 function makeHandle(): WorkspaceHandle {
-  return { workspaceId: "ws-1", mode: "worktree", path: "/tmp/workspace", containerPath: "/tmp/workspace", branch: "minions/test" };
+  return { workspaceId: "ws-1", repoId: "fixture-repo", mode: "worktree", path: "/tmp/workspace", containerPath: "/tmp/workspace", branch: "minions/test" };
 }
 
 function makeScm(overrides: Partial<SCMPlugin> = {}): SCMPlugin {
@@ -69,9 +75,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -115,9 +120,8 @@ describe("MergeService", () => {
       applyCommand: applyCommandSpy,
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -144,9 +148,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -173,9 +176,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -199,9 +201,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm: makeScm(),
       workspace: makeWorkspace(),
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -222,9 +223,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -251,9 +251,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -277,9 +276,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -306,9 +304,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -329,9 +326,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -353,9 +349,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -375,9 +370,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -399,9 +393,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm: makeScm(),
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -419,9 +412,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -445,9 +437,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -475,9 +466,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -512,9 +502,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -534,9 +523,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -556,9 +544,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -584,9 +571,8 @@ describe("MergeService", () => {
       applyCommand: applyCommandSpy,
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -616,9 +602,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -650,9 +635,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -676,9 +660,8 @@ describe("MergeService", () => {
       applyCommand: (cmd) => applyCommand(repo, cmd),
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -704,9 +687,8 @@ describe("MergeService", () => {
       applyCommand: applyCommandSpy,
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 
@@ -738,9 +720,8 @@ describe("MergeService", () => {
       applyCommand: applyCommandSpy,
       scm,
       workspace,
-      repoCoords: { owner: "o", repo: "r" },
-      baseBranch: "main",
-      now: () => now,
+      repoRegistry: TEST_REGISTRY,
+            now: () => now,
       log: silentLogger(),
     });
 

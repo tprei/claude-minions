@@ -35,6 +35,7 @@ describe("Supervisor integration", () => {
     sender = new CapturingSender();
     engine = await createEngine({
       dbPath,
+      repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }],
       vapid: VAPID,
       pushSender: sender,
       scanIntervalMs: 10_000,

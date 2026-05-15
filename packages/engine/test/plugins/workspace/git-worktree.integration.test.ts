@@ -38,7 +38,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeWorkspaceBackend integration", () => {
 
       const handle = await backend.create({
         workflowId: "wf-1",
-        taskId: "task-1",
+        taskId: "task-1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
       });
@@ -83,7 +83,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeWorkspaceBackend integration", () => {
       // First create: simulates initial run (branch created fresh)
       const h1 = await backend.create({
         workflowId: "wf-1",
-        taskId: "task-1",
+        taskId: "task-1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
         resetBranch: false,
@@ -99,7 +99,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeWorkspaceBackend integration", () => {
       // Second create: continue-task — resetBranch: false must check out the existing branch
       const h2 = await backend.create({
         workflowId: "wf-1",
-        taskId: "task-1",
+        taskId: "task-1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
         resetBranch: false,
@@ -136,7 +136,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeWorkspaceBackend integration", () => {
 
       const h1 = await backend.create({
         workflowId: "wf-1",
-        taskId: "task-1",
+        taskId: "task-1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
         resetBranch: false,
@@ -148,7 +148,7 @@ describe.skipIf(!HAS_GIT)("GitWorktreeWorkspaceBackend integration", () => {
       // Retry: resetBranch: true resets the branch back to HEAD
       const h2 = await backend.create({
         workflowId: "wf-1",
-        taskId: "task-1",
+        taskId: "task-1", repoId: "fixture-repo",
         branch: "minions/wf1_task1",
         mode: "worktree",
         resetBranch: true,
@@ -180,8 +180,8 @@ describe.skipIf(!HAS_GIT)("GitWorktreeWorkspaceBackend integration", () => {
       });
 
       const [h1, h2] = await Promise.all([
-        backend.create({ workflowId: "wf-1", taskId: "task-1", branch: "minions/wf1_task1", mode: "worktree" }),
-        backend.create({ workflowId: "wf-2", taskId: "task-2", branch: "minions/wf2_task2", mode: "worktree" }),
+        backend.create({ workflowId: "wf-1", taskId: "task-1", repoId: "fixture-repo", branch: "minions/wf1_task1", mode: "worktree" }),
+        backend.create({ workflowId: "wf-2", taskId: "task-2", repoId: "fixture-repo", branch: "minions/wf2_task2", mode: "worktree" }),
       ]);
 
       expect(h1.path).not.toBe(h2.path);

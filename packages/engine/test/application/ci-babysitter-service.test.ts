@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { CIBabysitterService } from "../../src/application/ci-babysitter-service.js";
 import { silentLogger } from "../test-helpers.js";
+import { buildRepoRegistry } from "../../src/application/repo-registry.js";
+
+const TEST_REGISTRY = buildRepoRegistry([{ id: "fixture-repo", label: "fixture-repo", remote: "https://github.com/o/r.git", localPath: "/tmp/fixture-repo" }], { reposRoot: "/tmp" });
+
 import { createLogger } from "../../src/observability/logger.js";
 import type { Sink } from "../../src/observability/sinks.js";
 import type { LogRecord } from "../../src/observability/types.js";
@@ -23,8 +27,6 @@ const now = () => NOW;
 
 const TASK_ID = "wf-1:task";
 const WORKFLOW_ID = "wf-1";
-const OWNER = "acme";
-const REPO = "app";
 const HEAD_SHA = "abc123";
 const PR_URL = "https://github.com/acme/app/pull/42";
 const PR_NUMBER = 42;
@@ -129,7 +131,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -164,7 +166,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: applyCommandSpy,
       continueTaskService,
       signal: ctrl.signal,
@@ -208,7 +210,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: applyCommandSpy,
       continueTaskService,
       signal: ctrl.signal,
@@ -267,7 +269,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: applyCommandSpy,
       continueTaskService,
       signal: ctrl.signal,
@@ -312,7 +314,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -359,7 +361,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -401,7 +403,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -441,7 +443,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -476,7 +478,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -533,7 +535,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -582,7 +584,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -616,7 +618,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -674,7 +676,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -732,7 +734,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: applyCommandSpy,
       continueTaskService,
       signal: ctrl.signal,
@@ -790,7 +792,7 @@ describe("CIBabysitterService", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,
@@ -871,7 +873,7 @@ describe("CIBabysitterService autoMerge", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       mergeService,
@@ -907,7 +909,7 @@ describe("CIBabysitterService autoMerge", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       mergeService,
@@ -945,7 +947,7 @@ describe("CIBabysitterService autoMerge", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       mergeService,
@@ -985,7 +987,7 @@ describe("CIBabysitterService autoMerge", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       mergeService,
@@ -1025,7 +1027,7 @@ describe("CIBabysitterService autoMerge", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       mergeService,
@@ -1062,7 +1064,7 @@ describe("CIBabysitterService autoMerge", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       mergeService,
@@ -1104,7 +1106,7 @@ describe("CIBabysitterService autoMerge", () => {
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github,
-      repoCoords: { owner: OWNER, repo: REPO },
+      repoRegistry: TEST_REGISTRY,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService,
       signal: ctrl.signal,

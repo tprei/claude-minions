@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createEngine } from "../../src/engine.js";
+import { buildRepoRegistry } from "../../src/application/repo-registry.js";
 import { runBootRecovery } from "../../src/application/boot.js";
 import { CompletionDispatcher } from "../../src/application/completion-dispatcher.js";
 import { CIBabysitterService } from "../../src/application/ci-babysitter-service.js";
@@ -231,10 +232,14 @@ describeChaos("regression chaos probes", () => {
     const listCheckRuns = vi.fn().mockResolvedValue([
       { name: "ci", status: "completed", conclusion: "success" } satisfies GhCheckRun,
     ]);
+    const chaosRegistry = buildRepoRegistry(
+      [{ id: "fixture-repo", label: "fixture-repo", remote: "https://github.com/acme/app.git", localPath: "/tmp/fixture-repo" }],
+      { reposRoot: "/tmp" },
+    );
     const service = new CIBabysitterService({
       workflowRepo: repo,
       github: makeGithub({ listCheckRuns }),
-      repoCoords: { owner: "acme", repo: "app" },
+      repoRegistry: chaosRegistry,
       applyCommand: (cmd) => applyCommand(repo, cmd),
       continueTaskService: { run: vi.fn().mockResolvedValue({ workflow: null, events: [] } as unknown as CommandResult) } as never,
       signal: ctrl.signal,
@@ -254,8 +259,10 @@ describeChaos("regression chaos probes", () => {
   it("two engines sharing one SQLite path start and close without corrupting state", async () => {
     const dir = await mkdtemp(join(tmpdir(), "mwf-two-engine-"));
     const dbPath = join(dir, "engine.db");
+    const chaosTwoEngineRepos = [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }];
     const engine1 = await createEngine({
       dbPath,
+      repos: chaosTwoEngineRepos,
       executor: new NoopRestackExecutor(),
       runtime: new StubRuntimeBackend(),
       recoveryScanIntervalMs: 0,
@@ -263,6 +270,7 @@ describeChaos("regression chaos probes", () => {
     });
     const engine2 = await createEngine({
       dbPath,
+      repos: chaosTwoEngineRepos,
       executor: new NoopRestackExecutor(),
       runtime: new StubRuntimeBackend(),
       recoveryScanIntervalMs: 0,
@@ -410,7 +418,7 @@ describeChaos("regression chaos probes", () => {
 
     const startedAt = Date.now();
     await expect(
-      backend.create({ workflowId: "wf-timeout", taskId: "task-timeout", branch: "b", mode: "worktree" }),
+      backend.create({ workflowId: "wf-timeout", taskId: "task-timeout", repoId: "fixture-repo", branch: "b", mode: "worktree" }),
     ).rejects.toMatchObject({ code: "lock_timeout" });
     expect(Date.now() - startedAt).toBeLessThan(1_000);
     await rm(dir, { recursive: true, force: true });
@@ -434,10 +442,10 @@ describeChaos("regression chaos probes", () => {
     });
 
     await expect(
-      backend.create({ workflowId: "wf-stuck", taskId: "task-stuck", branch: "b1", mode: "worktree" }),
+      backend.create({ workflowId: "wf-stuck", taskId: "task-stuck", repoId: "fixture-repo", branch: "b1", mode: "worktree" }),
     ).rejects.toMatchObject({ code: "lock_timeout" });
     await expect(
-      backend.create({ workflowId: "wf-next", taskId: "task-next", branch: "b2", mode: "worktree" }),
+      backend.create({ workflowId: "wf-next", taskId: "task-next", repoId: "fixture-repo", branch: "b2", mode: "worktree" }),
     ).resolves.toMatchObject({ workspaceId: expect.stringContaining("ws-") });
     expect(worktreeAdd).toHaveBeenCalledTimes(2);
     await rm(dir, { recursive: true, force: true });

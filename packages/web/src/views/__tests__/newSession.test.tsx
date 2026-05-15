@@ -97,7 +97,7 @@ function makeVersionInfo(): VersionInfo {
     featuresPending: [],
     provider: "test",
     providers: ["test"],
-    repos: [],
+    repos: [{ id: "fixture-repo", label: "fixture-repo", defaultBranch: "main" }],
     pluginSet: [],
     startedAt: new Date().toISOString(),
   };

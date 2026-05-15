@@ -137,6 +137,7 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
       const handle = await harness.workspace.create({
         workflowId: wfId,
         taskId,
+        repoId: "fixture-repo",
         branch,
         mode: "worktree",
       });
@@ -363,7 +364,7 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
       const backendBranch = `minions/${slugify(wfId)}_${slugify("backend")}`;
       const backendHandle = await harness.workspace.create({
         workflowId: wfId,
-        taskId: "backend",
+        taskId: "backend", repoId: "fixture-repo",
         branch: backendBranch,
         mode: "worktree",
       });
@@ -390,7 +391,7 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
       const frontendBranch = `minions/${slugify(wfId)}_${slugify("frontend")}`;
       const frontendHandle = await harness.workspace.create({
         workflowId: wfId,
-        taskId: "frontend",
+        taskId: "frontend", repoId: "fixture-repo",
         branch: frontendBranch,
         mode: "worktree",
       });
@@ -505,6 +506,7 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
           const handle = await harness.workspace.create({
             workflowId: wfId,
             taskId,
+            repoId: "fixture-repo",
             branch,
             mode: "worktree",
           });

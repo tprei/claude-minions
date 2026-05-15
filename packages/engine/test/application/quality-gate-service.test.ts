@@ -20,7 +20,7 @@ function makeRepo() {
 }
 
 function makeHandle(workspaceId = WORKSPACE_ID): WorkspaceHandle {
-  return { workspaceId, mode: "worktree", path: "/workspace", containerPath: "/workspace", branch: "b" };
+  return { workspaceId, repoId: "fixture-repo", mode: "worktree", path: "/workspace", containerPath: "/workspace", branch: "b" };
 }
 
 function makeWorkspace(handle?: WorkspaceHandle): WorkspaceBackend {

@@ -1,12 +1,13 @@
 import { DomainError } from "../domain/errors.js";
 import type { WorkflowEvent, MergePhase } from "../domain/events.js";
-import type { Artifact } from "../domain/types.js";
+import type { Artifact, Workflow } from "../domain/types.js";
 import type { PullRequestRef, SCMPlugin } from "../plugins/scm-plugin.js";
 import type { WorkspaceBackend } from "../plugins/workspace-backend.js";
 import { slugify } from "../plugins/workspace-backend.js";
 import type { Command, CommandResult } from "./commands.js";
 import type { WorkflowRepository } from "./repository.js";
 import type { Logger } from "../observability/logger.js";
+import type { RepoRegistry, ResolvedRepoBinding } from "./repo-registry.js";
 
 export class MergeServiceError extends Error {
   readonly code: string;
@@ -44,8 +45,7 @@ export interface MergeServiceDeps {
   applyCommand: (cmd: Command) => Promise<CommandResult>;
   scm: SCMPlugin;
   workspace: WorkspaceBackend;
-  repoCoords: { owner: string; repo: string };
-  baseBranch: string;
+  repoRegistry: RepoRegistry;
   now: () => string;
   log: Logger;
 }
@@ -186,11 +186,19 @@ export class MergeService {
     return this.finalizeMerge(opts, prRef, mergedSha);
   }
 
+  private resolveCoords(workflow: Workflow): { owner: string; repo: string; baseBranch: string; binding: ResolvedRepoBinding } {
+    const binding = this.deps.repoRegistry.require(workflow.repoId);
+    if (!binding.github) {
+      throw new DomainError("invalid_workflow", `repo ${binding.id} has no github coords`, { repoId: binding.id });
+    }
+    return { owner: binding.github.owner, repo: binding.github.repo, baseBranch: binding.defaultBranch, binding };
+  }
+
   private async runUntilOpen(
     opts: MergeInput,
     setHandle: (h: Awaited<ReturnType<WorkspaceBackend["create"]>>) => void,
   ): Promise<RunUntilOpenResult> {
-    const { repo, applyCommand, scm, workspace, repoCoords, baseBranch, now } = this.deps;
+    const { repo, applyCommand, scm, workspace, now } = this.deps;
     const { workflowId, taskId, signal } = opts;
 
     this.emitPhase(workflowId, taskId, "prepareMerge", "started");
@@ -198,6 +206,8 @@ export class MergeService {
     if (!workflow) {
       throw new DomainError("not_found", "workflow not found", { workflowId });
     }
+    const coords = this.resolveCoords(workflow);
+    const { owner: ghOwner, repo: ghRepo, baseBranch } = coords;
     const task = workflow.graph[taskId];
     if (!task) {
       throw new DomainError("not_found", "task not found", { taskId });
@@ -213,7 +223,7 @@ export class MergeService {
     const workspaceId = `ws-${slugify(workflowId)}_${slugify(taskId)}`;
     let workspaceHandle = await workspace.get(workspaceId);
     if (!workspaceHandle) {
-      workspaceHandle = await workspace.create({ workflowId, taskId, branch, mode: "worktree", resetBranch: false });
+      workspaceHandle = await workspace.create({ workflowId, taskId, repoId: workflow.repoId, branch, mode: "worktree", resetBranch: false });
     }
     setHandle(workspaceHandle);
     this.emitPhase(workflowId, taskId, "prepareMerge", "completed");
@@ -243,7 +253,7 @@ export class MergeService {
 
     if (signal?.aborted) throw new MergeAbortedError();
 
-    const existingPrRef = await scm.findPullRequest({ owner: repoCoords.owner, repo: repoCoords.repo, head: branch, base: baseBranch });
+    const existingPrRef = await scm.findPullRequest({ owner: ghOwner, repo: ghRepo, head: branch, base: baseBranch });
     let openReviewResult: CommandResult | undefined;
     let prRef: PullRequestRef;
 
@@ -265,8 +275,8 @@ export class MergeService {
       bodyParts.push(`\n---\n_minions • workflow \`${workflowId}\` • task \`${taskId}\`_`);
       const prBody = bodyParts.join("\n").trim();
       prRef = await scm.openPullRequest({
-        owner: repoCoords.owner,
-        repo: repoCoords.repo,
+        owner: ghOwner,
+        repo: ghRepo,
         title: prTitle,
         body: prBody,
         head: branch,
@@ -337,10 +347,15 @@ export class MergeService {
 
       if (opts.signal?.aborted) throw new MergeAbortedError();
 
+      const mergeWorkflow = await this.deps.repo.get(opts.workflowId);
+      if (!mergeWorkflow) {
+        throw new DomainError("not_found", "workflow not found", { workflowId: opts.workflowId });
+      }
+      const mergeCoords = this.resolveCoords(mergeWorkflow);
       const prDetail = await getPRWithMergeable(
         this.deps.scm,
-        this.deps.repoCoords.owner,
-        this.deps.repoCoords.repo,
+        mergeCoords.owner,
+        mergeCoords.repo,
         open.prRef.number,
       );
 
@@ -359,8 +374,8 @@ export class MergeService {
 
       this.emitPhase(opts.workflowId, opts.taskId, "applyMerge", "started");
       const outcome = await this.deps.scm.mergePullRequest({
-        owner: this.deps.repoCoords.owner,
-        repo: this.deps.repoCoords.repo,
+        owner: mergeCoords.owner,
+        repo: mergeCoords.repo,
         number: open.prRef.number,
         expectedHeadSha: prDetail.headSha,
         method: "squash",

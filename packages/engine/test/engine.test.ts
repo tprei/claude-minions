@@ -31,17 +31,17 @@ describe("createEngine", () => {
   });
 
   it("creates engine with SQLite repo and stub runtime", async () => {
-    engine = await createEngine({ dbPath, log: silentLogger() });
+    engine = await createEngine({ dbPath, repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }], log: silentLogger() });
     expect(engine.server).toBeDefined();
   });
 
   it("close() releases the DB without throwing", async () => {
-    engine = await createEngine({ dbPath, log: silentLogger() });
+    engine = await createEngine({ dbPath, repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }], log: silentLogger() });
     await expect(engine.close()).resolves.toBeUndefined();
   });
 
   it("GET /version exposes pi in providers list", async () => {
-    engine = await createEngine({ dbPath, log: silentLogger() });
+    engine = await createEngine({ dbPath, repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }], log: silentLogger() });
     const res = await engine.server.fetch(new Request("http://localhost/version"));
     expect(res.status).toBe(200);
     const body = await res.json() as { providers: string[] };
@@ -59,7 +59,7 @@ describe("createEngine", () => {
       tasks: [{ id: "t1", title: "T", prompt: "P" }],
     };
 
-    const first = await createEngine({ dbPath, now: () => now, log: silentLogger() });
+    const first = await createEngine({ dbPath, repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }], now: () => now, log: silentLogger() });
     const req = new Request("http://localhost/workflows", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -69,7 +69,7 @@ describe("createEngine", () => {
     expect(res.status).toBe(201);
     await first.close();
 
-    const second = await createEngine({ dbPath, now: () => now, log: silentLogger() });
+    const second = await createEngine({ dbPath, repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }], now: () => now, log: silentLogger() });
     const getReq = new Request("http://localhost/workflows/wf-engine-1");
     const getRes = await second.server.fetch(getReq);
     expect(getRes.status).toBe(200);
@@ -125,6 +125,7 @@ describe("createEngine — close() aborts boot-spawned orchestrators", () => {
 
     const config: EngineConfig = {
       dbPath,
+      repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }],
       runtime,
       now: () => now,
       providerFactory: () => new StubProviderPlugin({ frames: [] }),
@@ -205,6 +206,7 @@ describe("createEngine — close() aborts service-spawned orchestrators", () => 
 
     const config: EngineConfig = {
       dbPath,
+      repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }],
       runtime: stubRuntime,
       now: () => now,
       providerFactory: () => new StubProviderPlugin({ frames: [] }),
@@ -220,7 +222,7 @@ describe("createEngine — close() aborts service-spawned orchestrators", () => 
       body: JSON.stringify({
         kind: "continue-task",
         workflowId: "wf-svc-1",
-        taskId: "wf-svc-1:task",
+        taskId: "wf-svc-1:task", repoId: "fixture-repo",
         prompt: "continue please",
       }),
     });
