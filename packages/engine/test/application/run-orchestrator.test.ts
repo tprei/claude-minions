@@ -211,6 +211,47 @@ describe("RunOrchestrator", () => {
     expect(calls).not.toContain("complete-runtime");
   });
 
+  it("stream idle timeout error then final → update-run then recover-task for scheduler resume", async () => {
+    const calls: string[] = [];
+    const workspace = new StubWorkspaceBackend();
+    const cleanupSpy = vi.spyOn(workspace, "cleanup");
+    const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
+      if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
+      return makeCommandResult();
+    });
+
+    const errorEvent: ProviderEvent = {
+      kind: "error",
+      recoverable: true,
+      source: "stream_idle_timeout",
+      message: "API Error: Stream idle timeout - partial response received",
+    };
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "ref-idle" };
+    const provider = new StubProviderPlugin({ frames: [[errorEvent], [finalEvent]] });
+    const runtime = makeRuntime(makeChunks(["line-1", "line-2"], 0));
+    const orchestrator = new RunOrchestrator({
+      workflowId: "wf-1",
+      taskId: "task-1",
+      runId: "run-1",
+      runtimeSessionId: "session-1",
+      provider,
+      runtime,
+      workspace,
+      workspaceId: "stub-wf1_task1",
+      applyCommand,
+      publish: () => {},
+      now: () => now,
+      log: silentLogger(),
+    });
+
+    await orchestrator.run();
+
+    expect(calls).toEqual(["update-run", "recover-task"]);
+    expect(calls).not.toContain("complete-runtime");
+    expect(calls).not.toContain("mark-interrupted");
+    expect(cleanupSpy).not.toHaveBeenCalled();
+  });
+
   it("threads fromOffset from deps to runtime.attach", async () => {
     let capturedAttachOpts: RuntimeAttachOptions | undefined;
     const runtime: RuntimeBackend = {

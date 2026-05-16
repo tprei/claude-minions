@@ -23,6 +23,10 @@ function hasStreamIdleTimeout(content: unknown): boolean {
   return toolResultTextSegments(content).some((text) => /^\s*API Error:\s*Stream idle timeout\b/i.test(text));
 }
 
+function isStreamIdleTimeoutResult(json: Record<string, unknown>): boolean {
+  return typeof json["result"] === "string" && /^\s*API Error:\s*Stream idle timeout\b/i.test(json["result"]);
+}
+
 export class ClaudeCodeProvider implements ProviderPlugin {
   readonly name = "claude-code";
 
@@ -186,12 +190,16 @@ USER QUESTION:
 
         const errored = subtype !== "success" || json["is_error"] === true;
         if (errored) {
+          const streamIdleTimeout = isStreamIdleTimeoutResult(json);
           events.push({
             kind: "error",
-            recoverable: false,
+            recoverable: streamIdleTimeout,
+            ...(streamIdleTimeout ? { source: "stream_idle_timeout" } : {}),
             message: subtype !== "success"
               ? `unmapped result subtype: ${String(subtype ?? "unknown")}`
-              : `result is_error=true with subtype: ${String(subtype ?? "unknown")}`,
+              : streamIdleTimeout
+                ? String(json["result"])
+                : `result is_error=true with subtype: ${String(subtype ?? "unknown")}`,
           });
         }
 

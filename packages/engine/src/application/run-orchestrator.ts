@@ -69,6 +69,7 @@ export class RunOrchestrator {
 
     let latestOffset: number | undefined;
     let lastNonRecoverableError: ProviderEvent | undefined;
+    let shouldAutoRecover = false;
     let finalReceived = false;
 
     const dispatch = async (transition: Omit<TransitionCommand, "expectedSessionId">): Promise<void> => {
@@ -111,6 +112,10 @@ export class RunOrchestrator {
           lastNonRecoverableError = event;
           continue;
         }
+        if (event.kind === "error" && event.recoverable && event.source === "stream_idle_timeout") {
+          shouldAutoRecover = true;
+          continue;
+        }
 
         if (event.kind !== "final") {
           continue;
@@ -143,6 +148,16 @@ export class RunOrchestrator {
           } catch (err) {
             if (isStale(err)) {
               log.error("run-orchestrator stale session on mark-interrupted, exiting", { error: (err as DomainError).message });
+              return;
+            }
+            throw err;
+          }
+        } else if (shouldAutoRecover) {
+          try {
+            await this.dispatchWithRetry({ kind: "recover-task", taskId, now: now() });
+          } catch (err) {
+            if (isStale(err)) {
+              log.error("run-orchestrator stale session on recover-task, exiting", { error: (err as DomainError).message });
               return;
             }
             throw err;

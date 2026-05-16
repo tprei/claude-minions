@@ -99,6 +99,27 @@ describe("ClaudeCodeProvider", () => {
     expect(events[2]).toMatchObject({ kind: "final", sessionRef: "sess-err" });
   });
 
+  it("stream idle timeout result is recoverable so the orchestrator can auto-resume", () => {
+    const line = encode({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: "API Error: Stream idle timeout - partial response received",
+      session_id: "sess-idle",
+      usage: { input_tokens: 1, output_tokens: 0 },
+    });
+    const events = provider.parseFrame(line);
+    expect(events).toHaveLength(3);
+    expect(events[0]).toEqual({
+      kind: "error",
+      recoverable: true,
+      source: "stream_idle_timeout",
+      message: "API Error: Stream idle timeout - partial response received",
+    });
+    expect(events[1]).toMatchObject({ kind: "usage" });
+    expect(events[2]).toMatchObject({ kind: "final", sessionRef: "sess-idle" });
+  });
+
   it("system api_retry emits recoverable error with source api_retry", () => {
     const line = encode({ type: "system", subtype: "api_retry", message: "retry attempt 1" });
     const events = provider.parseFrame(line);
