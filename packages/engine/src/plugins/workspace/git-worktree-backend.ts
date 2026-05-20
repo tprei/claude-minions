@@ -42,6 +42,7 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
   private readonly handles: Map<string, WorkspaceHandle> = new Map();
   private readonly registry: RepoRegistry | undefined;
   private readonly defaultRepoId: string;
+  private readonly repoIdBySlug: Map<string, string>;
 
   private repoPath: string;
 
@@ -63,6 +64,25 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     this.operationTimeoutMs = operationTimeoutMs;
     this.registry = registry;
     this.defaultRepoId = defaultRepoId;
+    this.repoIdBySlug = GitWorktreeWorkspaceBackend.buildRepoSlugMap(registry);
+  }
+
+  private static buildRepoSlugMap(registry: RepoRegistry | undefined): Map<string, string> {
+    const map = new Map<string, string>();
+    if (!registry) return map;
+    for (const binding of registry.all()) {
+      const slug = slugify(binding.id);
+      const existing = map.get(slug);
+      if (existing !== undefined && existing !== binding.id) {
+        throw new WorkspaceError("path_escape", "repo ids produce the same workspace slug", {
+          repoId: binding.id,
+          existingRepoId: existing,
+          slug,
+        });
+      }
+      map.set(slug, binding.id);
+    }
+    return map;
   }
 
   private resolveRepoPath(repoId: string): string {
@@ -182,12 +202,20 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     locks.set(key, current);
 
     await prev.catch(() => undefined);
+    let operation: Promise<T>;
     try {
-      return await this.withOperationTimeout(fn());
-    } finally {
+      operation = fn();
+    } catch (err) {
       release();
       if (locks.get(key) === current) locks.delete(key);
+      throw err;
     }
+
+    void operation.catch(() => undefined).finally(() => {
+      release();
+      if (locks.get(key) === current) locks.delete(key);
+    });
+    return this.withOperationTimeout(operation);
   }
 
   private withOperationTimeout<T>(promise: Promise<T>): Promise<T> {
@@ -214,15 +242,19 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     return "absent";
   }
 
-  private parseWorkspaceId(workspaceId: string): { repoId: string; tail: string } | undefined {
+  private parseWorkspaceId(workspaceId: string): { repoId: string; repoSlug?: string; tail: string } | undefined {
     if (!workspaceId.startsWith("ws-")) return undefined;
     const rest = workspaceId.slice(3);
-    const sepIdx = rest.indexOf("--");
-    if (sepIdx === -1) {
-      // legacy format without repoId encoded; fall back to default
-      return { repoId: this.defaultRepoId, tail: rest };
+    if (this.registry !== undefined) {
+      for (const [repoSlug, repoId] of this.repoIdBySlug.entries()) {
+        const prefix = `${repoSlug}--`;
+        if (rest.startsWith(prefix)) {
+          return { repoId, repoSlug, tail: rest.slice(prefix.length) };
+        }
+      }
+      if (rest.includes("--")) return undefined;
     }
-    return { repoId: rest.slice(0, sepIdx), tail: rest.slice(sepIdx + 2) };
+    return { repoId: this.defaultRepoId, tail: rest };
   }
 
   async get(workspaceId: string): Promise<WorkspaceHandle | undefined> {
@@ -240,9 +272,8 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     const parsed = this.parseWorkspaceId(workspaceId);
     if (!parsed) return undefined;
 
-    const isMultiRepoFormat = workspaceId.includes("--");
-    const worktreePath = this.registry && isMultiRepoFormat
-      ? join(this.workspaceRoot, slugify(parsed.repoId), parsed.tail)
+    const worktreePath = this.registry && parsed.repoSlug !== undefined
+      ? join(this.workspaceRoot, parsed.repoSlug, parsed.tail)
       : join(this.workspaceRoot, parsed.tail);
 
     try {
@@ -423,9 +454,8 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     if (!parsed) return;
 
     const repoPath = this.resolveRepoPath(parsed.repoId);
-    const isMultiRepoFormat = workspaceId.includes("--");
-    const worktreePath = this.registry && isMultiRepoFormat
-      ? join(this.workspaceRoot, slugify(parsed.repoId), parsed.tail)
+    const worktreePath = this.registry && parsed.repoSlug !== undefined
+      ? join(this.workspaceRoot, parsed.repoSlug, parsed.tail)
       : join(this.workspaceRoot, parsed.tail);
 
     try {

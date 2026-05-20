@@ -45,28 +45,29 @@ export interface PushServiceDeps {
 
 export class PushService {
   private readonly deps: PushServiceDeps;
-  private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent>>();
+  private readonly activeIterators = new Map<string, { iterator: AsyncIterator<WorkflowEvent> | null }>();
 
   constructor(deps: PushServiceDeps) {
     this.deps = deps;
     deps.signal.addEventListener("abort", () => {
-      for (const iter of this.activeIterators.values()) {
-        void iter.return?.();
+      for (const attachment of this.activeIterators.values()) {
+        if (attachment.iterator !== null) void attachment.iterator.return?.();
       }
+      this.activeIterators.clear();
     });
   }
 
   attach(workflowId: string): void {
     if (this.activeIterators.has(workflowId)) return;
-    // Set a placeholder so idempotent check passes before async consumer starts
-    this.activeIterators.set(workflowId, null as unknown as AsyncIterator<WorkflowEvent>);
-    void this.consume(workflowId);
+    const attachment = { iterator: null };
+    this.activeIterators.set(workflowId, attachment);
+    void this.consume(workflowId, attachment);
   }
 
   detach(workflowId: string): void {
-    const iter = this.activeIterators.get(workflowId);
-    if (iter) {
-      void iter.return?.();
+    const attachment = this.activeIterators.get(workflowId);
+    if (attachment?.iterator) {
+      void attachment.iterator.return?.();
     }
     this.activeIterators.delete(workflowId);
   }
@@ -155,19 +156,28 @@ export class PushService {
     }
   }
 
-  private async consume(workflowId: string): Promise<void> {
+  private isAttached(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): boolean {
+    return !this.deps.signal.aborted && this.activeIterators.get(workflowId) === attachment;
+  }
+
+  private async consume(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): Promise<void> {
     // Live tail only — subscribe from current cursor so historic terminal events
     // do not re-notify on engine restart.
     const currentCursor = await this.deps.workflowRepo.latestCursor(workflowId);
+    if (!this.isAttached(workflowId, attachment)) return;
     const iterable = this.deps.workflowRepo.subscribe(workflowId, currentCursor);
     const iter = iterable[Symbol.asyncIterator]();
-    this.activeIterators.set(workflowId, iter);
+    if (!this.isAttached(workflowId, attachment)) {
+      void iter.return?.();
+      return;
+    }
+    attachment.iterator = iter;
     try {
       while (true) {
-        if (this.deps.signal.aborted) break;
+        if (!this.isAttached(workflowId, attachment)) break;
         const result = await iter.next();
         if (result.done) break;
-        if (this.deps.signal.aborted) break;
+        if (!this.isAttached(workflowId, attachment)) break;
 
         const event = result.value;
         const decision = this.shouldNotify(event);
@@ -181,7 +191,7 @@ export class PushService {
     } catch (err) {
       this.deps.log.error("push-service consumer error", { error: (err as Error).message });
     } finally {
-      this.activeIterators.delete(workflowId);
+      if (this.activeIterators.get(workflowId) === attachment) this.activeIterators.delete(workflowId);
     }
   }
 }

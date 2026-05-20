@@ -75,6 +75,17 @@ describe("rest transport", () => {
       expect(result[0]?.status).toBe("active");
     });
 
+    it("sends the stored bearer token", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse([]));
+
+      const { listWorkflows } = await import("../rest.js");
+      await listWorkflows(CONN);
+
+      const [, init] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      const headers = init.headers as Headers;
+      expect(headers.get("Authorization")).toBe("Bearer tok");
+    });
+
     it("passes include=completed query param when option is set", async () => {
       FETCH_MOCK.mockResolvedValueOnce(jsonResponse([]));
 
@@ -163,6 +174,74 @@ describe("rest transport", () => {
     });
   });
 
+  describe("push helpers", () => {
+    it("GETs /push/vapid-public-key", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse({ publicKey: "vapid" }));
+
+      const { getVapidPublicKey } = await import("../rest.js");
+      const result = await getVapidPublicKey(CONN);
+
+      const [url] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("http://engine-test/push/vapid-public-key");
+      expect(result.publicKey).toBe("vapid");
+    });
+
+    it("POSTs /push/subscribe with workflowId and nested subscription", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse({ ok: true }, 201));
+
+      const { subscribePush } = await import("../rest.js");
+      await subscribePush(CONN, {
+        workflowId: "wf-1",
+        subscription: {
+          endpoint: "https://push.example/sub",
+          keys: { p256dh: "p256dh", auth: "auth" },
+        },
+      });
+
+      const [url, init] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("http://engine-test/push/subscribe");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body as string)).toEqual({
+        workflowId: "wf-1",
+        subscription: {
+          endpoint: "https://push.example/sub",
+          keys: { p256dh: "p256dh", auth: "auth" },
+        },
+      });
+    });
+
+    it("GETs /workflows/:id/push-subscriptions", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse({
+        subscriptions: [{ endpoint: "https://push.example/sub" }],
+      }));
+
+      const { listPushSubscriptions } = await import("../rest.js");
+      const result = await listPushSubscriptions(CONN, "wf-1");
+
+      const [url, init] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("http://engine-test/workflows/wf-1/push-subscriptions");
+      expect((init as RequestInit | undefined)?.method ?? "GET").toBe("GET");
+      expect(result).toEqual({
+        subscriptions: [{ endpoint: "https://push.example/sub" }],
+      });
+    });
+
+    it("DELETEs /push/subscribe with endpoint and workflowId", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const { unsubscribePush } = await import("../rest.js");
+      await unsubscribePush(CONN, "https://push.example/sub", "wf-1");
+
+      const [url, init] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("http://engine-test/push/subscribe");
+      expect(init.method).toBe("DELETE");
+      expect(JSON.parse(init.body as string)).toEqual({
+        endpoint: "https://push.example/sub",
+        workflowId: "wf-1",
+      });
+    });
+  });
+
   describe("deleteWorkflow", () => {
     it("DELETEs /workflows/:id and resolves on 204", async () => {
       FETCH_MOCK.mockResolvedValueOnce(new Response(null, { status: 204 }));
@@ -182,6 +261,58 @@ describe("rest transport", () => {
 
       const { deleteWorkflow, ApiError } = await import("../rest.js");
       await expect(deleteWorkflow(CONN, "missing")).rejects.toBeInstanceOf(ApiError);
+    });
+  });
+
+  describe("audit helpers", () => {
+    it("GETs /audit/events with beforeTs and beforeId cursor params", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse({ events: [] }));
+
+      const { getAuditEvents } = await import("../rest.js");
+      await getAuditEvents(CONN, {
+        limit: 50,
+        beforeTs: "2026-05-03T00:00:00.000Z",
+        beforeId: "ev-2",
+        action: "alert",
+        workflowId: "wf-1",
+      });
+
+      const [url] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        "http://engine-test/audit/events?limit=50&beforeTs=2026-05-03T00%3A00%3A00.000Z&beforeId=ev-2&action=alert&workflowId=wf-1",
+      );
+    });
+
+    it("GETs /audit/workflows/:id with beforeTs and beforeId cursor params", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse({ events: [] }));
+
+      const { getWorkflowAuditEvents } = await import("../rest.js");
+      await getWorkflowAuditEvents(CONN, "wf-1", {
+        limit: 25,
+        beforeTs: "2026-05-03T00:00:00.000Z",
+        beforeId: "ev-9",
+      });
+
+      const [url] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        "http://engine-test/audit/workflows/wf-1?limit=25&beforeTs=2026-05-03T00%3A00%3A00.000Z&beforeId=ev-9",
+      );
+    });
+
+    it("GETs /alerts with beforeTs and beforeId cursor params", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse({ alerts: [] }));
+
+      const { getAlerts } = await import("../rest.js");
+      await getAlerts(CONN, {
+        limit: 10,
+        beforeTs: "2026-05-03T00:00:00.000Z",
+        beforeId: "al-4",
+      });
+
+      const [url] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        "http://engine-test/alerts?limit=10&beforeTs=2026-05-03T00%3A00%3A00.000Z&beforeId=al-4",
+      );
     });
   });
 

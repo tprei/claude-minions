@@ -29,6 +29,22 @@ export type WorkflowStatus = "active" | "completed" | "failed" | "cancelled";
 export type GraphOperationKind = "restack";
 export type GraphOperationStatus = "pending" | "running" | "completed" | "conflict" | "failed";
 
+export interface GraphOperationSnapshot {
+  id: string;
+  workflowId: string;
+  kind: GraphOperationKind;
+  targetNodeId: string;
+  affectedNodeIds: string[];
+  fromBase?: string;
+  toBase?: string;
+  status: GraphOperationStatus;
+  attempt: number;
+  idempotencyKey: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type NodeRunTerminalReason =
   | "completed"
   | "failed"
@@ -52,6 +68,7 @@ export const TRANSITION_KINDS = [
   "complete-without-pr",
   "merge-conflict",
   "cancel-task",
+  "clear-session",
   "recover-task",
   "mark-interrupted",
   "fail-task",
@@ -97,6 +114,7 @@ export interface GraphOperationChangedPayload {
   kind: GraphOperationKind;
   fromStatus: GraphOperationStatus | null;
   toStatus: GraphOperationStatus;
+  operation?: GraphOperationSnapshot;
 }
 
 export interface RunStartedPayload {

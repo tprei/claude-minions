@@ -110,6 +110,10 @@ export function ListView({ filterStatus = "all", filterMode = "all", filterRepo,
       list = list.filter((r) => r.kind === "manual-dag" || r.kind === "ship");
     }
 
+    if (filterRepo !== null) {
+      list = list.filter((r) => r.workflow.repoId === filterRepo);
+    }
+
     if (statusFilter.size > 0) {
       list = list.filter((r) => statusFilter.has(r.status));
     }

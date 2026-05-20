@@ -5,7 +5,47 @@ import { loadSnapshot, saveSnapshot } from "../transport/snapshotCache.js";
 import { useWorkflowStore } from "./workflowStore.js";
 import { useVersionStore } from "./version.js";
 import type { SseConnection } from "../transport/sse.js";
-import type { Workflow } from "@minions/engine";
+import type { Workflow, WorkflowEvent } from "@minions/engine";
+
+export interface WorkflowStreamListener {
+  onEvent?: (event: WorkflowEvent) => void;
+  onReconnect?: () => void;
+}
+
+const workflowStreamListeners = new Map<string, Set<WorkflowStreamListener>>();
+
+function workflowStreamKey(connId: string, workflowId: string): string {
+  return `${connId}:${workflowId}`;
+}
+
+export function subscribeWorkflowStream(
+  connId: string,
+  workflowId: string,
+  listener: WorkflowStreamListener,
+): () => void {
+  const key = workflowStreamKey(connId, workflowId);
+  const listeners = workflowStreamListeners.get(key) ?? new Set<WorkflowStreamListener>();
+  listeners.add(listener);
+  workflowStreamListeners.set(key, listeners);
+  return () => {
+    const current = workflowStreamListeners.get(key);
+    if (!current) return;
+    current.delete(listener);
+    if (current.size === 0) workflowStreamListeners.delete(key);
+  };
+}
+
+function publishWorkflowEvent(connId: string, event: WorkflowEvent): void {
+  const listeners = workflowStreamListeners.get(workflowStreamKey(connId, event.workflowId));
+  if (!listeners) return;
+  for (const listener of [...listeners]) listener.onEvent?.(event);
+}
+
+function publishWorkflowReconnect(connId: string, workflowId: string): void {
+  const listeners = workflowStreamListeners.get(workflowStreamKey(connId, workflowId));
+  if (!listeners) return;
+  for (const listener of [...listeners]) listener.onReconnect?.();
+}
 
 async function refetch(conn: Connection, isDisposed: () => boolean): Promise<Workflow[]> {
   const [version, workflows] = await Promise.all([
@@ -31,6 +71,7 @@ export async function refetchConnection(conn: Connection): Promise<void> {
 export function attachConnection(conn: Connection, delayMs = 0): () => void {
   let disposed = false;
   let disposeTimer: ReturnType<typeof setTimeout> | null = null;
+  let refetchPromise: Promise<Workflow[]> | null = null;
   // Per-workflow SSE connections, keyed by workflowId.
   const sseConns = new Map<string, SseConnection>();
   const isDisposed = (): boolean => disposed;
@@ -42,6 +83,14 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
   function teardownSse(): void {
     for (const c of sseConns.values()) c.close();
     sseConns.clear();
+  }
+
+  async function refetchOnce(): Promise<Workflow[]> {
+    if (refetchPromise) return await refetchPromise;
+    refetchPromise = refetch(conn, isDisposed).finally(() => {
+      refetchPromise = null;
+    });
+    return await refetchPromise;
   }
 
   function openSseForWorkflows(workflows: Workflow[]): void {
@@ -66,12 +115,14 @@ export function attachConnection(conn: Connection, delayMs = 0): () => void {
           if (w) {
             useVersionStore.getState().setWorkflowVersion(conn.id, w.id, w.version);
           }
+          publishWorkflowEvent(conn.id, event);
         },
         async onReconnect() {
           if (disposed) return;
           try {
-            const fresh = await refetch(conn, isDisposed);
+            const fresh = await refetchOnce();
             openSseForWorkflows(fresh);
+            publishWorkflowReconnect(conn.id, workflow.id);
           } catch {
             // non-fatal — next onReconnect will retry
           }

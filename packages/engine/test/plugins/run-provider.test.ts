@@ -120,4 +120,30 @@ describe("runProvider", () => {
 
     expect(capturedOpts?.fromOffset).toBe(7);
   });
+
+  it("converts parser throws into non-recoverable provider errors", async () => {
+    const runtime = makeRuntime([encodeChunk("s1", 0, "line-1\n")]);
+    const provider = new StubProviderPlugin({ frames: [] });
+    provider.parseFrame = () => {
+      throw new Error("parser exploded");
+    };
+
+    const items: RunProviderItem[] = [];
+    for await (const item of runProvider(runtime, "s1", provider)) {
+      items.push(item);
+    }
+
+    expect(items).toEqual([
+      { kind: "offset", offset: 7 },
+      {
+        kind: "provider",
+        event: {
+          kind: "error",
+          recoverable: false,
+          source: "provider_parser",
+          message: "parser exploded",
+        },
+      },
+    ]);
+  });
 });

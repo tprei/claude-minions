@@ -7,6 +7,7 @@ export interface PushSubscriptionRecord {
 export interface SubscriptionRepository {
   upsert(record: PushSubscriptionRecord): Promise<void>;
   remove(endpoint: string, workflowId: string): Promise<void>;
+  removeByWorkflow(workflowId: string): Promise<void>;
   listByWorkflow(workflowId: string): Promise<PushSubscriptionRecord[]>;
 }
 
@@ -19,6 +20,14 @@ export class InMemorySubscriptionRepository implements SubscriptionRepository {
 
   async remove(endpoint: string, workflowId: string): Promise<void> {
     this.store.delete(`${endpoint}:${workflowId}`);
+  }
+
+  async removeByWorkflow(workflowId: string): Promise<void> {
+    for (const [key, record] of this.store.entries()) {
+      if (record.workflowId === workflowId) {
+        this.store.delete(key);
+      }
+    }
   }
 
   async listByWorkflow(workflowId: string): Promise<PushSubscriptionRecord[]> {

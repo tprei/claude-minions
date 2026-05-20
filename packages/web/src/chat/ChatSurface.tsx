@@ -6,7 +6,6 @@ import { useWorkflowStore, EMPTY_WORKFLOWS } from "../store/workflowStore.js";
 import { useRootStore } from "../store/root.js";
 import { dispatchCommand, listTranscript } from "../transport/rest.js";
 import { Transcript } from "../transcript/Transcript.js";
-import { connectWorkflowSse } from "../transport/sse.js";
 import { providerEventToTranscript } from "../transcript/providerEventToTranscript.js";
 import type { Connection } from "../connections/store.js";
 import { Button } from "../components/Button.js";
@@ -26,6 +25,7 @@ import { parseUrl } from "../routing/parseUrl.js";
 import { useConnectionStore } from "../connections/store.js";
 import { getLayout, setLayout, subscribe as subscribePanelLayout } from "../util/panelLayout.js";
 import { STATUS_LABEL } from "../views/statusToVisual.js";
+import { subscribeWorkflowStream } from "../store/connectionState.js";
 
 const MIN_WIDTH = 80;
 const MAX_WIDTH = 720;
@@ -231,7 +231,7 @@ function WorkflowHeader({
       kind: "transition-task",
       workflowId: workflow.id,
       transition: {
-        kind: "cancel",
+        kind: "cancel-task",
         taskId: task.id,
         now: new Date().toISOString(),
       },
@@ -327,23 +327,21 @@ function SurfacePanel({
   onOpenCost,
 }: PanelProps) {
   const conn = useRootStore((s) => s.getActiveConnection());
+  const connId = conn?.id;
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const tabPanelRef = useRef<HTMLDivElement | null>(null);
   const [ciPollByTask, setCiPollByTask] = useState<Record<string, CIPollResultPayload>>({});
 
   useEffect(() => {
-    if (!conn) return;
-    const sseConn = connectWorkflowSse(conn, workflow.id, {
+    if (!connId) return;
+    return subscribeWorkflowStream(connId, workflow.id, {
       onEvent(e) {
         if (e.kind !== "ci-poll-result") return;
         const payload = e.payload;
         setCiPollByTask((prev) => ({ ...prev, [payload.taskId]: payload }));
       },
     });
-    return () => {
-      sseConn.close();
-    };
-  }, [conn, workflow.id]);
+  }, [connId, workflow.id]);
 
   const ciPoll = useMemo(() => ciPollByTask[task.id], [ciPollByTask, task.id]);
 
@@ -436,7 +434,7 @@ function SurfacePanel({
       kind: "transition-task",
       workflowId: workflow.id,
       transition: {
-        kind: "cancel",
+        kind: "cancel-task",
         taskId: task.id,
         now: new Date().toISOString(),
       },
@@ -570,40 +568,43 @@ function TranscriptPanel({
   // Seed transcript from persisted store when a run is available.
   // Use scalar deps (conn?.id/baseUrl) so unstable conn object refs from the
   // store don't churn the effect and trap hydrating=true forever.
-  const latestRunId = task.runs[0]?.id;
+  const latestRunId = task.runs[task.runs.length - 1]?.id;
   const connId = conn?.id;
   const connBaseUrl = conn?.baseUrl;
   const connToken = conn?.token;
+  const stableConn = useMemo(
+    () => (conn ? { ...conn } : null),
+    [conn?.color, conn?.label, connId, connBaseUrl, connToken],
+  );
   const runsCount = task.runs.length;
-  useEffect(() => {
-    if (!conn || !latestRunId) return;
-    let cancelled = false;
-    listTranscript(conn, workflowId, latestRunId)
-      .then(({ transcript }) => {
-        if (cancelled) return;
-        const seeded = transcript.flatMap((entry) => {
-          const te = providerEventToTranscript(entry.providerEvent, task.id, runsCount, entry.occurredAt);
-          return te !== null ? [te] : [];
-        });
-        // Merge instead of replace: persisted store is authoritative for events
-        // it knows about, SSE-appended events (newer than the latest seeded one
-        // OR not represented in seeded) are preserved. Without this, an effect
-        // re-fire — triggered by snapshot refetch → workflow re-reference →
-        // runsCount churn — wipes any SSE event delivered in the meantime,
-        // forcing the user to refresh to see live progress.
-        setEvents((prev) => mergeSeededWithLive(seeded, prev));
-      })
-      .catch(() => {
-        // Don't blow away any SSE-appended events on fetch failure.
-        if (!cancelled) setEvents((prev) => prev);
+  const transcriptSeedSeq = useRef(0);
+  const seedTranscript = useCallback(async () => {
+    if (!stableConn || !latestRunId) return;
+    const seq = ++transcriptSeedSeq.current;
+    try {
+      const { transcript } = await listTranscript(stableConn, workflowId, latestRunId);
+      if (transcriptSeedSeq.current !== seq) return;
+      const seeded = transcript.flatMap((entry) => {
+        const te = providerEventToTranscript(entry.providerEvent, task.id, runsCount, entry.occurredAt);
+        return te !== null ? [te] : [];
       });
-    return () => { cancelled = true; };
-  }, [connId, connBaseUrl, connToken, workflowId, task.id, latestRunId, runsCount]);
+      // Merge instead of replace: persisted store is authoritative for events
+      // it knows about, SSE-appended events (newer than the latest seeded one
+      // OR not represented in seeded) are preserved. Without this, a refetch
+      // after reconnect would wipe any live events delivered in the meantime.
+      setEvents((prev) => mergeSeededWithLive(seeded, prev));
+    } catch {
+      if (transcriptSeedSeq.current === seq) setEvents((prev) => prev);
+    }
+  }, [latestRunId, runsCount, stableConn, task.id, workflowId]);
 
   useEffect(() => {
-    if (!conn) return;
+    void seedTranscript();
+  }, [seedTranscript]);
 
-    const sseConn = connectWorkflowSse(conn, workflowId, {
+  useEffect(() => {
+    if (!connId) return;
+    return subscribeWorkflowStream(connId, workflowId, {
       onEvent(e) {
         if (e.kind !== "provider-event") return;
         if (e.payload.taskId !== task.id) return;
@@ -617,12 +618,11 @@ function TranscriptPanel({
           setEvents((prev) => [...prev, transcriptEvent]);
         }
       },
+      onReconnect() {
+        void seedTranscript();
+      },
     });
-
-    return () => {
-      sseConn.close();
-    };
-  }, [connId, connBaseUrl, connToken, workflowId, task.id, runsCount]);
+  }, [connId, runsCount, seedTranscript, task.id, workflowId]);
 
   return (
     <div className="flex-1 overflow-y-auto">

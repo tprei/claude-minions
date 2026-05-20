@@ -71,14 +71,50 @@ describe("AuditRepo", () => {
     expect(results[0]?.workflowId).toBe("wf-a");
   });
 
-  it("paginates with beforeTs", () => {
+  it("paginates with deterministic cursor", () => {
     repo.insert(makeEvent({ id: "ev-1", timestamp: "2026-05-01T00:00:00.000Z" }));
     repo.insert(makeEvent({ id: "ev-2", timestamp: "2026-05-02T00:00:00.000Z" }));
     repo.insert(makeEvent({ id: "ev-3", timestamp: "2026-05-03T00:00:00.000Z" }));
-    const results = repo.list({ beforeTs: "2026-05-03T00:00:00.000Z" });
+    const results = repo.list({ before: { timestamp: "2026-05-03T00:00:00.000Z", id: "ev-3" } });
     expect(results.map((r) => r.id)).toContain("ev-1");
     expect(results.map((r) => r.id)).toContain("ev-2");
     expect(results.map((r) => r.id)).not.toContain("ev-3");
+  });
+
+  it("paginates records with identical timestamps", () => {
+    const timestamp = "2026-05-03T00:00:00.000Z";
+    repo.insert(makeEvent({ id: "ev-a", timestamp }));
+    repo.insert(makeEvent({ id: "ev-b", timestamp }));
+    repo.insert(makeEvent({ id: "ev-c", timestamp }));
+
+    const firstPage = repo.list({ limit: 2 });
+    const last = firstPage[1]!;
+    const secondPage = repo.list({ limit: 2, before: { timestamp: last.timestamp, id: last.id } });
+
+    expect(firstPage.map((event) => event.id)).toEqual(["ev-c", "ev-b"]);
+    expect(secondPage.map((event) => event.id)).toEqual(["ev-a"]);
+  });
+
+  it("does not overwrite an existing event on id collision", () => {
+    repo.insert(makeEvent({
+      id: "ev-collision",
+      timestamp: "2026-05-01T00:00:00.000Z",
+      action: "engine-lifecycle",
+    }));
+
+    expect(() => repo.insert(makeEvent({
+      id: "ev-collision",
+      timestamp: "2026-05-02T00:00:00.000Z",
+      action: "alert",
+    }))).toThrow();
+
+    const results = repo.list();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      id: "ev-collision",
+      timestamp: "2026-05-01T00:00:00.000Z",
+      action: "engine-lifecycle",
+    });
   });
 
   it("listByWorkflow only returns events for that workflow", () => {
@@ -94,6 +130,17 @@ describe("AuditRepo", () => {
     repo.insert(ev);
     const results = repo.list();
     expect(results[0]?.detail).toEqual({ sha: "abc123", error: "boom" });
+  });
+
+  it("omits malformed stored detail without failing list", () => {
+    db.prepare(
+      "INSERT INTO audit_events (id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("ev-malformed", "2026-05-01T00:00:00.000Z", "engine", "engine-lifecycle", null, null, null, null, "{");
+
+    const results = repo.list();
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe("ev-malformed");
+    expect(results[0]?.detail).toBeUndefined();
   });
 
   it("clamps limit to [1, 500]", () => {

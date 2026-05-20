@@ -12,7 +12,11 @@ interface Subscriber {
 }
 
 export class SubscriberHub {
+  private static readonly DEFAULT_MAX_BUFFERED_EVENTS = 1000;
+
   private readonly subscribers = new Map<string, Set<Subscriber>>();
+
+  constructor(private readonly maxBufferedEvents = SubscriberHub.DEFAULT_MAX_BUFFERED_EVENTS) {}
 
   subscribe(
     workflowId: string,
@@ -57,11 +61,6 @@ export class SubscriberHub {
             while (!sub.aborted) {
               while (sub.buffer.length > 0) {
                 const event = sub.buffer.shift()!;
-                // transient frames bypass cursor dedup; durable backbone is the resume truth
-                if (event.kind === "provider-event" || event.kind === "merge-phase" || event.kind === "ci-poll-result") {
-                  yield event;
-                  continue;
-                }
                 if (event.cursor <= lastYielded) continue;
                 if (sub.aborted) return;
                 yield event;
@@ -110,6 +109,10 @@ export class SubscriberHub {
     const subs = this.subscribers.get(workflowId);
     if (!subs || events.length === 0) return;
     for (const sub of Array.from(subs)) {
+      if (sub.buffer.length + events.length > this.maxBufferedEvents) {
+        this.dropSubscriber(workflowId, sub);
+        continue;
+      }
       for (const event of events) {
         sub.buffer.push(event);
       }
@@ -121,20 +124,15 @@ export class SubscriberHub {
     }
   }
 
-  notifyTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" | "ci-poll-result" }>): void {
-    const subs = this.subscribers.get(workflowId);
-    if (!subs) return;
-    for (const sub of Array.from(subs)) {
-      sub.buffer.push(event);
-      if (sub.resolve) {
-        const resolve = sub.resolve;
-        sub.resolve = undefined;
-        resolve();
-      }
-    }
-  }
-
   subscriberCount(workflowId: string): number {
     return this.subscribers.get(workflowId)?.size ?? 0;
+  }
+
+  private dropSubscriber(workflowId: string, sub: Subscriber): void {
+    sub.abort();
+    const set = this.subscribers.get(workflowId);
+    if (!set) return;
+    set.delete(sub);
+    if (set.size === 0) this.subscribers.delete(workflowId);
   }
 }

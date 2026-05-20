@@ -1,13 +1,13 @@
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { Marked } from "marked";
 import { cx } from "../util/classnames.js";
-import { highlight } from "./highlight.js";
+import { highlight, languageClassName } from "./highlight.js";
+import { sanitizeMarkdownHtml } from "./sanitize.js";
 import "./highlight.css";
 
-marked.use({
+const marked = new Marked({
   renderer: {
     code({ text, lang }) {
-      const language = lang || "plaintext";
+      const language = languageClassName(lang);
       return `<pre><code class="hljs language-${language}">${highlight(text, lang)}</code></pre>`;
     },
   },
@@ -20,7 +20,7 @@ interface Props {
 
 export function MarkdownView({ text, className }: Props) {
   const raw = marked.parse(text, { async: false }) as string;
-  const clean = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+  const clean = sanitizeMarkdownHtml(raw);
   return (
     <div
       className={cx("markdown-view break-words leading-snug space-y-1.5", className)}

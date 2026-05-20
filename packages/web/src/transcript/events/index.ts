@@ -8,6 +8,7 @@ import { ToolResult } from "./ToolResult.js";
 import { TurnStarted } from "./TurnStarted.js";
 import { TurnCompleted } from "./TurnCompleted.js";
 import { StatusBanner } from "./StatusBanner.js";
+import { Usage } from "./Usage.js";
 
 type EventComponent = ComponentType<{ event: TranscriptEvent }>;
 
@@ -20,6 +21,7 @@ function wrap<E extends TranscriptEvent>(
 const EVENT_MAP: Record<TranscriptEvent["kind"], EventComponent> = {
   assistant_text: wrap(AssistantText),
   thinking: wrap(Thinking),
+  usage: wrap(Usage),
   user_message: wrap(UserMessage),
   status: wrap(StatusBanner),
   tool_call: wrap(ToolCall),
@@ -35,6 +37,7 @@ export function pickComponent(event: TranscriptEvent): EventComponent {
 export {
   AssistantText,
   Thinking,
+  Usage,
   UserMessage,
   ToolCall,
   ToolResult,

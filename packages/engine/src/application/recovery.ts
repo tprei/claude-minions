@@ -33,6 +33,8 @@ export interface RecoveryOptions {
   workflowCancelled?: boolean;
 }
 
+const INVALID_TIMESTAMP_AGE_MS = Number.POSITIVE_INFINITY;
+
 interface TaskRecoveryRule {
   name: string;
   matches: (task: TaskNode, options: RecoveryOptions) => boolean;
@@ -148,7 +150,10 @@ export function planRecovery(workflow: Workflow, options: RecoveryOptions): Reco
 }
 
 function ageMs(task: TaskNode, nowMs: number): number {
-  return nowMs - new Date(task.updatedAt).getTime();
+  if (!Number.isFinite(nowMs)) return INVALID_TIMESTAMP_AGE_MS;
+  const updatedAtMs = Date.parse(task.updatedAt);
+  if (!Number.isFinite(updatedAtMs)) return INVALID_TIMESTAMP_AGE_MS;
+  return nowMs - updatedAtMs;
 }
 
 function withSession(action: TaskRecoveryAction, sessionId: string | undefined): TaskRecoveryAction {

@@ -11,8 +11,11 @@ CREATE TABLE IF NOT EXISTS audit_events (
   detail TEXT
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_ts_id ON audit_events(timestamp DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_workflow ON audit_events(workflow_id, timestamp DESC) WHERE workflow_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audit_workflow_ts_id ON audit_events(workflow_id, timestamp DESC, id DESC) WHERE workflow_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_action_ts_id ON audit_events(action, timestamp DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS alerts (
   id TEXT PRIMARY KEY,
@@ -25,6 +28,7 @@ CREATE TABLE IF NOT EXISTS alerts (
   detail TEXT
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_ts_id ON alerts(timestamp DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS alert_subscriptions (
   endpoint TEXT PRIMARY KEY,
@@ -35,34 +39,34 @@ CREATE TABLE IF NOT EXISTS alert_subscriptions (
 `;
 
 export const SQL_INSERT_AUDIT_EVENT =
-  `INSERT OR REPLACE INTO audit_events (id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  `INSERT INTO audit_events (id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 export const SQL_LIST_AUDIT_EVENTS =
-  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events ORDER BY timestamp DESC LIMIT ?`;
+  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events ORDER BY timestamp DESC, id DESC LIMIT ?`;
 
 export const SQL_LIST_AUDIT_EVENTS_BEFORE =
-  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE timestamp < ? ORDER BY timestamp DESC LIMIT ?`;
+  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE timestamp < ? OR (timestamp = ? AND id < ?) ORDER BY timestamp DESC, id DESC LIMIT ?`;
 
 export const SQL_LIST_AUDIT_EVENTS_ACTION =
-  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE action = ? ORDER BY timestamp DESC LIMIT ?`;
+  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE action = ? ORDER BY timestamp DESC, id DESC LIMIT ?`;
 
 export const SQL_LIST_AUDIT_EVENTS_ACTION_BEFORE =
-  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE action = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT ?`;
+  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE action = ? AND (timestamp < ? OR (timestamp = ? AND id < ?)) ORDER BY timestamp DESC, id DESC LIMIT ?`;
 
 export const SQL_LIST_AUDIT_EVENTS_WORKFLOW =
-  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE workflow_id = ? ORDER BY timestamp DESC LIMIT ?`;
+  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE workflow_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?`;
 
 export const SQL_LIST_AUDIT_EVENTS_WORKFLOW_BEFORE =
-  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE workflow_id = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT ?`;
+  `SELECT id, timestamp, actor, action, workflow_id, task_id, target_kind, target_id, detail FROM audit_events WHERE workflow_id = ? AND (timestamp < ? OR (timestamp = ? AND id < ?)) ORDER BY timestamp DESC, id DESC LIMIT ?`;
 
 export const SQL_INSERT_ALERT =
-  `INSERT OR REPLACE INTO alerts (id, timestamp, kind, severity, message, workflow_id, task_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+  `INSERT INTO alerts (id, timestamp, kind, severity, message, workflow_id, task_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
 
 export const SQL_LIST_ALERTS =
-  `SELECT id, timestamp, kind, severity, message, workflow_id, task_id, detail FROM alerts ORDER BY timestamp DESC LIMIT ?`;
+  `SELECT id, timestamp, kind, severity, message, workflow_id, task_id, detail FROM alerts ORDER BY timestamp DESC, id DESC LIMIT ?`;
 
 export const SQL_LIST_ALERTS_BEFORE =
-  `SELECT id, timestamp, kind, severity, message, workflow_id, task_id, detail FROM alerts WHERE timestamp < ? ORDER BY timestamp DESC LIMIT ?`;
+  `SELECT id, timestamp, kind, severity, message, workflow_id, task_id, detail FROM alerts WHERE timestamp < ? OR (timestamp = ? AND id < ?) ORDER BY timestamp DESC, id DESC LIMIT ?`;
 
 export const SQL_UPSERT_ALERT_SUBSCRIPTION =
   `INSERT INTO alert_subscriptions (endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth`;

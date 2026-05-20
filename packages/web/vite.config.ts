@@ -6,6 +6,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      strategies: "injectManifest",
+      srcDir: "src/pwa",
+      filename: "service-worker.ts",
       registerType: "autoUpdate",
       injectRegister: false,
       devOptions: { enabled: true, type: "module" },
@@ -22,17 +25,9 @@ export default defineConfig({
           { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }
         ]
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ["**/*.{js,css,html,svg,png,webmanifest}"],
-        navigateFallback: "/index.html",
-        skipWaiting: true,
-        clientsClaim: true,
-        runtimeCaching: [
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith("/api/"),
-            handler: "NetworkOnly"
-          }
-        ]
+        injectionPoint: "self.__WB_MANIFEST",
       }
     })
   ],

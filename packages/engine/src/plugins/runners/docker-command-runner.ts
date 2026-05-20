@@ -9,20 +9,18 @@ export class DockerCommandRunner implements CommandRunner {
   }
 
   run(opts: CommandRunOptions): Promise<CommandRunResult> {
-    const inner = `cd ${shQuote(opts.cwd)} && ${opts.command}`;
-    const argv = [...this.commandPrefix, "sh", "-c", inner];
-    const composed = argv.map(shQuote).join(" ");
+    if (this.commandPrefix.length < 3) {
+      return Promise.reject(new Error("docker command prefix must include the docker exec command and target container"));
+    }
+    const container = this.commandPrefix[this.commandPrefix.length - 1]!;
+    const prefix = this.commandPrefix.slice(0, -1);
+    const envArgs = Object.entries(opts.env ?? {}).flatMap(([key, value]) => ["--env", `${key}=${value}`]);
     const next: CommandRunOptions = {
       cwd: process.cwd(),
-      command: composed,
+      argv: [...prefix, ...envArgs, "--workdir", opts.cwd, container, ...opts.argv],
     };
     if (opts.timeoutMs !== undefined) next.timeoutMs = opts.timeoutMs;
-    if (opts.env) next.env = opts.env;
     if (opts.signal) next.signal = opts.signal;
     return this.host.run(next);
   }
-}
-
-function shQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }

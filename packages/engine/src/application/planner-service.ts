@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { DomainError } from "../domain/errors.js";
 import type { Logger } from "../observability/logger.js";
@@ -47,7 +48,7 @@ export interface WorkflowPlannerServiceDeps {
 }
 
 function generateId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  return `${prefix}-${randomUUID()}`;
 }
 
 function detectCycle(tasks: RawTaskSpec[]): boolean {

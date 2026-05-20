@@ -32,7 +32,7 @@ import { StubWorkspaceBackend } from "./plugins/workspace/stub-workspace.js";
 import { createServer } from "./transport/server.js";
 import { TokenBucket } from "./plugins/github/rate-limiter.js";
 import { GitHubClient } from "./plugins/github/github-client.js";
-import { GitHubScmPlugin } from "./plugins/github/github-scm-plugin.js";
+import { GitHubScmPlugin, gitAuthEnv } from "./plugins/github/github-scm-plugin.js";
 import { MergeService } from "./application/merge-service.js";
 import { LandWorkflowService } from "./application/land-workflow-service.js";
 import { LocalFinalizeService } from "./application/local-finalize-service.js";
@@ -42,6 +42,7 @@ import { CompletionDispatcher } from "./application/completion-dispatcher.js";
 import { SchedulerService } from "./application/scheduler-service.js";
 import { WorkflowPlannerService } from "./application/planner-service.js";
 import type { QualityPlugin } from "./plugins/quality-plugin.js";
+import { StubQualityPlugin } from "./plugins/quality/stub-quality-plugin.js";
 import type { WorkflowEvent } from "./domain/events.js";
 import { buildSinksFromEnv, type Sink } from "./observability/sinks.js";
 import { createLogger, parseLevel, type Logger } from "./observability/logger.js";
@@ -92,6 +93,8 @@ export interface EngineConfig {
   providerName?: string;
   buildSha?: string;
   startedAt?: string;
+  authToken?: string;
+  corsOrigins?: string[];
 }
 
 const ENGINE_FEATURES = [
@@ -153,6 +156,13 @@ export interface Engine {
   dataDir: string;
   repo: WorkflowRepository;
   close(): Promise<void>;
+}
+
+export function buildBootstrapClone(remote: string, githubToken: string | undefined): { remote: string; env?: Record<string, string> } {
+  if (githubToken !== undefined && remote.startsWith("https://github.com/")) {
+    return { remote, env: gitAuthEnv(githubToken) };
+  }
+  return { remote };
 }
 
 export async function createEngine(config: EngineConfig): Promise<Engine> {
@@ -228,13 +238,11 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     for (const binding of repoRegistry.all()) {
       if (existsSync(binding.localPath)) continue;
       if (!binding.remote) continue;
-      const remoteUrl = githubToken && binding.remote.startsWith("https://github.com/")
-        ? binding.remote.replace("https://github.com/", `https://x-access-token:${githubToken}@github.com/`)
-        : binding.remote;
+      const clone = buildBootstrapClone(binding.remote, githubToken);
       await mkdir(reposRoot, { recursive: true });
       log.info("cloning bound repo", { repoId: binding.id, remote: binding.remote, localPath: binding.localPath });
       const tempClient = new GitClient();
-      await tempClient.run(reposRoot, ["clone", "--filter=blob:none", remoteUrl, binding.localPath]);
+      await tempClient.run(reposRoot, ["clone", "--filter=blob:none", clone.remote, binding.localPath], clone.env !== undefined ? { env: clone.env } : undefined);
     }
 
     const localExists = existsSync(firstBinding.localPath);
@@ -361,6 +369,10 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   }
 
   const serverDeps: Parameters<typeof createServer>[0] = { repo, recoveryService, executor };
+  const authToken = config.authToken ?? process.env["MWF_TOKEN"];
+  if (authToken !== undefined && authToken.length > 0) serverDeps.authToken = authToken;
+  const corsOrigins = config.corsOrigins ?? parseCorsOrigins(process.env["MWF_CORS_ORIGINS"]);
+  if (corsOrigins !== undefined) serverDeps.corsOrigins = corsOrigins;
 
   if (vapid && pushService && subscriptions) {
     serverDeps.pushService = pushService;
@@ -400,8 +412,10 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       repo,
       retry: retryTaskService,
       continueService: serverDeps.continueTaskService,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
       log: log.child({ component: "scheduler" }),
       signal: schedulerAbort.signal,
+      now,
     });
 
     const recoverableForScheduler = await repo.listRecoverable();
@@ -480,56 +494,51 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     }
   }
 
-  let qualityAbort: AbortController | undefined;
+  const qualityPlugin = config.qualityPlugin ?? new StubQualityPlugin();
 
-  if (config.qualityPlugin) {
-    qualityAbort = new AbortController();
-    const qualityGateService = new QualityGateService({
-      workflowRepo: repo,
-      workspace,
-      plugin: config.qualityPlugin,
-      applyCommand: (cmd) => applyCommand(repo, cmd),
-      signal: qualityAbort.signal,
-      now,
-      log: log.child({ component: "quality-gate" }),
-      ...(config.qualityDefaultTimeoutMs !== undefined ? { defaultTimeoutMs: config.qualityDefaultTimeoutMs } : {}),
-    });
-    serverDeps.qualityGateService = qualityGateService;
-    const recoverableWorkflows = await repo.listRecoverable();
-    const attachedIds = new Set<string>();
-    for (const w of recoverableWorkflows) {
+  const qualityAbort = new AbortController();
+  const qualityGateService = new QualityGateService({
+    workflowRepo: repo,
+    workspace,
+    plugin: qualityPlugin,
+    applyCommand: (cmd) => applyCommand(repo, cmd),
+    signal: qualityAbort.signal,
+    now,
+    log: log.child({ component: "quality-gate" }),
+    ...(config.qualityDefaultTimeoutMs !== undefined ? { defaultTimeoutMs: config.qualityDefaultTimeoutMs } : {}),
+  });
+  serverDeps.qualityGateService = qualityGateService;
+  const recoverableWorkflows = await repo.listRecoverable();
+  const attachedIds = new Set<string>();
+  for (const w of recoverableWorkflows) {
+    qualityGateService.attach(w.id);
+    attachedIds.add(w.id);
+  }
+  const qualityWorkflows = await repo.list({ includeCompleted: true });
+  for (const w of qualityWorkflows) {
+    if (!attachedIds.has(w.id) && Object.values(w.graph).some((t) => t.executionStatus === "completed")) {
       qualityGateService.attach(w.id);
-      attachedIds.add(w.id);
-    }
-    const allWorkflows = await repo.list({ includeCompleted: true });
-    for (const w of allWorkflows) {
-      if (!attachedIds.has(w.id) && Object.values(w.graph).some((t) => t.executionStatus === "completed")) {
-        qualityGateService.attach(w.id);
-      }
     }
   }
 
-  let localFinalizeAbort: AbortController | undefined;
-
-  if (!githubEnabled) {
-    localFinalizeAbort = new AbortController();
-    const localFinalizeDeps: ConstructorParameters<typeof LocalFinalizeService>[0] = {
-      workflowRepo: repo,
-      applyCommand: (cmd) => applyCommand(repo, cmd),
-      signal: localFinalizeAbort.signal,
-      now,
-      log: log.child({ component: "local-finalize" }),
-    };
-    if (sharedGitClient) {
-      localFinalizeDeps.workspace = workspace;
-      localFinalizeDeps.gitClient = sharedGitClient;
-      localFinalizeDeps.repoRegistry = repoRegistry;
-    }
-    const localFinalizeService = new LocalFinalizeService(localFinalizeDeps);
-    const recoverableWorkflows = await repo.listRecoverable();
-    for (const w of recoverableWorkflows) localFinalizeService.attach(w.id);
-    serverDeps.localFinalizeService = localFinalizeService;
+  const localFinalizeAbort = new AbortController();
+  const localFinalizeDeps: ConstructorParameters<typeof LocalFinalizeService>[0] = {
+    workflowRepo: repo,
+    applyCommand: (cmd) => applyCommand(repo, cmd),
+    signal: localFinalizeAbort.signal,
+    now,
+    log: log.child({ component: "local-finalize" }),
+    shouldFinalize: (repoId) => repoRegistry.get(repoId)?.github === undefined,
+  };
+  if (sharedGitClient) {
+    localFinalizeDeps.workspace = workspace;
+    localFinalizeDeps.gitClient = sharedGitClient;
+    localFinalizeDeps.repoRegistry = repoRegistry;
   }
+  const localFinalizeService = new LocalFinalizeService(localFinalizeDeps);
+  const localFinalizeWorkflows = await repo.listRecoverable();
+  for (const w of localFinalizeWorkflows) localFinalizeService.attach(w.id);
+  serverDeps.localFinalizeService = localFinalizeService;
 
   let completionDispatcherAbort: AbortController | undefined;
 
@@ -542,10 +551,11 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       signal: completionDispatcherAbort.signal,
       now,
       log: log.child({ component: "completion-dispatcher" }),
+      shouldDispatch: (repoId) => repoRegistry.get(repoId)?.github !== undefined,
     });
     serverDeps.completionDispatcher = completionDispatcher;
-    const recoverableWorkflows = await repo.listRecoverable();
-    for (const w of recoverableWorkflows) completionDispatcher.attach(w.id);
+    const completionWorkflows = await repo.listRecoverable();
+    for (const w of completionWorkflows) completionDispatcher.attach(w.id);
   }
 
   const observabilityAbort = new AbortController();
@@ -559,6 +569,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   serverDeps.observability = observability;
   serverDeps.log = log.child({ component: "transport" });
   serverDeps.supervisor = supervisor;
+  serverDeps.isKnownRepoId = (repoId) => repoRegistry.get(repoId) !== undefined;
   serverDeps.versionInfo = () => ({
     apiVersion: "workflow-v1",
     libraryVersion: "0.1.0",
@@ -572,12 +583,16 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       runtime,
       workspace,
       githubEnabled,
-      qualityEnabled: config.qualityPlugin !== undefined,
+      qualityEnabled: true,
       pushEnabled: vapid !== undefined,
     }),
     startedAt,
   });
-  serverDeps.doctor = () => {
+  type DoctorReport = Awaited<ReturnType<typeof buildDoctorReport>>;
+  let doctorCache: { expiresAtMs: number; report: DoctorReport } | undefined;
+  let doctorInFlight: Promise<DoctorReport> | undefined;
+
+  const computeDoctor = (): Promise<DoctorReport> => {
     const input: Parameters<typeof buildDoctorReport>[0] = {
       repo,
       dbPath: config.dbPath,
@@ -594,6 +609,34 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     const providerName = config.providerName ?? process.env["MWF_PROVIDER"];
     if (providerName !== undefined) input.providerName = providerName.toLowerCase();
     return buildDoctorReport(input);
+  };
+  const refreshDoctor = (): Promise<DoctorReport> => {
+    if (doctorInFlight) return doctorInFlight;
+    doctorInFlight = computeDoctor()
+      .then((report) => {
+        doctorCache = { expiresAtMs: Date.now() + DOCTOR_CACHE_TTL_MS, report };
+        return report;
+      })
+      .finally(() => {
+        doctorInFlight = undefined;
+      });
+    return doctorInFlight;
+  };
+  serverDeps.health = async () => {
+    const cache = doctorCache;
+    const stale = cache === undefined || cache.expiresAtMs <= Date.now();
+    if (stale) {
+      void refreshDoctor().catch(() => {});
+    }
+    if (cache) {
+      return { status: cache.report.status, checkedAt: cache.report.checkedAt };
+    }
+    return { status: "ok", checkedAt: now() };
+  };
+  serverDeps.doctor = async () => {
+    const cache = doctorCache;
+    if (cache && cache.expiresAtMs > Date.now()) return cache.report;
+    return await refreshDoctor();
   };
   serverDeps.metrics = () => {
     const input: Parameters<typeof buildMetrics>[0] = { repo, supervisor, startedAt };
@@ -659,9 +702,25 @@ function buildRepoBindings(registry: RepoRegistry): Array<{ id: string; label: s
       label: b.label,
       defaultBranch: b.defaultBranch,
     };
-    if (b.remote !== undefined) out.remote = b.remote;
+    if (b.remote !== undefined) out.remote = redactRemoteUrl(b.remote);
     return out;
   });
+}
+
+function redactRemoteUrl(remote: string): string {
+  try {
+    const url = new URL(remote);
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    return remote;
+  }
+}
+
+function parseCorsOrigins(raw: string | undefined): string[] | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  return raw.split(",").map((part) => part.trim()).filter((part) => part.length > 0);
 }
 
 function buildPluginSet(input: {
@@ -687,6 +746,9 @@ interface PiProbeResult {
 
 const PI_VERSION_TIMEOUT_MS = 5000;
 const PI_MIN_VERSION: readonly [number, number, number] = [0, 70, 0];
+const DOCTOR_STATFS_TIMEOUT_MS = 5000;
+const DOCTOR_CACHE_TTL_MS = 5000;
+const DISK_FREE_THRESHOLD_BYTES = 1024 * 1024 * 1024;
 
 function compareSemver(a: readonly [number, number, number], b: readonly [number, number, number]): number {
   if (a[0] !== b[0]) return a[0] - b[0];
@@ -741,7 +803,8 @@ export async function defaultPiVersionProbe(): Promise<PiProbeResult> {
 }
 
 export async function defaultPiAuthProbe(): Promise<PiProbeResult> {
-  const provider = new PiProvider();
+  const agentDir = process.env["MWF_PI_AGENT_DIR"] ?? process.env["PI_CODING_AGENT_DIR"];
+  const provider = new PiProvider(agentDir !== undefined ? { agentDir } : {});
   const result = await provider.loginStatus();
   if (result.details === "no auth.json") return { status: "error", detail: "no auth.json" };
   if (result.loggedIn) return { status: "ok", detail: result.details ?? "codex subscription present" };
@@ -788,21 +851,20 @@ export async function buildDoctorReport(input: {
     : { name: "tmux-runtime", status: "degraded", detail: input.runtime.constructor.name });
   add(input.githubEnabled && input.githubTokenPresent
     ? { name: "github-auth", status: "ok", detail: "GitHub integration configured" }
-    : { name: "github-auth", status: "degraded", detail: "GitHub integration is disabled" });
+    : { name: "github-auth", status: "ok", detail: "GitHub integration is disabled" });
   add(input.pushEnabled
     ? { name: "push-config", status: "ok", detail: "VAPID configured" }
-    : { name: "push-config", status: "degraded", detail: "VAPID is not configured" });
-  add({ name: "dependency-cache", status: "degraded", detail: "no dependency cache is configured in the engine port" });
+    : { name: "push-config", status: "ok", detail: "VAPID is not configured" });
+  add({ name: "dependency-cache", status: "ok", detail: "no dependency cache is configured in the engine port" });
 
   try {
-    const fs = await statfs(dirname(input.dbPath));
+    const fs = await withTimeout(statfs(input.dataDir), DOCTOR_STATFS_TIMEOUT_MS, "statfs timed out");
     const freeBytes = fs.bavail * fs.bsize;
-    const threshold = 1024 * 1024 * 1024;
-    add(freeBytes >= threshold
+    add(freeBytes >= DISK_FREE_THRESHOLD_BYTES
       ? { name: "disk-free", status: "ok", detail: `${freeBytes}` }
       : { name: "disk-free", status: "error", detail: `${freeBytes}` });
-  } catch (err) {
-    add({ name: "disk-free", status: "error", detail: (err as Error).message });
+  } catch {
+    add({ name: "disk-free", status: "error", detail: "statfs failed" });
   }
 
   if (input.providerName === "pi") {
@@ -824,7 +886,7 @@ export async function buildDoctorReport(input: {
   return { status, checks, checkedAt };
 }
 
-async function buildMetrics(input: {
+export async function buildMetrics(input: {
   repo: WorkflowRepository;
   schedulerService?: SchedulerService;
   supervisor: SupervisorWithRepos;
@@ -866,16 +928,16 @@ async function buildMetrics(input: {
   lines.push("# TYPE minions_alerts_total gauge");
   const alertCounts = new Map<string, number>();
   for (const alert of alerts) {
-    const key = `${alert.kind}\u0000${alert.severity}`;
+    const key = JSON.stringify([alert.kind, alert.severity]);
     alertCounts.set(key, (alertCounts.get(key) ?? 0) + 1);
   }
   for (const [key, count] of alertCounts) {
-    const [kind, severity] = key.split("\u0000");
+    const [kind, severity] = JSON.parse(key) as [string, string];
     lines.push(`minions_alerts_total{kind=${quoteLabel(kind ?? "")},severity=${quoteLabel(severity ?? "")}} ${count}`);
   }
   lines.push("# HELP minions_engine_started_at_seconds Engine start time as Unix timestamp");
   lines.push("# TYPE minions_engine_started_at_seconds gauge");
-  lines.push(`minions_engine_started_at_seconds ${Math.floor(Date.parse(input.startedAt) / 1000)}`);
+  lines.push(`minions_engine_started_at_seconds ${formatMetricsTimestampSeconds(input.startedAt)}`);
   return `${lines.join("\n")}\n`;
 }
 
@@ -888,5 +950,36 @@ function hasPragmas(repo: WorkflowRepository): repo is WorkflowRepository & Prag
 }
 
 function quoteLabel(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"").replace(/\n/g, "\\n")}"`;
+  return `"${value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, "\\\"")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")
+    .replace(/\0/g, "\\0")}"`;
+}
+
+function formatMetricsTimestampSeconds(value: string): number {
+  const startedAtMs = Date.parse(value);
+  if (!Number.isFinite(startedAtMs)) {
+    throw new Error(`invalid startedAt timestamp: ${value}`);
+  }
+  return Math.floor(startedAtMs / 1000);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }

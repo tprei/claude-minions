@@ -1,10 +1,13 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import type { CommandRunner, CommandRunOptions, CommandRunResult } from "../command-runner.js";
 
 export class HostCommandRunner implements CommandRunner {
   run(opts: CommandRunOptions): Promise<CommandRunResult> {
+    if (opts.argv.length === 0) {
+      return Promise.reject(new Error("command argv must not be empty"));
+    }
     return new Promise<CommandRunResult>((resolve) => {
-      const execOpts: Parameters<typeof exec>[1] = {
+      const execOpts: Parameters<typeof execFile>[2] = {
         cwd: opts.cwd,
         env: { ...process.env, ...(opts.env ?? {}) },
         maxBuffer: 10 * 1024 * 1024,
@@ -17,12 +20,14 @@ export class HostCommandRunner implements CommandRunner {
         execOpts.signal = opts.signal;
       }
 
-      exec(
-        opts.command,
+      const [file, ...args] = opts.argv;
+      execFile(
+        file!,
+        args,
         execOpts,
         (err, stdout, stderr) => {
-          const e = err as { code?: number | string; killed?: boolean } | null;
-          const isTimedOut = e?.killed === true || e?.code === "ABORT_ERR";
+          const e = err as { code?: number | string; killed?: boolean; name?: string } | null;
+          const isTimedOut = e?.killed === true || e?.code === "ABORT_ERR" || e?.name === "AbortError";
           const exitCode =
             isTimedOut
               ? -1

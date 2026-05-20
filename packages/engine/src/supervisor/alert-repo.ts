@@ -30,6 +30,18 @@ interface AlertSubRow {
   auth: string;
 }
 
+function parseStoredDetail(detail: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(detail) as unknown;
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToAlert(row: AlertRow): Alert {
   const alert: Alert = {
     id: row.id,
@@ -40,19 +52,27 @@ function rowToAlert(row: AlertRow): Alert {
   };
   if (row.workflow_id !== null) alert.workflowId = row.workflow_id;
   if (row.task_id !== null) alert.taskId = row.task_id;
-  if (row.detail !== null) alert.detail = JSON.parse(row.detail) as Record<string, unknown>;
+  if (row.detail !== null) {
+    const detail = parseStoredDetail(row.detail);
+    if (detail !== undefined) alert.detail = detail;
+  }
   return alert;
+}
+
+export interface AlertListCursor {
+  timestamp: string;
+  id: string;
 }
 
 export interface AlertListOpts {
   limit?: number;
-  beforeTs?: string;
+  before?: AlertListCursor;
 }
 
 export class AlertRepo {
   private readonly stmtInsert: Statement<[string, string, string, string, string, string | null, string | null, string | null]>;
   private readonly stmtList: Statement<[number], AlertRow>;
-  private readonly stmtListBefore: Statement<[string, number], AlertRow>;
+  private readonly stmtListBefore: Statement<[string, string, string, number], AlertRow>;
 
   constructor(db: Database.Database) {
     configureSqliteDatabase(db);
@@ -77,8 +97,8 @@ export class AlertRepo {
 
   list(opts: AlertListOpts = {}): Alert[] {
     const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
-    const rows = opts.beforeTs !== undefined
-      ? this.stmtListBefore.all(opts.beforeTs, limit)
+    const rows = opts.before !== undefined
+      ? this.stmtListBefore.all(opts.before.timestamp, opts.before.timestamp, opts.before.id, limit)
       : this.stmtList.all(limit);
     return rows.map(rowToAlert);
   }

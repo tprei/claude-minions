@@ -8,6 +8,20 @@ import type {
   ProviderResumeSpec,
 } from "../provider-plugin.js";
 
+const LOGIN_STATUS_TIMEOUT_MS = 5_000;
+const STREAM_IDLE_TIMEOUT_RE = /^\s*(?:Anthropic\s+)?API Error:\s*Stream idle timeout\b/i;
+
+function parseJsonObject(line: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(line);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function toolResultTextSegments(content: unknown): string[] {
   if (typeof content === "string") return [content];
   if (!Array.isArray(content)) return [];
@@ -20,11 +34,24 @@ function toolResultTextSegments(content: unknown): string[] {
 }
 
 function hasStreamIdleTimeout(content: unknown): boolean {
-  return toolResultTextSegments(content).some((text) => /^\s*API Error:\s*Stream idle timeout\b/i.test(text));
+  return toolResultTextSegments(content).some((text) => STREAM_IDLE_TIMEOUT_RE.test(text));
 }
 
 function isStreamIdleTimeoutResult(json: Record<string, unknown>): boolean {
-  return typeof json["result"] === "string" && /^\s*API Error:\s*Stream idle timeout\b/i.test(json["result"]);
+  return typeof json["result"] === "string" && STREAM_IDLE_TIMEOUT_RE.test(json["result"]);
+}
+
+function claudeResultMessage(json: Record<string, unknown>, subtype: string | undefined): string {
+  if (typeof json["result"] === "string" && json["result"].trim().length > 0) {
+    return json["result"];
+  }
+  const errors = Array.isArray(json["errors"]) ? json["errors"] : [];
+  for (const entry of errors) {
+    if (entry !== null && typeof entry === "object" && typeof (entry as Record<string, unknown>)["message"] === "string") {
+      return (entry as Record<string, unknown>)["message"] as string;
+    }
+  }
+  return `unmapped result subtype: ${String(subtype ?? "unknown")}`;
 }
 
 export class ClaudeCodeProvider implements ProviderPlugin {
@@ -93,11 +120,12 @@ USER QUESTION:
 
   async resume(spec: ProviderResumeSpec): Promise<ProviderInvocation> {
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
+    const resumeArg = `--resume=${spec.sessionRef}`;
     if (spec.workflowKind === "think-thread") {
       return {
         command: [
           "claude", "-p", spec.prompt,
-          "--resume", spec.sessionRef,
+          resumeArg,
           "--output-format", "stream-json", "--verbose",
           "--allowedTools", ClaudeCodeProvider.THINK_ALLOWED_TOOLS,
           "--disallowedTools", ClaudeCodeProvider.THINK_DISALLOWED_TOOLS,
@@ -106,7 +134,7 @@ USER QUESTION:
       };
     }
     return {
-      command: ["claude", "-p", spec.prompt, "--resume", spec.sessionRef, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
+      command: ["claude", "-p", spec.prompt, resumeArg, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
       providerType: "claude-code",
     };
   }
@@ -117,12 +145,8 @@ USER QUESTION:
   parseFrame(line: string): ProviderEvent[] {
     if (line.trim().length === 0) return [];
 
-    let json: Record<string, unknown>;
-    try {
-      json = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      return [];
-    }
+    const json = parseJsonObject(line);
+    if (json === null) return [];
 
     const type = json["type"];
 
@@ -146,6 +170,7 @@ USER QUESTION:
         const content = Array.isArray(message?.["content"]) ? (message["content"] as unknown[]) : [];
         const events: ProviderEvent[] = [];
         for (const block of content) {
+          if (block === null || typeof block !== "object") continue;
           const b = block as Record<string, unknown>;
           if (b["type"] === "text") {
             events.push({ kind: "assistant_text", text: String(b["text"] ?? "") });
@@ -168,6 +193,7 @@ USER QUESTION:
         const content = Array.isArray(userMsg?.["content"]) ? (userMsg["content"] as unknown[]) : [];
         const events: ProviderEvent[] = [];
         for (const block of content) {
+          if (block === null || typeof block !== "object") continue;
           const b = block as Record<string, unknown>;
           if (b["type"] === "tool_result") {
             events.push({
@@ -191,12 +217,13 @@ USER QUESTION:
         const errored = subtype !== "success" || json["is_error"] === true;
         if (errored) {
           const streamIdleTimeout = isStreamIdleTimeoutResult(json);
+          const errorDuringExecution = subtype === "error_during_execution";
           events.push({
             kind: "error",
-            recoverable: streamIdleTimeout,
+            recoverable: streamIdleTimeout || errorDuringExecution,
             ...(streamIdleTimeout ? { source: "stream_idle_timeout" } : {}),
             message: subtype !== "success"
-              ? `unmapped result subtype: ${String(subtype ?? "unknown")}`
+              ? claudeResultMessage(json, subtype)
               : streamIdleTimeout
                 ? String(json["result"])
                 : `result is_error=true with subtype: ${String(subtype ?? "unknown")}`,
@@ -248,11 +275,26 @@ USER QUESTION:
 
   loginStatus(): Promise<{ loggedIn: boolean; details?: string }> {
     return new Promise((resolve) => {
-      const child = spawn("claude", ["auth", "status"]);
+      const child = spawn("claude", ["auth", "status"], { stdio: ["ignore", "pipe", "pipe"] });
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill("SIGTERM");
+        resolve({ loggedIn: false, details: "auth status timed out" });
+      }, LOGIN_STATUS_TIMEOUT_MS);
+      child.stdout?.resume();
+      child.stderr?.resume();
       child.on("close", (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         resolve({ loggedIn: code === 0 });
       });
       child.on("error", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         resolve({ loggedIn: false });
       });
     });

@@ -18,15 +18,16 @@ export interface QualityGateServiceDeps {
 
 export class QualityGateService {
   private readonly deps: QualityGateServiceDeps;
-  private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent> | null>();
+  private readonly activeIterators = new Map<string, { iterator: AsyncIterator<WorkflowEvent> | null }>();
   private readonly taskControllers = new Map<string, AbortController>();
 
   constructor(deps: QualityGateServiceDeps) {
     this.deps = deps;
     deps.signal.addEventListener("abort", () => {
-      for (const iter of this.activeIterators.values()) {
-        if (iter !== null) void iter.return?.();
+      for (const attachment of this.activeIterators.values()) {
+        if (attachment.iterator !== null) void attachment.iterator.return?.();
       }
+      this.activeIterators.clear();
       for (const ctrl of this.taskControllers.values()) ctrl.abort();
       this.taskControllers.clear();
     });
@@ -34,13 +35,14 @@ export class QualityGateService {
 
   attach(workflowId: string): void {
     if (this.activeIterators.has(workflowId)) return;
-    this.activeIterators.set(workflowId, null);
-    void this.attachAsync(workflowId);
+    const attachment = { iterator: null };
+    this.activeIterators.set(workflowId, attachment);
+    void this.attachAsync(workflowId, attachment);
   }
 
   detach(workflowId: string): void {
-    const iter = this.activeIterators.get(workflowId);
-    if (iter) void iter.return?.();
+    const attachment = this.activeIterators.get(workflowId);
+    if (attachment?.iterator) void attachment.iterator.return?.();
     this.activeIterators.delete(workflowId);
 
     for (const key of this.taskControllers.keys()) {
@@ -51,11 +53,17 @@ export class QualityGateService {
     }
   }
 
-  private async attachAsync(workflowId: string): Promise<void> {
+  private isAttached(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): boolean {
+    return !this.deps.signal.aborted && this.activeIterators.get(workflowId) === attachment;
+  }
+
+  private async attachAsync(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): Promise<void> {
     const cursor = await this.deps.workflowRepo.latestCursor(workflowId);
+    if (!this.isAttached(workflowId, attachment)) return;
     const workflow = await this.deps.workflowRepo.get(workflowId);
+    if (!this.isAttached(workflowId, attachment)) return;
     if (!workflow) {
-      this.activeIterators.delete(workflowId);
+      if (this.activeIterators.get(workflowId) === attachment) this.activeIterators.delete(workflowId);
       return;
     }
     for (const [taskId, task] of Object.entries(workflow.graph)) {
@@ -63,7 +71,7 @@ export class QualityGateService {
         this.spawnRunForTask(workflowId, taskId);
       }
     }
-    void this.consume(workflowId, cursor);
+    void this.consume(workflowId, cursor, attachment);
   }
 
   private spawnRunForTask(workflowId: string, taskId: string): void {
@@ -78,17 +86,20 @@ export class QualityGateService {
       });
   }
 
-  private async consume(workflowId: string, fromCursor?: number): Promise<void> {
-    const latestCursor = fromCursor ?? await this.deps.workflowRepo.latestCursor(workflowId);
-    const iterable = this.deps.workflowRepo.subscribe(workflowId, latestCursor);
+  private async consume(workflowId: string, fromCursor: number, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): Promise<void> {
+    const iterable = this.deps.workflowRepo.subscribe(workflowId, fromCursor);
     const iter = iterable[Symbol.asyncIterator]();
-    this.activeIterators.set(workflowId, iter);
+    if (!this.isAttached(workflowId, attachment)) {
+      void iter.return?.();
+      return;
+    }
+    attachment.iterator = iter;
     try {
       while (true) {
-        if (this.deps.signal.aborted) break;
+        if (!this.isAttached(workflowId, attachment)) break;
         const result = await iter.next();
         if (result.done) break;
-        if (this.deps.signal.aborted) break;
+        if (!this.isAttached(workflowId, attachment)) break;
 
         const event = result.value;
         if (event.kind !== "task-transitioned") continue;
@@ -112,7 +123,7 @@ export class QualityGateService {
     } catch (err) {
       this.deps.log.error(`quality-gate: consume error for ${workflowId}`, { error: (err as Error).message });
     } finally {
-      this.activeIterators.delete(workflowId);
+      if (this.activeIterators.get(workflowId) === attachment) this.activeIterators.delete(workflowId);
     }
   }
 
@@ -207,6 +218,7 @@ export class QualityGateService {
       if (defaultTimeoutMs !== undefined) runOpts.defaultTimeoutMs = defaultTimeoutMs;
       result = await plugin.run(configs, handle.path, runOpts);
     } catch (err) {
+      if (signal.aborted) return;
       this.deps.log.error(`quality-gate: plugin.run threw for ${workflowId}:${taskId}`, { taskId, workflowId, error: (err as Error).message });
       const artifact = {
         kind: "quality-report" as const,

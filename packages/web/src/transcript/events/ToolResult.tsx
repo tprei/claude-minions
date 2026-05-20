@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type { ToolResultEvent, ToolResultFormat, ToolResultStatus } from "@minions/shared";
-import { Markdown } from "../../components/Markdown.js";
 import { Diff } from "../../components/Diff.js";
+import { MarkdownView } from "../../markdown/MarkdownView.js";
 import { cx } from "../../util/classnames.js";
+import { safeToolResultImageSrc } from "./toolResultImage.js";
 
 const STATUS_COLORS: Record<ToolResultStatus, string> = {
   ok: "bg-green-900 text-green-300",
@@ -49,6 +50,7 @@ interface Props {
 export function ToolResult({ event }: Props) {
   const [expanded, setExpanded] = useState(false);
   const fmt = detectFormat(event);
+  const imageSrc = fmt === "image" ? safeToolResultImageSrc(event.body) : null;
   return (
     <div className="my-1 ml-6 bg-bg-elev border border-border rounded-md overflow-hidden">
       <button
@@ -83,19 +85,24 @@ export function ToolResult({ event }: Props) {
       </button>
       {expanded && (
         <div className="border-t border-border p-2 font-mono text-xs">
-          {fmt === "markdown" && <Markdown text={event.body} />}
+          {fmt === "markdown" && <MarkdownView text={event.body} />}
           {fmt === "diff" && <Diff text={event.body} wrap />}
           {fmt === "json" && (
             <pre className="text-[11px] text-fg-muted whitespace-pre-wrap break-words overflow-x-auto">
               {event.body}
             </pre>
           )}
-          {fmt === "image" && (
+          {fmt === "image" && imageSrc && (
             <img
-              src={event.body}
+              src={imageSrc}
               alt="tool result"
               className="max-w-xs rounded border border-border"
             />
+          )}
+          {fmt === "image" && !imageSrc && (
+            <pre className="text-fg-muted whitespace-pre-wrap break-words">
+              Blocked image source
+            </pre>
           )}
           {(fmt === "text" || fmt === "binary") && (
             <pre className="text-fg-muted whitespace-pre-wrap break-words">{event.body}</pre>

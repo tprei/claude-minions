@@ -31,4 +31,28 @@ describe("sseStatusStore", () => {
     expect(second).toHaveBeenCalledOnce();
     expect(other).not.toHaveBeenCalled();
   });
+
+  it("keeps multiple reconnect handlers for the same workflow key and unregisters them individually", () => {
+    const store = createSseStatusStore();
+    const first = vi.fn();
+    const second = vi.fn();
+
+    store.registerReconnect("conn-1:wf-a", first);
+    store.registerReconnect("conn-1:wf-a", second);
+
+    expect(store.forceReconnect("conn-1:wf-a")).toBe(true);
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+
+    store.unregisterReconnect("conn-1:wf-a", first);
+    first.mockClear();
+    second.mockClear();
+
+    expect(store.forceReconnect("conn-1:wf-a")).toBe(true);
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledOnce();
+
+    store.unregisterReconnect("conn-1:wf-a", second);
+    expect(store.forceReconnect("conn-1:wf-a")).toBe(false);
+  });
 });

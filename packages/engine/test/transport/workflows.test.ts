@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { NoopRestackExecutor } from "../../src/application/restack-executor.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
 import { createRecoveryService } from "../../src/application/recovery-service.js";
@@ -6,15 +6,21 @@ import { silentLogger } from "../test-helpers.js";
 import { StubRuntimeBackend } from "../../src/plugins/stub-runtime.js";
 import { createServer } from "../../src/transport/server.js";
 import { createSingleTaskWorkflow } from "../../src/domain/workflow.js";
+import type { WorkflowPlannerService } from "../../src/application/planner-service.js";
 
 const now = "2026-05-04T11:19:00.000Z";
 
-function makeApp() {
+function makeApp(knownRepoIds?: string[]) {
   const repo = new InMemoryWorkflowRepository();
   const executor = new NoopRestackExecutor();
   const runtime = new StubRuntimeBackend();
   const recoveryService = createRecoveryService(repo, executor, runtime, () => now, silentLogger());
-  const app = createServer({ repo, recoveryService, executor });
+  const app = createServer({
+    repo,
+    recoveryService,
+    executor,
+    ...(knownRepoIds !== undefined ? { isKnownRepoId: (repoId: string) => knownRepoIds.includes(repoId) } : {}),
+  });
   return { app, repo };
 }
 
@@ -48,7 +54,7 @@ describe("POST /workflows", () => {
 
     expect(res.status).toBe(400);
     const body = await res.json() as { code: string };
-    expect(body.code).toBe("invalid_workflow");
+    expect(body.code).toBe("invalid_request");
   });
 
   it("returns 400 on malformed JSON body", async () => {
@@ -63,6 +69,56 @@ describe("POST /workflows", () => {
     expect(res.status).toBe(400);
     const body = await res.json() as { code: string };
     expect(body.code).toBe("invalid_body");
+  });
+
+  it("returns 400 when repoId is not configured", async () => {
+    const { app } = makeApp(["known-repo"]);
+
+    const res = await app.request("/workflows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "wf-1",
+        kind: "single-task",
+        repoId: "missing-repo",
+        tasks: [{ id: "t1", title: "Task", prompt: "Do something" }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string; expected: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("repoId");
+    expect(body.details.expected).toBe("configured repo id");
+  });
+});
+
+describe("POST /workflows/plan", () => {
+  it("rejects unknown repoId before invoking the planner", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const executor = new NoopRestackExecutor();
+    const runtime = new StubRuntimeBackend();
+    const recoveryService = createRecoveryService(repo, executor, runtime, () => now, silentLogger());
+    const plannerService = { plan: vi.fn() } as unknown as WorkflowPlannerService;
+    const app = createServer({
+      repo,
+      recoveryService,
+      executor,
+      plannerService,
+      isKnownRepoId: (repoId) => repoId === "known-repo",
+    });
+
+    const res = await app.request("/workflows/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "ship it", repoId: "missing-repo" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("repoId");
+    expect(plannerService.plan).not.toHaveBeenCalled();
   });
 });
 

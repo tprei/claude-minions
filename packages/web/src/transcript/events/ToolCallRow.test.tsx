@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ToolCallEvent, ToolResultEvent } from "@minions/shared";
-import { ToolCallRow } from "./ToolCallRow.js";
+import { ResultBody, ToolCallRow } from "./ToolCallRow.js";
 import { WorktreePathContext } from "./toolFormat.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -117,5 +117,36 @@ describe("ToolCallRow", () => {
       button!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(container.querySelector("pre")).toBeNull();
+  });
+
+  it("blocks external tool-result image URLs", () => {
+    act(() => {
+      root.render(
+        createElement(ResultBody, {
+          event: makeResult({
+            format: "image",
+            body: "https://tracker.example/pixel.png",
+          }),
+        }),
+      );
+    });
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.textContent).toContain("Blocked image source");
+  });
+
+  it("renders data image tool results", () => {
+    act(() => {
+      root.render(
+        createElement(ResultBody, {
+          event: makeResult({
+            format: "image",
+            body: "data:image/png;base64,iVBORw0KGgo=",
+          }),
+        }),
+      );
+    });
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
   });
 });

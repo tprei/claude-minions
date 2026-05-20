@@ -108,6 +108,31 @@ describe("GET /workflows/:id/events (SSE)", () => {
     }
   });
 
+  it("missing since starts at the workflow tail instead of replaying full history", async () => {
+    const { app, repo } = makeApp();
+    await seedWorkflow(repo);
+
+    await applyCommand(repo, {
+      kind: "transition-task",
+      workflowId: "wf-1",
+      transition: { kind: "mark-ready", taskId, now },
+    });
+
+    const res = await app.request("/workflows/wf-1/events");
+    expect(res.status).toBe(200);
+
+    const eventPromise = collectSSEFrames(res, 1);
+    await applyCommand(repo, {
+      kind: "transition-task",
+      workflowId: "wf-1",
+      transition: { kind: "mark-running", taskId, sessionId: "s1", now },
+    });
+
+    const frames = await eventPromise;
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.id).toBe("2");
+  });
+
   it("Last-Event-ID overrides since parameter", async () => {
     const { app, repo } = makeApp();
     const workflow = await seedWorkflow(repo);
@@ -145,7 +170,7 @@ describe("GET /workflows/:id/events (SSE)", () => {
     }
   });
 
-  it("provider-event frame has no id field; surrounding durable frames have id", async () => {
+  it("provider-event frame is replayable and carries a cursor id", async () => {
     const { app, repo } = makeApp();
     await seedWorkflow(repo);
 
@@ -163,7 +188,7 @@ describe("GET /workflows/:id/events (SSE)", () => {
     const frames1 = await collectSSEFrames(res, 1);
     expect(frames1[0]?.id).toBeDefined();
 
-    // Now publish a transient frame via hub — need repo direct access
+    // Now publish a provider event via the repository.
     const transient: WorkflowEvent = {
       cursor: 0,
       workflowId: "wf-1",
@@ -176,22 +201,28 @@ describe("GET /workflows/:id/events (SSE)", () => {
       },
     };
 
-    // Open a new SSE connection from cursor 0 to get replay + transient
+    // Open a new SSE connection from cursor 0 to get replay + provider event.
     const res2 = await app.request("/workflows/wf-1/events?since=0");
     expect(res2.status).toBe(200);
 
-    // Publish transient after stream opens
+    // Publish provider event after stream opens.
     const transientPromise = collectSSEFrames(res2, 2);
     repo.publishTransient("wf-1", transient);
 
     const frames2 = await transientPromise;
-    // First frame is durable (cursor 1), second is transient (no id)
+    // First frame is durable (cursor 1), second is the provider event (cursor 2).
     const durableFrame = frames2.find((f) => f.event !== "provider-event" && f.id !== undefined) ?? frames2[0];
     const transientFrame = frames2.find((f) => f.event === "provider-event");
 
     expect(durableFrame?.id).toBeDefined();
     expect(transientFrame).toBeDefined();
-    expect(transientFrame?.id).toBeUndefined();
+    expect(transientFrame?.id).toBe("2");
+
+    const res3 = await app.request("/workflows/wf-1/events?since=1");
+    expect(res3.status).toBe(200);
+    const replayed = await collectSSEFrames(res3, 1);
+    expect(replayed[0]?.event).toBe("provider-event");
+    expect(replayed[0]?.id).toBe("2");
   });
 
   it("live: applyCommand events arrive via SSE after stream opens", async () => {

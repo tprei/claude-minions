@@ -117,7 +117,12 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   }
 
   publishTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" | "ci-poll-result" }>): void {
-    this.hub.notifyTransient(workflowId, event);
+    if (!this.workflows.has(workflowId)) return;
+    const workflowEvents = this.events.get(workflowId) ?? [];
+    const nextCursor = workflowEvents[workflowEvents.length - 1]?.cursor ?? 0;
+    const stamped = { ...event, cursor: nextCursor + 1 };
+    this.events.set(workflowId, [...workflowEvents, stamped]);
+    this.hub.notify(workflowId, [stamped]);
   }
 
   subscriberCount(workflowId: string): number {

@@ -68,7 +68,7 @@ describe("dispatch planning", () => {
     expect(plan).toHaveLength(0);
   });
 
-  it("leaves downstream nodes unscheduled after a dependency fails", () => {
+  it("cancels blocked descendants after a dependency fails while leaving unrelated roots schedulable", () => {
     let workflow = makeThreeNodeWorkflow();
     workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "backend", now: fixedNow });
     workflow = transitionTask(workflow, {
@@ -82,7 +82,7 @@ describe("dispatch planning", () => {
     const plan = planDispatch(workflow);
 
     expect(plan.map((candidate) => candidate.task.id)).toEqual(["frontend"]);
-    expect(workflow.graph.tests?.executionStatus).toBe("pending");
+    expect(workflow.graph.tests?.executionStatus).toBe("cancelled");
   });
 
   it("returns empty when workflow is completed", () => {
@@ -105,7 +105,6 @@ describe("dispatch planning", () => {
     });
     workflow = transitionTask(workflow, { kind: "fail-task", taskId: "backend", now: fixedNow });
     workflow = transitionTask(workflow, { kind: "cancel-task", taskId: "frontend", now: fixedNow });
-    workflow = transitionTask(workflow, { kind: "cancel-task", taskId: "tests", now: fixedNow });
 
     expect(workflow.status).toBe("failed");
     expect(planDispatch(workflow)).toHaveLength(0);

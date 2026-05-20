@@ -126,7 +126,7 @@ export const slashCommands: SlashCommand[] = [
         kind: "transition-task",
         workflowId: requireWorkflowId(ctx, "cancel"),
         transition: {
-          kind: "cancel",
+          kind: "cancel-task",
           taskId: requireTaskId(ctx, "cancel"),
           now: new Date().toISOString(),
         },

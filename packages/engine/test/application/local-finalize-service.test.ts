@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LocalFinalizeService } from "../../src/application/local-finalize-service.js";
 import { applyCommand } from "../../src/application/commands.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
@@ -153,5 +153,41 @@ describe("LocalFinalizeService", () => {
     const result = await repo.get(WORKFLOW_ID);
     expect(result?.graph[TASK_ID]?.executionStatus).toBe("merged");
     ctrl.abort();
+  });
+
+  it("retries transient finalization failures without a restart", async () => {
+    vi.useFakeTimers();
+    const repo = new InMemoryWorkflowRepository();
+    await makeWorkflowInFinalizing(repo);
+
+    const ctrl = new AbortController();
+    let attempts = 0;
+    const svc = new LocalFinalizeService({
+      workflowRepo: repo,
+      applyCommand: async (cmd) => {
+        if (
+          cmd.kind === "transition-task" &&
+          cmd.transition.kind === "complete-without-pr" &&
+          attempts++ === 0
+        ) {
+          throw new Error("temporary local merge failure");
+        }
+        return applyCommand(repo, cmd);
+      },
+      signal: ctrl.signal,
+      now,
+      log: silentLogger(),
+      retryDelayMs: 25,
+    });
+
+    svc.attach(WORKFLOW_ID);
+    await vi.advanceTimersByTimeAsync(50);
+
+    const wf = await repo.get(WORKFLOW_ID);
+    expect(attempts).toBe(2);
+    expect(wf?.graph[TASK_ID]?.executionStatus).toBe("merged");
+
+    ctrl.abort();
+    vi.useRealTimers();
   });
 });

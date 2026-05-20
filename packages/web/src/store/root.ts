@@ -1,18 +1,29 @@
 import { create } from "zustand";
 import { useConnectionStore, type Connection } from "../connections/store.js";
 import { attachConnection } from "./connectionState.js";
+import { setActiveConnIdResolver } from "./optimistic.js";
 
 interface RootStore {
+  activeConnection: Connection | null;
   getActiveConnection: () => Connection | null;
 }
 
-export const useRootStore = create<RootStore>(() => ({
+function resolveActiveConnection(connections: Connection[], activeId: string | null): Connection | null {
+  if (!activeId) return null;
+  return connections.find(c => c.id === activeId) ?? null;
+}
+
+export const useRootStore = create<RootStore>((_set, get) => ({
+  activeConnection: resolveActiveConnection(
+    useConnectionStore.getState().connections,
+    useConnectionStore.getState().activeId,
+  ),
   getActiveConnection() {
-    const { connections, activeId } = useConnectionStore.getState();
-    if (!activeId) return null;
-    return connections.find(c => c.id === activeId) ?? null;
+    return get().activeConnection;
   },
 }));
+
+setActiveConnIdResolver(() => useConnectionStore.getState().activeId);
 
 const _disposeMap = new Map<string, { conn: Connection; dispose: () => void }>();
 
@@ -21,18 +32,22 @@ function shouldReplaceAttached(prev: Connection, next: Connection): boolean {
 }
 
 function syncActiveConnection(connections: Connection[], activeId: string | null): void {
-  const activeConn = activeId ? connections.find(c => c.id === activeId) ?? null : null;
+  const activeConn = resolveActiveConnection(connections, activeId);
+  useRootStore.setState({ activeConnection: activeConn });
 
+  const currentById = new Map(connections.map((conn) => [conn.id, conn]));
   for (const [id, attached] of _disposeMap) {
-    if (!activeConn || id !== activeConn.id || shouldReplaceAttached(attached.conn, activeConn)) {
+    const current = currentById.get(id);
+    if (!current || shouldReplaceAttached(attached.conn, current)) {
       attached.dispose();
       _disposeMap.delete(id);
     }
   }
 
-  if (activeConn && !_disposeMap.has(activeConn.id)) {
-    const dispose = attachConnection(activeConn, 0);
-    _disposeMap.set(activeConn.id, { conn: activeConn, dispose });
+  for (const conn of connections) {
+    if (_disposeMap.has(conn.id)) continue;
+    const dispose = attachConnection(conn, 0);
+    _disposeMap.set(conn.id, { conn, dispose });
   }
 }
 

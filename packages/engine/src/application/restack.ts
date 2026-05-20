@@ -1,5 +1,6 @@
 import { DomainError } from "../domain/errors.js";
 import type { Artifact, GraphOperation, GraphOperationStatus, TaskNode, Workflow } from "../domain/types.js";
+import { TASK_AGENT_OCCUPYING_STATUSES } from "../domain/types.js";
 
 export interface RestackPlan {
   ancestorId: string;
@@ -27,6 +28,10 @@ export interface CompleteRestackInput {
 }
 
 export function planRestack(workflow: Workflow, ancestorId: string): RestackPlan {
+  if (!workflow.graph[ancestorId]) {
+    throw new DomainError("not_found", "restack ancestor task not found", { ancestorId });
+  }
+
   const descendantIds = collectDescendantIds(workflow, ancestorId);
   const ordered = topologicalTasks(workflow).filter((task) => descendantIds.has(task.id));
 
@@ -43,6 +48,14 @@ export function requestRestack(workflow: Workflow, input: RequestRestackInput): 
   if (existing) return { workflow, operation: existing };
 
   const plan = planRestack(workflow, input.ancestorId);
+  const activeDescendant = plan.descendants.find((task) => TASK_AGENT_OCCUPYING_STATUSES.has(task.executionStatus));
+  if (activeDescendant) {
+    throw new DomainError("invalid_transition", "restack requires descendant tasks to be idle", {
+      ancestorId: input.ancestorId,
+      taskId: activeDescendant.id,
+      status: activeDescendant.executionStatus,
+    });
+  }
   const affectedNodeIds = plan.descendants.map((task) => task.id);
   const operation = createRestackOperation(workflow.id, affectedNodeIds, input);
   const graph = { ...workflow.graph };

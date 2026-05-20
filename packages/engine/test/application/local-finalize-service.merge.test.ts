@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { LocalFinalizeService } from "../../src/application/local-finalize-service.js";
 import { applyCommand } from "../../src/application/commands.js";
-import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
+import { InMemoryWorkflowRepository, type WorkflowRepository } from "../../src/application/repository.js";
 import { createWorkflow } from "../../src/domain/workflow.js";
 import type { WorkspaceBackend, WorkspaceHandle } from "../../src/plugins/workspace-backend.js";
 import type { GitClient } from "../../src/plugins/git/git-client.js";
@@ -91,6 +91,23 @@ function makeGitClient(overrides: Partial<{
     worktreeList: vi.fn(),
     branchExists: vi.fn(),
   } as unknown as GitClient;
+}
+
+function withLatestCursor(repo: InMemoryWorkflowRepository, latestCursor: number): WorkflowRepository {
+  return {
+    get: repo.get.bind(repo),
+    save: repo.save.bind(repo),
+    delete: repo.delete.bind(repo),
+    eventsSince: repo.eventsSince.bind(repo),
+    latestCursor: async () => latestCursor,
+    subscribe: repo.subscribe.bind(repo),
+    publishTransient: repo.publishTransient.bind(repo),
+    lookupIdempotency: repo.lookupIdempotency.bind(repo),
+    listRecoverable: repo.listRecoverable.bind(repo),
+    list: repo.list.bind(repo),
+    appendTranscript: repo.appendTranscript.bind(repo),
+    listTranscript: repo.listTranscript.bind(repo),
+  };
 }
 
 async function makeWorkflowInFinalizing(
@@ -318,6 +335,100 @@ describe("LocalFinalizeService — real merge path", () => {
 
     svc.attach(WORKFLOW_ID);
     await new Promise<void>((r) => setTimeout(r, 30));
+
+    const wf = await repo.get(WORKFLOW_ID);
+    expect(wf?.graph[TASK_ID]?.executionStatus).toBe("merged");
+    ctrl.abort();
+  });
+
+  it("skips repos rejected by the local finalize predicate", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await makeWorkflowInFinalizing(repo);
+
+    const gitClient = makeGitClient();
+    const ctrl = new AbortController();
+    const svc = new LocalFinalizeService({
+      workflowRepo: repo,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      signal: ctrl.signal,
+      now,
+      log: silentLogger(),
+      shouldFinalize: () => false,
+      workspace: makeWorkspace(makeHandle()),
+      gitClient,
+      repoRegistry: REPO_REGISTRY,
+    });
+
+    svc.attach(WORKFLOW_ID);
+    await new Promise<void>((r) => setTimeout(r, 30));
+
+    expect(gitClient.revParse).not.toHaveBeenCalled();
+    const wf = await repo.get(WORKFLOW_ID);
+    expect(wf?.graph[TASK_ID]?.executionStatus).toBe("finalizing");
+    ctrl.abort();
+  });
+
+  it("deduplicates overlapping finalization triggers for the same task", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await makeWorkflowInFinalizing(repo);
+
+    let resolveMerge: (() => void) | undefined;
+    const mergeGate = new Promise<void>((resolve) => {
+      resolveMerge = resolve;
+    });
+    let ffMergeCalls = 0;
+
+    const gitClient: GitClient = {
+      revParse: vi.fn().mockImplementation(async (_cwd: string, ref: string) => {
+        if (ref === BASE_BRANCH) return "basesha";
+        return "somesha";
+      }),
+      run: vi.fn().mockImplementation(async (_cwd: string, args: string[]) => {
+        if (args.includes("rev-list") && args.includes("--count")) {
+          return { stdout: "1", stderr: "" };
+        }
+        if (args.includes("merge") && args.includes("--ff-only")) {
+          ffMergeCalls += 1;
+          await mergeGate;
+          return { stdout: "", stderr: "" };
+        }
+        if (args.includes("merge") && args.includes("--no-ff")) {
+          return { stdout: "", stderr: "" };
+        }
+        if (args.includes("merge") && args.includes("--abort")) {
+          return { stdout: "", stderr: "" };
+        }
+        if (args.includes("reset") && args.includes("--hard")) {
+          return { stdout: "", stderr: "" };
+        }
+        return { stdout: "", stderr: "" };
+      }),
+      worktreeAdd: vi.fn(),
+      worktreeRemove: vi.fn(),
+      worktreePrune: vi.fn(),
+      worktreeList: vi.fn(),
+      branchExists: vi.fn(),
+    } as unknown as GitClient;
+
+    const ctrl = new AbortController();
+    const svc = new LocalFinalizeService({
+      workflowRepo: withLatestCursor(repo, 0),
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      signal: ctrl.signal,
+      now,
+      log: silentLogger(),
+      workspace: makeWorkspace(makeHandle()),
+      gitClient,
+      repoRegistry: REPO_REGISTRY,
+    });
+
+    svc.attach(WORKFLOW_ID);
+    await new Promise<void>((r) => setTimeout(r, 20));
+
+    expect(ffMergeCalls).toBe(1);
+
+    resolveMerge?.();
+    await new Promise<void>((r) => setTimeout(r, 20));
 
     const wf = await repo.get(WORKFLOW_ID);
     expect(wf?.graph[TASK_ID]?.executionStatus).toBe("merged");

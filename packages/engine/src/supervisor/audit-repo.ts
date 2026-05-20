@@ -25,6 +25,18 @@ interface AuditRow {
   detail: string | null;
 }
 
+function parseStoredDetail(detail: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(detail) as unknown;
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToEvent(row: AuditRow): AuditEvent {
   const event: AuditEvent = {
     id: row.id,
@@ -36,13 +48,21 @@ function rowToEvent(row: AuditRow): AuditEvent {
   if (row.task_id !== null) event.taskId = row.task_id;
   if (row.target_kind !== null) event.targetKind = row.target_kind;
   if (row.target_id !== null) event.targetId = row.target_id;
-  if (row.detail !== null) event.detail = JSON.parse(row.detail) as Record<string, unknown>;
+  if (row.detail !== null) {
+    const detail = parseStoredDetail(row.detail);
+    if (detail !== undefined) event.detail = detail;
+  }
   return event;
+}
+
+export interface AuditListCursor {
+  timestamp: string;
+  id: string;
 }
 
 export interface AuditListOpts {
   limit?: number;
-  beforeTs?: string;
+  before?: AuditListCursor;
   action?: string;
   workflowId?: string;
 }
@@ -50,11 +70,11 @@ export interface AuditListOpts {
 export class AuditRepo {
   private readonly stmtInsert: Statement<[string, string, string, string, string | null, string | null, string | null, string | null, string | null]>;
   private readonly stmtList: Statement<[number], AuditRow>;
-  private readonly stmtListBefore: Statement<[string, number], AuditRow>;
+  private readonly stmtListBefore: Statement<[string, string, string, number], AuditRow>;
   private readonly stmtListAction: Statement<[string, number], AuditRow>;
-  private readonly stmtListActionBefore: Statement<[string, string, number], AuditRow>;
+  private readonly stmtListActionBefore: Statement<[string, string, string, string, number], AuditRow>;
   private readonly stmtListWorkflow: Statement<[string, number], AuditRow>;
-  private readonly stmtListWorkflowBefore: Statement<[string, string, number], AuditRow>;
+  private readonly stmtListWorkflowBefore: Statement<[string, string, string, string, number], AuditRow>;
 
   constructor(db: Database.Database) {
     configureSqliteDatabase(db);
@@ -85,27 +105,27 @@ export class AuditRepo {
   list(opts: AuditListOpts = {}): AuditEvent[] {
     const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
     if (opts.workflowId !== undefined) {
-      const wfOpts: { limit?: number; beforeTs?: string } = { limit };
-      if (opts.beforeTs !== undefined) wfOpts.beforeTs = opts.beforeTs;
+      const wfOpts: { limit: number; before?: AuditListCursor } = { limit };
+      if (opts.before !== undefined) wfOpts.before = opts.before;
       return this.listByWorkflow(opts.workflowId, wfOpts);
     }
     if (opts.action !== undefined) {
-      const rows = opts.beforeTs !== undefined
-        ? this.stmtListActionBefore.all(opts.action, opts.beforeTs, limit)
+      const rows = opts.before !== undefined
+        ? this.stmtListActionBefore.all(opts.action, opts.before.timestamp, opts.before.timestamp, opts.before.id, limit)
         : this.stmtListAction.all(opts.action, limit);
       return rows.map(rowToEvent);
     }
-    const rows = opts.beforeTs !== undefined
-      ? this.stmtListBefore.all(opts.beforeTs, limit)
+    const rows = opts.before !== undefined
+      ? this.stmtListBefore.all(opts.before.timestamp, opts.before.timestamp, opts.before.id, limit)
       : this.stmtList.all(limit);
     return rows.map(rowToEvent);
   }
 
-  listByWorkflow(workflowId: string, opts: { limit?: number; beforeTs?: string } = {}): AuditEvent[] {
+  listByWorkflow(workflowId: string, opts: { limit?: number; before?: AuditListCursor } = {}): AuditEvent[] {
     const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
-    const beforeTs = opts.beforeTs;
-    const rows = beforeTs !== undefined
-      ? this.stmtListWorkflowBefore.all(workflowId, beforeTs, limit)
+    const before = opts.before;
+    const rows = before !== undefined
+      ? this.stmtListWorkflowBefore.all(workflowId, before.timestamp, before.timestamp, before.id, limit)
       : this.stmtListWorkflow.all(workflowId, limit);
     return rows.map(rowToEvent);
   }

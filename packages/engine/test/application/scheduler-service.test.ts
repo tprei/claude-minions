@@ -63,6 +63,22 @@ async function waitForStatus(
   throw new Error(`Timed out waiting for ${taskId} to reach ${targetStatus}, currently: ${actual}`);
 }
 
+class PausedLatestCursorRepository extends InMemoryWorkflowRepository {
+  private releaseLatestCursor!: () => void;
+  private readonly latestCursorGate = new Promise<void>((resolve) => { this.releaseLatestCursor = resolve; });
+  private latestCursorStartedResolve!: () => void;
+  readonly latestCursorStarted = new Promise<void>((resolve) => { this.latestCursorStartedResolve = resolve; });
+
+  override async latestCursor(workflowId: string): Promise<number> {
+    this.latestCursorStartedResolve();
+    await this.latestCursorGate;
+    return super.latestCursor(workflowId);
+  }
+
+  continueLatestCursor(): void {
+    this.releaseLatestCursor();
+  }
+}
 
 function makeServices(
   repo: InMemoryWorkflowRepository,
@@ -98,7 +114,49 @@ function makeServices(
   return { schedulerService, retryService };
 }
 
+async function flushMicrotasks(turns = 8): Promise<void> {
+  for (let i = 0; i < turns; i++) {
+    await Promise.resolve();
+  }
+}
+
 describe("SchedulerService", () => {
+  it("does not resurrect a subscription when detach wins attach setup", async () => {
+    const repo = new PausedLatestCursorRepository();
+    const controller = new AbortController();
+    const wf = createWorkflow({
+      id: "wf-detach-race",
+      kind: "single-task",
+      repoId: "fixture-repo",
+      tasks: [{ id: "t1", title: "T", prompt: "P" }],
+    }, now);
+    await repo.save(wf, []);
+
+    const retry = { run: vi.fn().mockResolvedValue({}) } as unknown as RetryTaskService;
+    const schedulerService = new SchedulerService({
+      repo,
+      retry,
+      log: silentLogger(),
+      signal: controller.signal,
+    });
+
+    try {
+      schedulerService.attach("wf-detach-race");
+      await repo.latestCursorStarted;
+
+      schedulerService.detach("wf-detach-race");
+      repo.continueLatestCursor();
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      expect(repo.subscriberCount("wf-detach-race")).toBe(0);
+      expect(schedulerService.getStats()).toEqual({ attachedWorkflows: 0, inFlight: 0 });
+      expect(retry.run).not.toHaveBeenCalled();
+    } finally {
+      controller.abort();
+    }
+  });
+
   it("single-task happy path: pending task dispatched and reaches completed", async () => {
     const repo = new InMemoryWorkflowRepository();
     const finalEvent: ProviderEvent = { kind: "final", sessionRef: "ref-1" };
@@ -373,6 +431,64 @@ describe("SchedulerService", () => {
       expect(spawnCount).toBe(1);
     } finally {
       controller.abort();
+    }
+  });
+
+  it("retries failed dispatches after backoff without needing another workflow event", async () => {
+    vi.useFakeTimers();
+    const repo = new InMemoryWorkflowRepository();
+    const controller = new AbortController();
+    const retryRun = vi.fn(async ({ workflowId, taskId }: { workflowId: string; taskId: string }) => {
+      await applyCommand(repo, {
+        kind: "transition-task",
+        workflowId,
+        transition: { kind: "mark-ready", taskId, now: NOW },
+      });
+      throw new Error(`dispatch failure ${retryRun.mock.calls.length}`);
+    });
+    const retry = {
+      run: retryRun,
+    } as unknown as RetryTaskService;
+
+    try {
+      const wf = createWorkflow({
+        id: "wf-backoff",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      }, now);
+      await repo.save(wf, []);
+
+      const schedulerService = new SchedulerService({
+        repo,
+        retry,
+        applyCommand: (cmd) => applyCommand(repo, cmd),
+        log: silentLogger(),
+        signal: controller.signal,
+        now,
+        dispatchBackoffMs: 50,
+      });
+
+      schedulerService.attach("wf-backoff");
+
+      await flushMicrotasks();
+      expect(retry.run).toHaveBeenCalledTimes(1);
+      await flushMicrotasks();
+      expect((await repo.get("wf-backoff"))?.graph["t1"]?.executionStatus).toBe("pending");
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(retry.run).toHaveBeenCalledTimes(2);
+      await flushMicrotasks();
+      expect((await repo.get("wf-backoff"))?.graph["t1"]?.executionStatus).toBe("pending");
+
+      await vi.advanceTimersByTimeAsync(49);
+      expect(retry.run).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(retry.run).toHaveBeenCalledTimes(3);
+    } finally {
+      controller.abort();
+      vi.useRealTimers();
     }
   });
 });

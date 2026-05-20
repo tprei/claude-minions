@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fsp from "node:fs/promises";
-import { buildDoctorReport, defaultPiAuthProbe, defaultPiVersionProbe } from "../../src/engine.js";
+import { buildDoctorReport, buildMetrics, defaultPiAuthProbe, defaultPiVersionProbe } from "../../src/engine.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
 import { StubRuntimeBackend } from "../../src/plugins/stub-runtime.js";
 import { StubWorkspaceBackend } from "../../src/plugins/workspace/stub-workspace.js";
@@ -114,9 +114,38 @@ describe("buildDoctorReport pi-check gating", () => {
       detail: "boom",
     });
   });
+
+  it("checks free disk space under dataDir instead of the database parent directory", async () => {
+    const statfsSpy = vi.spyOn(fsp, "statfs").mockResolvedValueOnce({
+      bavail: 2,
+      bsize: 1024 * 1024 * 1024,
+    } as Awaited<ReturnType<typeof fsp.statfs>>);
+
+    await buildDoctorReport({ ...baseInput() });
+
+    expect(statfsSpy).toHaveBeenCalledWith("/tmp/doctor-pi-data");
+  });
+
+  it("sanitizes disk probe failures instead of leaking raw filesystem errors", async () => {
+    vi.spyOn(fsp, "statfs").mockRejectedValueOnce(new Error("sensitive mount path"));
+
+    const report = await buildDoctorReport({ ...baseInput() });
+
+    expect(report.checks.find((c) => c.name === "disk-free")).toMatchObject({
+      status: "error",
+      detail: "statfs failed",
+    });
+  });
 });
 
 describe("defaultPiAuthProbe", () => {
+  const savedPiAgentDir = process.env["MWF_PI_AGENT_DIR"];
+
+  afterEach(() => {
+    if (savedPiAgentDir === undefined) delete process.env["MWF_PI_AGENT_DIR"];
+    else process.env["MWF_PI_AGENT_DIR"] = savedPiAgentDir;
+  });
+
   it("returns error when auth.json is missing", async () => {
     vi.mocked(fsp.readFile).mockRejectedValueOnce(
       Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" }),
@@ -161,6 +190,16 @@ describe("defaultPiAuthProbe", () => {
     );
     expect(await defaultPiAuthProbe()).toEqual({ status: "ok", detail: "chatgpt-codex" });
   });
+
+  it("reads auth.json from MWF_PI_AGENT_DIR when configured", async () => {
+    process.env["MWF_PI_AGENT_DIR"] = "/tmp/minions-pi-agent";
+    vi.mocked(fsp.readFile).mockResolvedValueOnce(
+      JSON.stringify({ "openai-codex": { type: "subscription" } }),
+    );
+
+    await expect(defaultPiAuthProbe()).resolves.toEqual({ status: "ok", detail: "chatgpt-codex" });
+    expect(vi.mocked(fsp.readFile).mock.calls[0]?.[0]).toBe("/tmp/minions-pi-agent/auth.json");
+  });
 });
 
 describe("defaultPiVersionProbe", () => {
@@ -175,5 +214,37 @@ describe("defaultPiVersionProbe", () => {
     const result = await defaultPiVersionProbe();
     expect(result.status).toBe("error");
     expect(result.detail).toMatch(/pi not on PATH|ENOENT/);
+  });
+});
+
+describe("buildMetrics", () => {
+  function makeSupervisor(alerts: Array<{ kind: string; severity: string }> = []) {
+    return {
+      alertRepo: {
+        list: () => alerts,
+      },
+    } as unknown as import("../../src/supervisor/supervisor.js").SupervisorWithRepos;
+  }
+
+  it("escapes carriage return, tab, and NUL in label values", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const metrics = await buildMetrics({
+      repo,
+      supervisor: makeSupervisor([{ kind: "kind\r\t\0", severity: "warn\r" }]),
+      startedAt: "2026-05-15T00:00:00.000Z",
+    });
+
+    expect(metrics).toContain('kind="kind\\r\\t\\0"');
+    expect(metrics).toContain('severity="warn\\r"');
+  });
+
+  it("throws when startedAt is not a valid timestamp", async () => {
+    const repo = new InMemoryWorkflowRepository();
+
+    await expect(buildMetrics({
+      repo,
+      supervisor: makeSupervisor(),
+      startedAt: "not-a-timestamp",
+    })).rejects.toThrow("invalid startedAt timestamp");
   });
 });

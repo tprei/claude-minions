@@ -76,6 +76,18 @@ function sharedTests(makeRepo: () => SubscriptionRepository) {
     expect(wf1).toHaveLength(1);
     expect(wf1[0]!.keys.p256dh).toBe("new-p256");
   });
+
+  it("removeByWorkflow deletes every subscription for the workflow only", async () => {
+    const repo = makeRepo();
+    await repo.upsert(makeSub("https://push.example.com/s1", "wf-1"));
+    await repo.upsert(makeSub("https://push.example.com/s2", "wf-1"));
+    await repo.upsert(makeSub("https://push.example.com/s3", "wf-2"));
+
+    await repo.removeByWorkflow("wf-1");
+
+    expect(await repo.listByWorkflow("wf-1")).toHaveLength(0);
+    expect(await repo.listByWorkflow("wf-2")).toHaveLength(1);
+  });
 }
 
 describe("InMemorySubscriptionRepository", () => {

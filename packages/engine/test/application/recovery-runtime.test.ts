@@ -17,7 +17,7 @@ const defaultOptions = {
 };
 
 describe("recovery-service: stop-runtime rule", () => {
-  it("stop-runtime calls runtime.stop then applies cancel-task", async () => {
+  it("stop-runtime persists cancellation, stops the runtime, and clears the stale session", async () => {
     const repo = new InMemoryWorkflowRepository();
     const runtime = new StubRuntimeBackend();
     const stopSpy = vi.spyOn(runtime, "stop");
@@ -48,9 +48,10 @@ describe("recovery-service: stop-runtime rule", () => {
     expect(stopSpy).toHaveBeenCalledWith(sessionId);
     const saved = await repo.get("wf-1");
     expect(saved?.graph["wf-1:task"]?.executionStatus).toBe("cancelled");
+    expect(saved?.graph["wf-1:task"]?.sessionId).toBeUndefined();
   });
 
-  it("runtime.stop throws → transition and idempotency row not persisted", async () => {
+  it("runtime.stop throws after cancellation → idempotency row is absent and session remains for retry", async () => {
     const repo = new InMemoryWorkflowRepository();
     const runtime = new StubRuntimeBackend();
 
@@ -82,11 +83,12 @@ describe("recovery-service: stop-runtime rule", () => {
       service.scan("wf-1", { ...defaultOptions, workflowCancelled: true }),
     ).rejects.toThrow("stop failed");
 
-    // Workflow state unchanged (still running), idempotency row absent
+    // Cancellation persisted before stop; session remains so recovery can retry stop later.
     const saved = await repo.get("wf-1");
-    expect(saved?.graph["wf-1:task"]?.executionStatus).toBe("running");
+    expect(saved?.graph["wf-1:task"]?.executionStatus).toBe("cancelled");
+    expect(saved?.graph["wf-1:task"]?.sessionId).toBe(sessionId);
 
-    const key = `recovery:wf-1:wf-1:task:stop-runtime:0`;
+    const key = `recovery:wf-1:wf-1:task:stop-runtime:session:${sessionId}`;
     const ref = await repo.lookupIdempotency("wf-1", key);
     expect(ref).toBeUndefined();
   });
@@ -129,7 +131,7 @@ describe("recovery-service: stop-runtime rule", () => {
     const service = createRecoveryService(repo, new NoopRestackExecutor(), runtime, () => started, silentLogger());
     await service.scan("wf-1", { ...defaultOptions });
 
-    const key = `recovery:wf-1:wf-1:task:recover-task:0`;
+    const key = "recovery:wf-1:wf-1:task:recover-task:version:2";
     const ref = await repo.lookupIdempotency("wf-1", key);
     expect(ref).toBe("recovery:recover-task:wf-1:task");
   });
@@ -161,7 +163,7 @@ describe("recovery-service: stop-runtime rule", () => {
     expect(stateAfter!.version).toBe(versionBefore);
     expect((await repo.eventsSince("wf-1", 0)).length).toBe(eventsBefore);
 
-    const key = `recovery:wf-1:wf-1:task:recover-task:0`;
+    const key = "recovery:wf-1:wf-1:task:recover-task:version:2";
     expect(await repo.lookupIdempotency("wf-1", key)).toBeUndefined();
   });
 

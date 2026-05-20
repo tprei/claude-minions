@@ -1,5 +1,8 @@
 import { create } from "zustand";
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
+import { useWorkflowStore } from "../store/workflowStore.js";
+import { useVersionStore } from "../store/version.js";
+import { clearConnectionViewports } from "../views/dagViewport.js";
 
 export interface Connection {
   id: string;
@@ -62,6 +65,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const activeId = s.activeId === id ? (connections[0]?.id ?? null) : s.activeId;
       void persist(connections);
       void idbDel(`snap:${id}`);
+      clearConnectionViewports(id);
+      useWorkflowStore.getState().clearConnection(id);
+      useVersionStore.getState().clearConnection(id);
       return { connections, activeId };
     });
   },

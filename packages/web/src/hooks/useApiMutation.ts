@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../transport/rest.js";
 
 export interface MutationError {
@@ -21,6 +21,8 @@ export interface UseApiMutationOptions<TArgs, TResult> {
   onError?: (err: MutationError, args: TArgs) => void;
 }
 
+type ApiMutationFn<TArgs, TResult> = (args: TArgs, signal: AbortSignal) => Promise<TResult>;
+
 function toMutationError(err: unknown): MutationError {
   if (err instanceof ApiError) {
     return {
@@ -37,7 +39,7 @@ function toMutationError(err: unknown): MutationError {
 }
 
 export function useApiMutation<TArgs, TResult>(
-  fn: (args: TArgs) => Promise<TResult>,
+  fn: ApiMutationFn<TArgs, TResult>,
   opts?: UseApiMutationOptions<TArgs, TResult>,
 ): UseApiMutationResult<TArgs, TResult> {
   const [loading, setLoading] = useState(false);
@@ -47,27 +49,51 @@ export function useApiMutation<TArgs, TResult>(
   fnRef.current = fn;
   const optsRef = useRef(opts);
   optsRef.current = opts;
+  const requestSeqRef = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+      requestSeqRef.current += 1;
+    };
+  }, []);
 
   const run = useCallback(async (args: TArgs): Promise<TResult | undefined> => {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
     setLoading(true);
     setError(null);
     try {
-      const result = await fnRef.current(args);
+      const result = await fnRef.current(args, controller.signal);
+      if (requestSeqRef.current !== requestSeq || controller.signal.aborted) return undefined;
       setData(result);
       const handler = optsRef.current?.onSuccess;
       if (handler) await handler(result, args);
       return result;
     } catch (err) {
+      if (requestSeqRef.current !== requestSeq || controller.signal.aborted) return undefined;
       const mutErr = toMutationError(err);
       setError(mutErr);
       optsRef.current?.onError?.(mutErr, args);
       return undefined;
     } finally {
-      setLoading(false);
+      if (requestSeqRef.current === requestSeq) {
+        if (controllerRef.current === controller) controllerRef.current = null;
+        setLoading(false);
+      }
     }
   }, []);
 
   const reset = useCallback(() => {
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    requestSeqRef.current += 1;
+    setLoading(false);
     setError(null);
     setData(null);
   }, []);

@@ -11,6 +11,7 @@ import {
   SQL_DELETE_WORKFLOW,
   SQL_DELETE_WORKFLOW_EVENTS,
   SQL_DELETE_WORKFLOW_IDEMPOTENCY,
+  SQL_DELETE_WORKFLOW_TRANSCRIPTS,
   SQL_EVENTS_SINCE,
   SQL_GET_VERSION,
   SQL_GET_WORKFLOW,
@@ -83,6 +84,10 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     events: WorkflowEvent[],
     idempotency: IdempotencyRecord[],
   ) => WorkflowEvent[];
+  private readonly txPublishTransient: (
+    workflowId: string,
+    event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" | "ci-poll-result" }>,
+  ) => WorkflowEvent | null;
   private readonly stmtInsertTranscript: Statement<[string, string, string, string, string, string]>;
   private readonly stmtListTranscript: Statement<[string, string], TranscriptRow>;
 
@@ -114,9 +119,11 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     const stmtDeleteWorkflow = this.db.prepare<[string]>(SQL_DELETE_WORKFLOW);
     const stmtDeleteEvents = this.db.prepare<[string]>(SQL_DELETE_WORKFLOW_EVENTS);
     const stmtDeleteIdempotency = this.db.prepare<[string]>(SQL_DELETE_WORKFLOW_IDEMPOTENCY);
+    const stmtDeleteTranscripts = this.db.prepare<[string]>(SQL_DELETE_WORKFLOW_TRANSCRIPTS);
     this.txDelete = this.db.transaction((workflowId: string) => {
       stmtDeleteEvents.run(workflowId);
       stmtDeleteIdempotency.run(workflowId);
+      stmtDeleteTranscripts.run(workflowId);
       stmtDeleteWorkflow.run(workflowId);
     });
 
@@ -179,6 +186,22 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
         return stamped;
       },
     );
+    this.txPublishTransient = this.db.transaction(
+      (workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" | "ci-poll-result" }>) => {
+        if (this.stmtGetWorkflow.get(workflowId) === undefined) return null;
+        const cursorRow = this.stmtMaxCursor.get(workflowId)!;
+        const cursor = (cursorRow.max_cursor ?? 0) + 1;
+        const stamped = { ...event, cursor };
+        this.stmtInsertEvent.run(
+          stamped.workflowId,
+          stamped.cursor,
+          stamped.kind,
+          stamped.occurredAt,
+          JSON.stringify(stamped.payload),
+        );
+        return stamped;
+      },
+    );
   }
 
   async get(workflowId: string): Promise<Workflow | undefined> {
@@ -223,7 +246,9 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
   }
 
   publishTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" | "ci-poll-result" }>): void {
-    this.hub.notifyTransient(workflowId, event);
+    const stamped = this.txPublishTransient(workflowId, event);
+    if (!stamped) return;
+    this.hub.notify(workflowId, [stamped]);
   }
 
   async lookupIdempotency(workflowId: string, key: string): Promise<string | undefined> {

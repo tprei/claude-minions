@@ -121,7 +121,7 @@ describe("InMemoryWorkflowRepository", () => {
     expect(recoverable).toHaveLength(0);
   });
 
-  it("publishTransient does not write to event log; eventsSince excludes transient", async () => {
+  it("publishTransient appends a durable event with the next cursor", async () => {
     const repo = new InMemoryWorkflowRepository();
     const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
     await repo.save(workflow, [makeEvent("wf-1")]);
@@ -139,11 +139,13 @@ describe("InMemoryWorkflowRepository", () => {
     repo.publishTransient("wf-1", transient);
 
     const after = await repo.eventsSince("wf-1", 0);
-    expect(after).toHaveLength(1);
+    expect(after).toHaveLength(2);
     expect(after[0]?.kind).toBe("task-transitioned");
+    expect(after[1]?.kind).toBe("provider-event");
+    expect(after[1]?.cursor).toBe(2);
   });
 
-  it("publishTransient: live subscriber receives the transient frame", async () => {
+  it("publishTransient: live subscriber receives the durable frame", async () => {
     const repo = new InMemoryWorkflowRepository();
     const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
     await repo.save(workflow, []);
@@ -165,6 +167,7 @@ describe("InMemoryWorkflowRepository", () => {
 
     const result = await nextPromise;
     expect(result.value?.kind).toBe("provider-event");
+    expect(result.value?.cursor).toBe(1);
 
     await iter.return?.();
   });

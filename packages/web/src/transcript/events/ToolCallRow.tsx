@@ -6,14 +6,15 @@ import type {
   ToolResultFormat,
   ToolResultStatus,
 } from "@minions/shared";
-import { Markdown } from "../../components/Markdown.js";
 import { Diff } from "../../components/Diff.js";
+import { MarkdownView } from "../../markdown/MarkdownView.js";
 import { cx } from "../../util/classnames.js";
 import {
   WorktreePathContext,
   formatInlineArg,
   formatResultSummary,
 } from "./toolFormat.js";
+import { safeToolResultImageSrc } from "./toolResultImage.js";
 
 export const KIND_ICONS: Record<ToolKind, string> = {
   read: "📄",
@@ -98,7 +99,7 @@ function detectFormat(event: ToolResultEvent): ToolResultFormat {
 
 export function ResultBody({ event }: { event: ToolResultEvent }) {
   const fmt = detectFormat(event);
-  if (fmt === "markdown") return <Markdown text={event.body} />;
+  if (fmt === "markdown") return <MarkdownView text={event.body} />;
   if (fmt === "diff") return <Diff text={event.body} wrap />;
   if (fmt === "json") {
     return (
@@ -108,9 +109,17 @@ export function ResultBody({ event }: { event: ToolResultEvent }) {
     );
   }
   if (fmt === "image") {
+    const src = safeToolResultImageSrc(event.body);
+    if (!src) {
+      return (
+        <pre className="text-sm text-fg-muted bg-bg-soft rounded p-2 border border-border whitespace-pre-wrap break-words">
+          Blocked image source
+        </pre>
+      );
+    }
     return (
       <img
-        src={event.body}
+        src={src}
         alt="tool result"
         className="max-w-xs rounded border border-border"
       />

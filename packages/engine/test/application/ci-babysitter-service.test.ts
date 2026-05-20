@@ -151,7 +151,49 @@ describe("CIBabysitterService", () => {
     expect(github.listCheckRuns).not.toHaveBeenCalled();
   });
 
-  it("happy path — all checks success, no transition, no continue-task", async () => {
+  it("attach is idempotent for an already-active pr-open task", async () => {
+    const repo = makeRepo();
+    await makeTaskUpToFinalizing(repo);
+    await openPR(repo);
+
+    const ctrl = new AbortController();
+    const getPR = vi.fn().mockResolvedValue({
+      number: PR_NUMBER,
+      url: PR_URL,
+      headSha: HEAD_SHA,
+      headRef: "feature",
+      baseRef: "main",
+      mergeable: true,
+      mergeableState: "clean",
+      state: "open",
+    });
+    const github = makeGithub({ getPR });
+    const continueTaskService = makeContinueTaskService();
+
+    const service = new CIBabysitterService({
+      workflowRepo: repo,
+      github,
+      repoRegistry: TEST_REGISTRY,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      continueTaskService,
+      signal: ctrl.signal,
+      now,
+      sleep: abortingSleep,
+      cadence: FAST_CADENCE,
+      log: silentLogger(),
+    });
+
+    service.attach(WORKFLOW_ID);
+    service.attach(WORKFLOW_ID);
+    service.attach(WORKFLOW_ID);
+
+    await new Promise((r) => setImmediate(r));
+    ctrl.abort();
+
+    expect(getPR).toHaveBeenCalledTimes(1);
+  });
+
+  it("happy path — green checks enter and complete the ci gate without merge-conflict", async () => {
     const repo = makeRepo();
     await makeTaskUpToFinalizing(repo);
 
@@ -183,11 +225,24 @@ describe("CIBabysitterService", () => {
     await new Promise((r) => setTimeout(r, 100));
     ctrl.abort();
 
+    const ciGateCalls = applyCommandSpy.mock.calls.filter(
+      (c) => c[0].kind === "transition-task" &&
+        "transition" in c[0] &&
+        (c[0].transition.kind === "start-ci-gate" || c[0].transition.kind === "complete-ci-gate"),
+    );
+    expect(ciGateCalls.map((c) => (c[0] as { transition: { kind: string } }).transition.kind)).toEqual([
+      "start-ci-gate",
+      "complete-ci-gate",
+    ]);
+
     const mergeConflictCalls = applyCommandSpy.mock.calls.filter(
       (c) => c[0].kind === "transition-task" && c[0].transition.kind === "merge-conflict",
     );
     expect(mergeConflictCalls).toHaveLength(0);
     expect(continueTaskService.run).not.toHaveBeenCalled();
+
+    const saved = await repo.get(WORKFLOW_ID);
+    expect(saved?.graph[TASK_ID]?.executionStatus).toBe("pr-open");
   });
 
   it("failure path — failed check causes merge-conflict + ci-report + continue-task", async () => {
@@ -226,6 +281,11 @@ describe("CIBabysitterService", () => {
     await openPR(repo);
     await new Promise((r) => setTimeout(r, 150));
     ctrl.abort();
+
+    const ciGateCalls = applyCommandSpy.mock.calls.filter(
+      (c) => c[0].kind === "transition-task" && c[0].transition.kind === "start-ci-gate",
+    );
+    expect(ciGateCalls).toHaveLength(1);
 
     const mergeConflictCalls = applyCommandSpy.mock.calls.filter(
       (c) => c[0].kind === "transition-task" && c[0].transition.kind === "merge-conflict",
@@ -291,7 +351,7 @@ describe("CIBabysitterService", () => {
     expect(runInput.prompt).toContain("lint");
   });
 
-  it("abort on transition out — pr-open → merged mid-poll; no further GitHub calls", async () => {
+  it("abort on transition out — ci-pending → needs-review mid-poll; no further GitHub calls", async () => {
     const repo = makeRepo();
     await makeTaskUpToFinalizing(repo);
 
@@ -334,7 +394,7 @@ describe("CIBabysitterService", () => {
     await applyCommand(repo, {
       kind: "transition-task",
       workflowId: WORKFLOW_ID,
-      transition: { kind: "merge-task", taskId: TASK_ID, now: NOW },
+      transition: { kind: "merge-conflict", taskId: TASK_ID, now: NOW },
     });
 
     await new Promise((r) => setTimeout(r, 100));

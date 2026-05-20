@@ -1,7 +1,7 @@
 export interface ApiError {
-  error: string;
+  code: string;
   message: string;
-  detail?: Record<string, unknown>;
+  details?: Record<string, unknown>;
 }
 
 export interface ListEnvelope<T> {

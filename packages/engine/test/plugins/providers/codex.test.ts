@@ -143,9 +143,14 @@ describe("CodexProvider", () => {
     expect(events).toEqual([{ kind: "thinking", text: "I reasoned about it" }]);
   });
 
-  it("item.updated returns empty array", () => {
+  it("item.updated streams command execution deltas", () => {
     const provider = new CodexProvider();
-    expect(provider.parseFrame(encode({ type: "item.updated", item: { id: "x" } }))).toEqual([]);
+    expect(provider.parseFrame(encode({
+      type: "item.updated",
+      item: { type: "command_execution", id: "cmd-updated", delta: "line 1\n", status: "in_progress" },
+    }))).toEqual([
+      { kind: "tool_result", id: "cmd-updated", output: "line 1\n", isError: false },
+    ]);
   });
 
   it("turn.completed maps cached_input_tokens and reasoning_output_tokens", () => {
@@ -233,12 +238,24 @@ describe("CodexProvider", () => {
     expect(provider.parseFrame("{not valid")).toEqual([]);
   });
 
-  it("second thread.started on same instance throws reuse assertion", () => {
+  it("second thread.started on same instance emits parser error", () => {
     const provider = new CodexProvider();
     provider.parseFrame(encode({ type: "thread.started", thread_id: "thread-1" }));
-    expect(() =>
-      provider.parseFrame(encode({ type: "thread.started", thread_id: "thread-2" })),
-    ).toThrow("CodexProvider instance reused across conversations");
+    expect(provider.parseFrame(encode({ type: "thread.started", thread_id: "thread-2" }))).toEqual([
+      {
+        kind: "error",
+        recoverable: false,
+        source: "provider_parser",
+        message: "CodexProvider instance reused across conversations; construct a fresh instance per run",
+      },
+    ]);
+  });
+
+  it("non-string thread id still marks the provider instance as started", () => {
+    const provider = new CodexProvider();
+    expect(provider.parseFrame(encode({ type: "thread.started", thread_id: 123 }))).toEqual([]);
+    const events = provider.parseFrame(encode({ type: "thread.started", thread_id: "thread-2" }));
+    expect(events[0]).toMatchObject({ kind: "error", source: "provider_parser" });
   });
 
   it("item.started for mcp_tool_call uses arguments as input and tool as name", () => {
@@ -336,8 +353,27 @@ describe("CodexProvider", () => {
         sessionRef: "thread-abc",
         prompt: "continue from here",
       });
-      expect(inv.command).toEqual(["codex", "exec", "resume", "--json", "thread-abc", "continue from here"]);
+      expect(inv.command).toEqual(["codex", "exec", "resume", "--json", "--", "thread-abc", "continue from here"]);
       expect(inv.providerType).toBe("codex");
+    });
+
+    it("uses -- to keep forged session refs positional", async () => {
+      const provider = new CodexProvider();
+      const inv = await provider.resume({
+        taskId: "t1",
+        workflowId: "wf1",
+        sessionRef: "--dangerous-flag",
+        prompt: "continue from here",
+      });
+      expect(inv.command).toEqual([
+        "codex",
+        "exec",
+        "resume",
+        "--json",
+        "--",
+        "--dangerous-flag",
+        "continue from here",
+      ]);
     });
 
     it("throws when prompt is empty", async () => {

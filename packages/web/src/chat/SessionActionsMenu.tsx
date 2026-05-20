@@ -16,7 +16,6 @@ import { useMediaQuery } from "../hooks/useMediaQuery.js";
 import { hapticTap } from "../pwa/haptics.js";
 import { dispatchCommand, deleteWorkflow } from "../transport/rest.js";
 import { useWorkflowStore } from "../store/workflowStore.js";
-import { useConnectionStore } from "../connections/store.js";
 
 interface Props {
   workflow: Workflow;
@@ -85,7 +84,7 @@ export function SessionActionsMenu({
       kind: "transition-task",
       workflowId: workflow.id,
       transition: {
-        kind: "cancel",
+        kind: "cancel-task",
         taskId: firstTask.id,
         now: new Date().toISOString(),
       },
@@ -94,9 +93,7 @@ export function SessionActionsMenu({
 
   const onDeleteConfirm = useCallback(async (): Promise<void> => {
     await deleteWorkflow(conn, workflow.id);
-    const activeId = useConnectionStore.getState().activeId;
-    if (!activeId) return;
-    useWorkflowStore.getState().remove(activeId, workflow.id);
+    useWorkflowStore.getState().remove(conn.id, workflow.id);
     onAfterDelete?.();
   }, [conn, workflow.id, onAfterDelete]);
 

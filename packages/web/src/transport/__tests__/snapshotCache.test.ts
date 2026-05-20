@@ -79,6 +79,43 @@ describe("applyEventToSnapshot", () => {
     expect(result.workflows[0]?.status).toBe("completed");
   });
 
+  it("inserts newly seen graph operations", () => {
+    const snap = makeSnapshot([makeWorkflow()]);
+    const event: WorkflowEvent = {
+      cursor: 6,
+      workflowId: "wf-1",
+      occurredAt: "2026-01-01T00:04:00Z",
+      kind: "graph-operation-changed",
+      payload: {
+        operationId: "op-1",
+        kind: "restack",
+        fromStatus: null,
+        toStatus: "pending",
+        operation: {
+          id: "op-1",
+          workflowId: "wf-1",
+          kind: "restack",
+          targetNodeId: "t-1",
+          affectedNodeIds: ["t-1"],
+          status: "pending",
+          attempt: 1,
+          idempotencyKey: "idem-1",
+          createdAt: "2026-01-01T00:04:00Z",
+          updatedAt: "2026-01-01T00:04:00Z",
+        },
+      },
+    };
+
+    const result = applyEventToSnapshot(snap, event);
+    expect(result.workflows[0]?.operations["op-1"]).toMatchObject({
+      id: "op-1",
+      workflowId: "wf-1",
+      kind: "restack",
+      status: "pending",
+      updatedAt: "2026-01-01T00:04:00Z",
+    });
+  });
+
   it("returns same snapshot reference for unknown workflow", () => {
     const snap = makeSnapshot([makeWorkflow()]);
     const event: WorkflowEvent = {

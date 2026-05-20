@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { timingSafeEqual } from "node:crypto";
 import { applyCommand } from "../application/commands.js";
 import type { Command, CommandKind } from "../application/commands.js";
 import type { CIBabysitterService } from "../application/ci-babysitter-service.js";
@@ -78,8 +79,12 @@ export interface ServerDeps {
   plannerService?: WorkflowPlannerService;
   schedulerService?: SchedulerService;
   versionInfo?: () => RuntimeVersionInfo;
+  health?: () => Promise<Pick<RuntimeDoctorReport, "status" | "checkedAt">>;
   doctor?: () => Promise<RuntimeDoctorReport>;
   metrics?: () => Promise<string>;
+  authToken?: string;
+  corsOrigins?: string[];
+  isKnownRepoId?: (repoId: string) => boolean;
 }
 
 type AcceptedCommandKind = CommandKind | "continue-task" | "retry-task" | "land-workflow";
@@ -95,23 +100,202 @@ const VALID_COMMAND_KINDS = new Set<AcceptedCommandKind>([
   "land-workflow",
 ]);
 
+const CORS_METHODS = "GET, POST, DELETE, PATCH, OPTIONS";
+const CORS_HEADERS = "Content-Type, Last-Event-ID, Authorization";
+const DEFAULT_LIMIT = 100;
+const MAX_LIMIT = 500;
+
+interface HistoryListCursor {
+  timestamp: string;
+  id: string;
+}
+
+interface HistoryListQuery {
+  limit: number;
+  before?: HistoryListCursor;
+}
+
+type HistoryListQueryResult =
+  | { ok: true; query: HistoryListQuery }
+  | { ok: false; message: string; details: Record<string, unknown> };
+
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function bearerToken(header: string | undefined): string | undefined {
+  if (header === undefined) return undefined;
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1];
+}
+
+function isStaticPath(pathname: string): boolean {
+  return pathname === "/" ||
+    pathname === "/manifest.json" ||
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/sw.js" ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/assets/");
+}
+
+function isPublicRoute(method: string, pathname: string): boolean {
+  if (method === "OPTIONS") return true;
+  if (method === "GET" && pathname === "/health") return true;
+  if (method === "GET" && isStaticPath(pathname)) return true;
+  return false;
+}
+
+function isWorkflowSse(pathname: string, method: string): boolean {
+  return method === "GET" && /^\/workflows\/[^/]+\/events$/.test(pathname);
+}
+
+function isAuthorizedRequest(input: {
+  token: string;
+  header: string | undefined;
+  queryToken: string | undefined;
+  allowQueryToken: boolean;
+}): boolean {
+  const headerToken = bearerToken(input.header);
+  if (headerToken !== undefined && safeEqual(headerToken, input.token)) return true;
+  return input.allowQueryToken && input.queryToken !== undefined && safeEqual(input.queryToken, input.token);
+}
+
+function corsOrigin(origin: string | undefined, allowed: string[] | undefined): string | undefined {
+  if (allowed === undefined || allowed.length === 0) return undefined;
+  if (allowed.includes("*")) return "*";
+  if (origin !== undefined && allowed.includes(origin)) return origin;
+  return undefined;
+}
+
+function parseCursor(raw: string | undefined): { ok: true; value: number } | { ok: false; message: string } {
+  if (raw === undefined) return { ok: true, value: 0 };
+  if (!/^\d+$/.test(raw)) return { ok: false, message: "cursor must be a non-negative integer" };
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) return { ok: false, message: "cursor must be a safe integer" };
+  return { ok: true, value };
+}
+
+function parseLimit(raw: string | undefined): { ok: true; value: number } | { ok: false; message: string } {
+  if (raw === undefined) return { ok: true, value: DEFAULT_LIMIT };
+  if (!/^\d+$/.test(raw)) return { ok: false, message: "limit must be a positive integer" };
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_LIMIT) {
+    return { ok: false, message: `limit must be between 1 and ${MAX_LIMIT}` };
+  }
+  return { ok: true, value };
+}
+
+function invalidQuery(message: string): { code: string; message: string; details: Record<string, unknown> } {
+  return { code: "invalid_request", message, details: {} };
+}
+
+function invalidFieldQuery(field: string, expected: string): Extract<HistoryListQueryResult, { ok: false }> {
+  return {
+    ok: false,
+    message: `field "${field}" must be ${expected}`,
+    details: { field, expected },
+  };
+}
+
+function isCanonicalIsoTimestamp(value: string): boolean {
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.toISOString() === value;
+}
+
+function parseHistoryListQuery(
+  limitParam: string | undefined,
+  beforeTs: string | undefined,
+  beforeId: string | undefined,
+): HistoryListQueryResult {
+  const parsedLimit = parseLimit(limitParam);
+  if (!parsedLimit.ok) return { ok: false, message: parsedLimit.message, details: {} };
+
+  if (beforeTs === undefined && beforeId === undefined) {
+    return { ok: true, query: { limit: parsedLimit.value } };
+  }
+  if (beforeTs === undefined) {
+    return invalidFieldQuery("beforeTs", "a canonical ISO timestamp when beforeId is set");
+  }
+  if (!isCanonicalIsoTimestamp(beforeTs)) {
+    return invalidFieldQuery("beforeTs", "a canonical ISO timestamp");
+  }
+  if (beforeId === undefined || beforeId.trim().length === 0) {
+    return invalidFieldQuery("beforeId", "a non-empty string when beforeTs is set");
+  }
+  return { ok: true, query: { limit: parsedLimit.value, before: { timestamp: beforeTs, id: beforeId } } };
+}
+
+function invalidHistoryQuery(result: Extract<HistoryListQueryResult, { ok: false }>): { code: string; message: string; details: Record<string, unknown> } {
+  return { code: "invalid_request", message: result.message, details: result.details };
+}
+
+function unknownRepoId(repoId: string): { code: string; message: string; details: Record<string, unknown> } {
+  return {
+    code: "invalid_request",
+    message: `unknown repoId: ${repoId}`,
+    details: { field: "repoId", expected: "configured repo id" },
+  };
+}
+
+function isKnownRepoId(deps: ServerDeps, repoId: string): boolean {
+  return deps.isKnownRepoId === undefined || deps.isKnownRepoId(repoId);
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export function createServer(deps: ServerDeps): Hono {
   const app = new Hono();
   const { repo } = deps;
 
   app.use("*", async (c, next) => {
+    const origin = c.req.header("origin");
+    const allowOrigin = corsOrigin(origin, deps.corsOrigins);
+    const corsHeaders: Record<string, string> = {
+      "Access-Control-Allow-Methods": CORS_METHODS,
+      "Access-Control-Allow-Headers": CORS_HEADERS,
+    };
+    if (allowOrigin !== undefined) {
+      corsHeaders["Access-Control-Allow-Origin"] = allowOrigin;
+      if (allowOrigin !== "*") corsHeaders["Vary"] = "Origin";
+    }
+
     if (c.req.method === "OPTIONS") {
-      return c.newResponse(null, 204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Last-Event-ID",
-      });
+      return c.newResponse(null, 204, corsHeaders);
     }
     await next();
-    c.header("Access-Control-Allow-Origin", "*");
-    c.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    c.header("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID");
+    for (const [key, value] of Object.entries(corsHeaders)) {
+      c.header(key, value);
+    }
   });
+
+  if (deps.authToken !== undefined) {
+    const authToken = deps.authToken;
+    app.use("*", async (c, next) => {
+      const url = new URL(c.req.url);
+      if (isPublicRoute(c.req.method, url.pathname)) {
+        await next();
+        return;
+      }
+      const allowed = isAuthorizedRequest({
+        token: authToken,
+        header: c.req.header("authorization"),
+        queryToken: c.req.query("token"),
+        allowQueryToken: isWorkflowSse(url.pathname, c.req.method),
+      });
+      if (!allowed) {
+        return c.json(
+          { code: "unauthorized", message: "missing or invalid bearer token", details: {} },
+          401,
+          { "WWW-Authenticate": "Bearer" },
+        );
+      }
+      await next();
+    });
+  }
 
   if (deps.log) {
     const reqLog = deps.log;
@@ -141,14 +325,26 @@ export function createServer(deps: ServerDeps): Hono {
     );
   });
 
-  app.get("/health", (c) => c.json({ status: "ok" }));
+  app.get("/health", async (c) => {
+    if (deps.health) {
+      const report = await deps.health();
+      const status = report.status === "ok" ? 200 : 503;
+      return c.json(report, status);
+    }
+    if (!deps.doctor) {
+      return c.json({ status: "ok" });
+    }
+    const report = await deps.doctor();
+    const status = report.status === "ok" ? 200 : 503;
+    return c.json({ status: report.status, checkedAt: report.checkedAt }, status);
+  });
 
   app.get("/health/deep", async (c) => {
     if (!deps.doctor) {
       return c.json({ status: "ok", checks: [], checkedAt: new Date().toISOString() });
     }
     const report = await deps.doctor();
-    const status = report.status === "error" ? 503 : 200;
+    const status = report.status === "ok" ? 200 : 503;
     return c.json(report, status);
   });
 
@@ -176,9 +372,15 @@ export function createServer(deps: ServerDeps): Hono {
         "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
       });
     }
-    return c.text(await deps.metrics(), 200, {
-      "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
-    });
+    try {
+      return c.text(await deps.metrics(), 200, {
+        "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+      });
+    } catch {
+      return c.text("# HELP minions_metrics_error Metrics collection error\n# TYPE minions_metrics_error gauge\nminions_metrics_error 1\n", 500, {
+        "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+      });
+    }
   });
 
   app.get("/doctor", async (c) => {
@@ -186,7 +388,7 @@ export function createServer(deps: ServerDeps): Hono {
       return c.json({ status: "ok", checks: [], checkedAt: new Date().toISOString() });
     }
     const report = await deps.doctor();
-    const status = report.status === "error" ? 503 : 200;
+    const status = report.status === "ok" ? 200 : 503;
     return c.json(report, status);
   });
 
@@ -208,6 +410,10 @@ export function createServer(deps: ServerDeps): Hono {
         },
         400,
       );
+    }
+
+    if (!isKnownRepoId(deps, (body as WorkflowSpec).repoId)) {
+      return c.json(unknownRepoId((body as WorkflowSpec).repoId), 400);
     }
 
     const workflow = createWorkflow(body as WorkflowSpec);
@@ -234,18 +440,25 @@ export function createServer(deps: ServerDeps): Hono {
       return c.json({ code: "invalid_body", message: "request body is not valid JSON" }, 400);
     }
 
-    if (typeof (body as Record<string, unknown>)?.["prompt"] !== "string" ||
-        !(body as Record<string, unknown>)["prompt"]) {
+    if (!isObjectRecord(body)) {
+      return c.json({ code: "invalid_request", message: "request body must be an object" }, 400);
+    }
+
+    const prompt = body["prompt"];
+    const repoId = body["repoId"];
+    if (typeof prompt !== "string" || prompt.length === 0) {
       return c.json({ code: "invalid_request", message: 'field "prompt" is required and must be a non-empty string' }, 400);
     }
-    if (typeof (body as Record<string, unknown>)?.["repoId"] !== "string" ||
-        !(body as Record<string, unknown>)["repoId"]) {
+    if (typeof repoId !== "string" || repoId.length === 0) {
       return c.json({ code: "invalid_request", message: 'field "repoId" is required and must be a non-empty string' }, 400);
+    }
+    if (!isKnownRepoId(deps, repoId)) {
+      return c.json(unknownRepoId(repoId), 400);
     }
 
     const spec = await deps.plannerService.plan({
-      prompt: (body as Record<string, string>)["prompt"]!,
-      repoId: (body as Record<string, string>)["repoId"]!,
+      prompt,
+      repoId,
     });
     return c.json({ spec });
   });
@@ -270,16 +483,27 @@ export function createServer(deps: ServerDeps): Hono {
     if (!workflow) {
       return c.json({ code: "not_found", message: "workflow not found", details: {} }, 404);
     }
+    deps.pushService?.detach(workflowId);
+    deps.ciBabysitter?.detach(workflowId);
+    deps.qualityGateService?.detach(workflowId);
+    deps.completionDispatcher?.detach(workflowId);
+    deps.localFinalizeService?.detach(workflowId);
+    deps.observability?.detach(workflowId);
+    deps.schedulerService?.detach(workflowId);
+    await deps.subscriptions?.removeByWorkflow(workflowId);
     await repo.delete(workflowId);
     return c.newResponse(null, 204);
   });
 
   app.post("/commands", async (c) => {
-    let body: Record<string, unknown>;
+    let body: unknown;
     try {
-      body = await c.req.json<Record<string, unknown>>();
+      body = await c.req.json();
     } catch {
       return c.json({ code: "invalid_body", message: "request body is not valid JSON" }, 400);
+    }
+    if (!isObjectRecord(body)) {
+      return c.json({ code: "invalid_request", message: "request body must be an object" }, 400);
     }
 
     const kind = body["kind"];
@@ -416,6 +640,23 @@ export function createServer(deps: ServerDeps): Hono {
     return c.json({ ok: true }, 201);
   });
 
+  app.get("/workflows/:id/push-subscriptions", async (c) => {
+    if (!deps.subscriptions) {
+      return c.json({ code: "push_disabled", message: "push notifications not configured" }, 503);
+    }
+
+    const workflowId = c.req.param("id");
+    const workflow = await repo.get(workflowId);
+    if (!workflow) {
+      return c.json({ code: "not_found", message: "workflow not found", details: {} }, 404);
+    }
+
+    const subscriptions = await deps.subscriptions.listByWorkflow(workflowId);
+    return c.json({
+      subscriptions: subscriptions.map(({ endpoint }) => ({ endpoint })),
+    });
+  });
+
   app.delete("/push/subscribe", async (c) => {
     if (!deps.subscriptions) {
       return c.json({ code: "push_disabled", message: "push notifications not configured" }, 503);
@@ -444,6 +685,10 @@ export function createServer(deps: ServerDeps): Hono {
     const endpoint = b["endpoint"] as string;
     const workflowId = b["workflowId"] as string;
     await deps.subscriptions.remove(endpoint, workflowId);
+    const remaining = await deps.subscriptions.listByWorkflow(workflowId);
+    if (remaining.length === 0) {
+      deps.pushService?.detach(workflowId);
+    }
     return c.json({ ok: true });
   });
 
@@ -455,14 +700,22 @@ export function createServer(deps: ServerDeps): Hono {
       return c.json({ code: "not_found", message: "workflow not found", details: {} }, 404);
     }
 
-    const sinceParam = c.req.query("since");
-    let fromCursor = sinceParam !== undefined ? parseInt(sinceParam, 10) : 0;
-    if (isNaN(fromCursor)) fromCursor = 0;
-
     const lastEventId = c.req.header("last-event-id");
+    let fromCursor = lastEventId === undefined && c.req.query("since") === undefined
+      ? await repo.latestCursor(workflowId)
+      : 0;
+
+    const sinceParam = c.req.query("since");
+    if (sinceParam !== undefined) {
+      const since = parseCursor(sinceParam);
+      if (!since.ok) return c.json(invalidQuery(since.message), 400);
+      fromCursor = since.value;
+    }
+
     if (lastEventId !== undefined) {
-      const parsed = parseInt(lastEventId, 10);
-      if (!isNaN(parsed)) fromCursor = parsed;
+      const parsed = parseCursor(lastEventId);
+      if (!parsed.ok) return c.json(invalidQuery(parsed.message), 400);
+      fromCursor = parsed.value;
     }
 
     return streamSSE(c, async (stream) => {
@@ -478,12 +731,7 @@ export function createServer(deps: ServerDeps): Hono {
           const result = await iterator.next();
           if (result.done) break;
           const event = result.value;
-          if (event.kind === "provider-event" || event.kind === "merge-phase" || event.kind === "ci-poll-result") {
-            // omit id: so browser EventSource doesn't advance Last-Event-ID past the durable cursor
-            await stream.writeSSE({ event: event.kind, data: JSON.stringify(event) });
-          } else {
-            await stream.writeSSE({ event: event.kind, data: JSON.stringify(event), id: String(event.cursor) });
-          }
+          await stream.writeSSE({ event: event.kind, data: JSON.stringify(event), id: String(event.cursor) });
         }
       } finally {
         await iterator.return?.();
@@ -506,14 +754,13 @@ export function createServer(deps: ServerDeps): Hono {
     if (!deps.supervisor) {
       return c.json({ code: "supervisor_disabled", message: "supervisor not configured" }, 503);
     }
-    const limitParam = c.req.query("limit");
-    const limit = limitParam !== undefined ? Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 500) : 100;
-    const beforeTs = c.req.query("beforeTs");
+    const query = parseHistoryListQuery(c.req.query("limit"), c.req.query("beforeTs"), c.req.query("beforeId"));
+    if (!query.ok) return c.json(invalidHistoryQuery(query), 400);
     const action = c.req.query("action");
     const workflowId = c.req.query("workflowId");
     const events = deps.supervisor.auditRepo.list({
-      limit,
-      ...(beforeTs !== undefined ? { beforeTs } : {}),
+      limit: query.query.limit,
+      ...(query.query.before !== undefined ? { before: query.query.before } : {}),
       ...(action !== undefined ? { action } : {}),
       ...(workflowId !== undefined ? { workflowId } : {}),
     });
@@ -525,12 +772,11 @@ export function createServer(deps: ServerDeps): Hono {
       return c.json({ code: "supervisor_disabled", message: "supervisor not configured" }, 503);
     }
     const workflowId = c.req.param("id");
-    const limitParam = c.req.query("limit");
-    const limit = limitParam !== undefined ? Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 500) : 100;
-    const beforeTs = c.req.query("beforeTs");
+    const query = parseHistoryListQuery(c.req.query("limit"), c.req.query("beforeTs"), c.req.query("beforeId"));
+    if (!query.ok) return c.json(invalidHistoryQuery(query), 400);
     const events = deps.supervisor.auditRepo.listByWorkflow(workflowId, {
-      limit,
-      ...(beforeTs !== undefined ? { beforeTs } : {}),
+      limit: query.query.limit,
+      ...(query.query.before !== undefined ? { before: query.query.before } : {}),
     });
     return c.json({ events });
   });
@@ -539,12 +785,11 @@ export function createServer(deps: ServerDeps): Hono {
     if (!deps.supervisor) {
       return c.json({ code: "supervisor_disabled", message: "supervisor not configured" }, 503);
     }
-    const limitParam = c.req.query("limit");
-    const limit = limitParam !== undefined ? Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 500) : 100;
-    const beforeTs = c.req.query("beforeTs");
+    const query = parseHistoryListQuery(c.req.query("limit"), c.req.query("beforeTs"), c.req.query("beforeId"));
+    if (!query.ok) return c.json(invalidHistoryQuery(query), 400);
     const alerts = deps.supervisor.alertRepo.list({
-      limit,
-      ...(beforeTs !== undefined ? { beforeTs } : {}),
+      limit: query.query.limit,
+      ...(query.query.before !== undefined ? { before: query.query.before } : {}),
     });
     return c.json({ alerts });
   });

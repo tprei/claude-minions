@@ -19,6 +19,7 @@ export const TRANSITION_KINDS = [
   "complete-without-pr",
   "merge-conflict",
   "cancel-task",
+  "clear-session",
   "recover-task",
   "mark-interrupted",
   "fail-task",
@@ -48,7 +49,7 @@ interface TransitionEffect {
   clearSession?: boolean;
   runEffect?:
     | { kind: "append"; run: NodeRun }
-    | { kind: "close"; reason: NodeRunTerminalReason }
+    | { kind: "close"; reason: NodeRunTerminalReason; exitMetadata?: Record<string, unknown> }
     | { kind: "patch-open-run"; patch: { providerSessionRef?: string; outputOffset?: number } };
 }
 
@@ -61,6 +62,16 @@ const appendArtifacts = (task: TaskNode, command: TransitionCommand): Artifact[]
   ...task.artifacts,
   ...(command.artifacts ?? []),
 ];
+
+const MAX_STREAM_IDLE_AUTO_RECOVERIES = 3;
+const DEPENDENCY_BLOCKING_EXECUTION_STATUSES: ReadonlySet<TaskExecutionStatus> = new Set([
+  "failed",
+  "cancelled",
+]);
+
+function countStreamIdleAutoRecoveries(runs: readonly NodeRun[]): number {
+  return runs.filter((run) => run.terminalReason === "recovered" && run.exitMetadata?.["streamIdleAutoRecovered"] === true).length;
+}
 
 const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
   "mark-ready": {
@@ -120,10 +131,19 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
   },
   "complete-runtime": {
     from: ["running"],
-    apply: (task, command) => ({
-      patch: { executionStatus: "completed", artifacts: appendArtifacts(task, command) },
-      runEffect: { kind: "close", reason: "completed" },
-    }),
+    apply: (task, command) => {
+      if (task.stackStatus !== "clean") {
+        throw new DomainError(
+          "invalid_transition",
+          `task stack is ${task.stackStatus}; must be clean to complete runtime`,
+          { taskId: task.id, stackStatus: task.stackStatus },
+        );
+      }
+      return {
+        patch: { executionStatus: "completed", artifacts: appendArtifacts(task, command) },
+        runEffect: { kind: "close", reason: "completed" },
+      };
+    },
   },
   "start-finalization": {
     from: ["completed"],
@@ -176,19 +196,79 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
     }),
   },
   "cancel-task": {
-    from: ["pending", "ready", "running", "finalizing", "quality-pending", "ci-pending", "needs-review"],
+    from: [
+      "pending",
+      "ready",
+      "running",
+      "completed",
+      "finalizing",
+      "quality-pending",
+      "ci-pending",
+      "pr-open",
+      "merged",
+      "failed",
+      "needs-review",
+    ],
     apply: () => ({
       patch: { executionStatus: "cancelled" },
       runEffect: { kind: "close", reason: "cancelled" },
     }),
   },
+  "clear-session": {
+    from: [
+      "pending",
+      "ready",
+      "running",
+      "completed",
+      "finalizing",
+      "quality-pending",
+      "ci-pending",
+      "pr-open",
+      "merged",
+      "failed",
+      "needs-review",
+      "cancelled",
+    ],
+    apply: () => ({
+      patch: {},
+      clearSession: true,
+    }),
+  },
   "recover-task": {
     from: ["ready", "running", "quality-pending", "ci-pending"],
-    apply: (task) => ({
-      patch: { executionStatus: task.artifacts.length > 0 ? "needs-review" : "pending" },
-      clearSession: true,
-      runEffect: { kind: "close", reason: "recovered" },
-    }),
+    apply: (task, command) => {
+      if (command.reason === "stream_idle_timeout") {
+        const attempt = countStreamIdleAutoRecoveries(task.runs) + 1;
+        const exhausted = task.artifacts.length === 0 && attempt > MAX_STREAM_IDLE_AUTO_RECOVERIES;
+        return {
+          patch: {
+            executionStatus: exhausted
+              ? "needs-review"
+              : task.artifacts.length > 0
+                ? "needs-review"
+                : "pending",
+          },
+          clearSession: true,
+          runEffect: {
+            kind: "close",
+            reason: exhausted ? "timeout" : "recovered",
+            exitMetadata: {
+              recoverySource: "stream_idle_timeout",
+              streamIdleAutoRecoveryAttempt: attempt,
+              streamIdleAutoRecoveryLimit: MAX_STREAM_IDLE_AUTO_RECOVERIES,
+              streamIdleAutoRecovered: !exhausted,
+              ...(exhausted ? { streamIdleAutoRecoveryExhausted: true } : {}),
+            },
+          },
+        };
+      }
+
+      return {
+        patch: { executionStatus: task.artifacts.length > 0 ? "needs-review" : "pending" },
+        clearSession: true,
+        runEffect: { kind: "close", reason: "recovered" },
+      };
+    },
   },
   "mark-interrupted": {
     from: ["running"],
@@ -230,6 +310,12 @@ export function transitionTask(workflow: Workflow, command: TransitionCommand): 
   }
 
   const rule = TRANSITIONS[command.kind];
+  if (!rule) {
+    throw new DomainError("invalid_transition", "unknown transition kind", {
+      taskId: task.id,
+      kind: command.kind,
+    });
+  }
   if (!rule.from.includes(task.executionStatus)) {
     throw new DomainError("invalid_transition", "task status does not allow transition", {
       taskId: task.id,
@@ -241,7 +327,10 @@ export function transitionTask(workflow: Workflow, command: TransitionCommand): 
 
   const effect = rule.apply(task, command);
   const next = updateTask(task, command, effect);
-  const graph = { ...workflow.graph, [task.id]: next };
+  let graph = { ...workflow.graph, [task.id]: next };
+  if (DEPENDENCY_BLOCKING_EXECUTION_STATUSES.has(next.executionStatus)) {
+    graph = cascadeBlockedPendingDescendants(graph, next.id, command);
+  }
 
   return {
     ...workflow,
@@ -250,6 +339,36 @@ export function transitionTask(workflow: Workflow, command: TransitionCommand): 
     version: workflow.version + 1,
     updatedAt: command.now,
   };
+}
+
+function cascadeBlockedPendingDescendants(
+  graph: Record<string, TaskNode>,
+  blockedTaskId: string,
+  command: TransitionCommand,
+): Record<string, TaskNode> {
+  let nextGraph = graph;
+  const queue = [blockedTaskId];
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    for (const task of Object.values(nextGraph)) {
+      if (task.executionStatus !== "pending") continue;
+      if (!task.dependsOn.includes(currentId)) continue;
+      const isBlocked = task.dependsOn.some((depId) => {
+        const dependency = nextGraph[depId];
+        return dependency !== undefined && DEPENDENCY_BLOCKING_EXECUTION_STATUSES.has(dependency.executionStatus);
+      });
+      if (!isBlocked) continue;
+
+      const cancelledTask = updateTask(task, command, {
+        patch: { executionStatus: "cancelled" },
+      });
+      nextGraph = { ...nextGraph, [task.id]: cancelledTask };
+      queue.push(task.id);
+    }
+  }
+
+  return nextGraph;
 }
 
 function updateTask(task: TaskNode, command: TransitionCommand, effect: TransitionEffect): TaskNode {
@@ -266,7 +385,7 @@ function updateTask(task: TaskNode, command: TransitionCommand, effect: Transiti
     if (effect.runEffect.kind === "append") {
       updated.runs = appendRun(task.runs, effect.runEffect.run);
     } else if (effect.runEffect.kind === "close") {
-      updated.runs = closeLatestRun(task.runs, effect.runEffect.reason, command.now);
+      updated.runs = closeLatestRun(task.runs, effect.runEffect.reason, command.now, effect.runEffect.exitMetadata);
     } else {
       updated.runs = patchOpenRun(task.runs, effect.runEffect.patch);
     }

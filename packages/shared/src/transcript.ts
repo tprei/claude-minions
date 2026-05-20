@@ -74,6 +74,15 @@ export interface ToolResultEvent extends BaseEvent {
   byteSize?: number;
 }
 
+export interface UsageEvent extends BaseEvent {
+  kind: "usage";
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  costUsd?: number;
+}
+
 export interface StatusEvent extends BaseEvent {
   kind: "status";
   level: "info" | "warn" | "error";
@@ -89,6 +98,7 @@ export type TranscriptEvent =
   | ThinkingEvent
   | ToolCallEvent
   | ToolResultEvent
+  | UsageEvent
   | StatusEvent;
 
 export type TranscriptEventKind = TranscriptEvent["kind"];

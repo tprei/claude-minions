@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applyCommand } from "../src/application/commands.js";
 import { InMemoryWorkflowRepository } from "../src/application/repository.js";
 import { TRANSITION_KINDS, type TransitionCommand, type TransitionKind } from "../src/application/transitions.js";
-import { createSingleTaskWorkflow } from "../src/domain/workflow.js";
+import { createSingleTaskWorkflow, createWorkflow } from "../src/domain/workflow.js";
 import type { NodeRun } from "../src/domain/runs.js";
 import type { TaskExecutionStatus, TaskNode, Workflow } from "../src/domain/types.js";
 
@@ -154,6 +154,13 @@ const transitionCases: Record<TransitionKind, TransitionCase> = {
     runs: [openRun()],
     sessionId: "s1",
   },
+  "clear-session": {
+    from: "cancelled",
+    command: { kind: "clear-session" },
+    expectedTo: "cancelled",
+    expectTaskTransition: false,
+    sessionId: "s1",
+  },
   "recover-task": {
     from: "running",
     command: { kind: "recover-task" },
@@ -286,7 +293,19 @@ describe("event derivation", () => {
   });
 
   it("request-restack produces graph-operation-changed and task-transitioned events", async () => {
-    const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
+    const workflow = createWorkflow(
+      {
+        id: "wf-1",
+        kind: "manual-dag",
+        repoId: "fixture-repo",
+        tasks: [
+          { id: "root", title: "Root", prompt: "Root" },
+          { id: "child", title: "Child", prompt: "Child", dependsOn: ["root"] },
+        ],
+        policy: { maxConcurrent: 1 },
+      },
+      () => now,
+    );
     const repo = new InMemoryWorkflowRepository();
     await repo.save(workflow, []);
 
@@ -295,7 +314,7 @@ describe("event derivation", () => {
       workflowId: "wf-1",
       input: {
         operationId: "op-1",
-        ancestorId: "wf-1:task",
+        ancestorId: "root",
         idempotencyKey: "key-1",
         now,
       },
@@ -362,5 +381,60 @@ describe("event derivation", () => {
     expect(statusChanged).toBeDefined();
     expect(statusChanged?.payload.fromStatus).toBe("active");
     expect(statusChanged?.payload.toStatus).toBe("completed");
+  });
+
+  it("failing a parent emits cascaded child task transitions and workflow-status-changed", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const workflow = createWorkflow(
+      {
+        id: "wf-dag",
+        kind: "manual-dag",
+        repoId: "fixture-repo",
+        tasks: [
+          { id: "parent", title: "Parent", prompt: "Parent" },
+          { id: "child", title: "Child", prompt: "Child", dependsOn: ["parent"] },
+        ],
+        policy: { maxConcurrent: 1 },
+      },
+      () => now,
+    );
+    await repo.save(workflow, []);
+    await applyCommand(repo, {
+      kind: "transition-task",
+      workflowId: "wf-dag",
+      transition: { kind: "mark-ready", taskId: "parent", now },
+    });
+    await applyCommand(repo, {
+      kind: "transition-task",
+      workflowId: "wf-dag",
+      transition: { kind: "mark-running", taskId: "parent", sessionId: "s1", now },
+    });
+
+    const result = await applyCommand(repo, {
+      kind: "transition-task",
+      workflowId: "wf-dag",
+      transition: { kind: "fail-task", taskId: "parent", now },
+    });
+
+    const transitioned = result.events.filter((event) => event.kind === "task-transitioned");
+    expect(transitioned).toHaveLength(2);
+    expect(transitioned.map((event) => event.payload)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        taskId: "parent",
+        transitionKind: "fail-task",
+        fromExecutionStatus: "running",
+        toExecutionStatus: "failed",
+      }),
+      expect.objectContaining({
+        taskId: "child",
+        transitionKind: "fail-task",
+        fromExecutionStatus: "pending",
+        toExecutionStatus: "cancelled",
+      }),
+    ]));
+
+    const statusChanged = result.events.find((event) => event.kind === "workflow-status-changed");
+    expect(statusChanged?.payload.fromStatus).toBe("active");
+    expect(statusChanged?.payload.toStatus).toBe("failed");
   });
 });

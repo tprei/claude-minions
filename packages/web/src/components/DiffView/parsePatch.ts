@@ -29,22 +29,125 @@ export interface ParsedFile {
 interface PendingFile {
   diffOldPath?: string;
   diffNewPath?: string;
+  diffOldPrefix?: string;
+  diffNewPrefix?: string;
   minusPath?: string;
   plusPath?: string;
+  renameFrom?: string;
+  renameTo?: string;
   minusDevNull: boolean;
   plusDevNull: boolean;
   isBinary: boolean;
   hunks: Hunk[];
 }
 
-function stripPrefix(p: string, prefix: string): string {
-  if (p.startsWith(prefix)) return p.slice(prefix.length);
-  return p;
+function decodeQuotedPath(value: string): string {
+  let result = "";
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch !== "\\") {
+      result += ch;
+      continue;
+    }
+    const next = value[++i];
+    if (next === undefined) {
+      result += "\\";
+    } else if (next === "n") {
+      result += "\n";
+    } else if (next === "r") {
+      result += "\r";
+    } else if (next === "t") {
+      result += "\t";
+    } else if (/[0-7]/.test(next)) {
+      let octal = next;
+      for (let j = 0; j < 2 && /[0-7]/.test(value[i + 1] ?? ""); j++) {
+        octal += value[++i];
+      }
+      result += String.fromCharCode(parseInt(octal, 8));
+    } else {
+      result += next;
+    }
+  }
+  return result;
+}
+
+function readPathToken(input: string, start: number): { path: string; end: number } | null {
+  let i = start;
+  while (input[i] === " ") i++;
+  if (i >= input.length) return null;
+  if (input[i] === "\"") {
+    i++;
+    let raw = "";
+    while (i < input.length) {
+      const ch = input[i]!;
+      if (ch === "\\" && i + 1 < input.length) {
+        raw += ch + input[i + 1]!;
+        i += 2;
+        continue;
+      }
+      if (ch === "\"") return { path: decodeQuotedPath(raw), end: i + 1 };
+      raw += ch;
+      i++;
+    }
+    return null;
+  }
+  const startPath = i;
+  while (i < input.length && input[i] !== " ") i++;
+  return { path: input.slice(startPath, i), end: i };
+}
+
+function parseDiffGitLine(line: string): { oldPath: string; newPath: string } | null {
+  if (!line.startsWith("diff --git ")) return null;
+  const first = readPathToken(line, "diff --git ".length);
+  if (!first) return null;
+  const second = readPathToken(line, first.end);
+  if (!second) return null;
+  return { oldPath: first.path, newPath: second.path };
+}
+
+function splitPrefix(path: string): { prefix?: string; path: string } {
+  const slash = path.indexOf("/");
+  if (slash <= 0) return { path };
+  return { prefix: path.slice(0, slash), path: path.slice(slash + 1) };
+}
+
+function normalizeDiffPaths(oldPath: string, newPath: string): {
+  oldPath: string;
+  newPath: string;
+  oldPrefix?: string;
+  newPrefix?: string;
+} {
+  const oldParts = splitPrefix(oldPath);
+  const newParts = splitPrefix(newPath);
+  if (oldParts.prefix && newParts.prefix && oldParts.prefix !== newParts.prefix) {
+    return {
+      oldPath: oldParts.path,
+      newPath: newParts.path,
+      oldPrefix: oldParts.prefix,
+      newPrefix: newParts.prefix,
+    };
+  }
+  return { oldPath, newPath };
+}
+
+function stripKnownPrefix(path: string, prefix: string | undefined): string {
+  if (prefix && path.startsWith(`${prefix}/`)) return path.slice(prefix.length + 1);
+  if (path.startsWith("a/") || path.startsWith("b/")) return path.slice(2);
+  return path;
+}
+
+function parsePatchPathLine(line: string, marker: "--- " | "+++ "): string | null {
+  if (!line.startsWith(marker)) return null;
+  const body = line.slice(marker.length);
+  const token = readPathToken(body, 0);
+  if (!token) return null;
+  if (body.trimStart().startsWith("\"")) return token.path;
+  return token.path.split("\t", 1)[0] ?? token.path;
 }
 
 export function parsePatch(raw: string): ParsedFile[] {
   if (!raw) return [];
-  const lines = raw.split("\n");
+  const lines = raw.replace(/\r\n?/g, "\n").split("\n");
   const files: ParsedFile[] = [];
   let current: PendingFile | null = null;
   let currentHunk: Hunk | null = null;
@@ -66,7 +169,7 @@ export function parsePatch(raw: string): ParsedFile[] {
     let oldPath: string | undefined;
     if (current.isBinary) {
       status = "binary";
-      path = current.diffNewPath ?? current.diffOldPath ?? "";
+      path = current.renameTo ?? current.diffNewPath ?? current.diffOldPath ?? "";
     } else if (current.minusDevNull) {
       status = "added";
       path = current.plusPath ?? current.diffNewPath ?? "";
@@ -74,8 +177,8 @@ export function parsePatch(raw: string): ParsedFile[] {
       status = "deleted";
       path = current.minusPath ?? current.diffOldPath ?? "";
     } else {
-      const a = current.minusPath ?? current.diffOldPath;
-      const b = current.plusPath ?? current.diffNewPath;
+      const a = current.renameFrom ?? current.minusPath ?? current.diffOldPath;
+      const b = current.renameTo ?? current.plusPath ?? current.diffNewPath;
       path = b ?? a ?? "";
       if (a && b && a !== b) {
         status = "renamed";
@@ -96,12 +199,15 @@ export function parsePatch(raw: string): ParsedFile[] {
   }
 
   for (const line of lines) {
-    const diffMatch = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    const diffMatch = parseDiffGitLine(line);
     if (diffMatch) {
       finalize();
+      const normalized = normalizeDiffPaths(diffMatch.oldPath, diffMatch.newPath);
       current = {
-        diffOldPath: diffMatch[1],
-        diffNewPath: diffMatch[2],
+        diffOldPath: normalized.oldPath,
+        diffNewPath: normalized.newPath,
+        diffOldPrefix: normalized.oldPrefix,
+        diffNewPrefix: normalized.newPrefix,
         minusDevNull: false,
         plusDevNull: false,
         isBinary: false,
@@ -112,30 +218,6 @@ export function parsePatch(raw: string): ParsedFile[] {
     }
     if (!current) continue;
 
-    if (line.startsWith("--- ")) {
-      pushHunk();
-      const path = line.slice(4).trim();
-      if (path === "/dev/null") {
-        current.minusDevNull = true;
-      } else {
-        current.minusPath = stripPrefix(path, "a/");
-      }
-      continue;
-    }
-    if (line.startsWith("+++ ")) {
-      pushHunk();
-      const path = line.slice(4).trim();
-      if (path === "/dev/null") {
-        current.plusDevNull = true;
-      } else {
-        current.plusPath = stripPrefix(path, "b/");
-      }
-      continue;
-    }
-    if (line.startsWith("Binary files ") && line.endsWith(" differ")) {
-      current.isBinary = true;
-      continue;
-    }
     if (line.startsWith("@@")) {
       pushHunk();
       const m = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
@@ -155,23 +237,56 @@ export function parsePatch(raw: string): ParsedFile[] {
       newNo = newStart;
       continue;
     }
-    if (!currentHunk) continue;
-    if (line.startsWith("\\")) continue;
-    if (line.startsWith("+")) {
-      currentHunk.lines.push({ kind: "add", text: line.slice(1), newNo });
-      newNo++;
-    } else if (line.startsWith("-")) {
-      currentHunk.lines.push({ kind: "del", text: line.slice(1), oldNo });
-      oldNo++;
-    } else if (line.startsWith(" ")) {
-      currentHunk.lines.push({
-        kind: "context",
-        text: line.slice(1),
-        oldNo,
-        newNo,
-      });
-      oldNo++;
-      newNo++;
+    if (currentHunk) {
+      if (line.startsWith("\\")) continue;
+      if (line.startsWith("+")) {
+        currentHunk.lines.push({ kind: "add", text: line.slice(1), newNo });
+        newNo++;
+      } else if (line.startsWith("-")) {
+        currentHunk.lines.push({ kind: "del", text: line.slice(1), oldNo });
+        oldNo++;
+      } else if (line.startsWith(" ")) {
+        currentHunk.lines.push({
+          kind: "context",
+          text: line.slice(1),
+          oldNo,
+          newNo,
+        });
+        oldNo++;
+        newNo++;
+      }
+      continue;
+    }
+
+    if (line.startsWith("--- ")) {
+      const path = parsePatchPathLine(line, "--- ");
+      if (path === "/dev/null") {
+        current.minusDevNull = true;
+      } else if (path) {
+        current.minusPath = stripKnownPrefix(path, current.diffOldPrefix);
+      }
+      continue;
+    }
+    if (line.startsWith("+++ ")) {
+      const path = parsePatchPathLine(line, "+++ ");
+      if (path === "/dev/null") {
+        current.plusDevNull = true;
+      } else if (path) {
+        current.plusPath = stripKnownPrefix(path, current.diffNewPrefix);
+      }
+      continue;
+    }
+    if (line.startsWith("Binary files ") && line.endsWith(" differ")) {
+      current.isBinary = true;
+      continue;
+    }
+    if (line.startsWith("rename from ")) {
+      current.renameFrom = stripKnownPrefix(line.slice("rename from ".length), current.diffOldPrefix);
+      continue;
+    }
+    if (line.startsWith("rename to ")) {
+      current.renameTo = stripKnownPrefix(line.slice("rename to ".length), current.diffNewPrefix);
+      continue;
     }
   }
   finalize();

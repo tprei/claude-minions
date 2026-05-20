@@ -2,20 +2,16 @@ import { useState, useEffect, useSyncExternalStore, type ReactElement, type Reac
 import { useShallow } from "zustand/react/shallow";
 import { useConnectionStore } from "../connections/store.js";
 import { ConnectionPicker } from "../connections/picker.js";
+import type { Connection } from "../connections/store.js";
 import { useVersionStore } from "../store/version.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { cx } from "../util/classnames.js";
 import { sseStatusStore, type SseStatus } from "../transport/sseStatus.js";
-import { registerPush, unregisterPush, usePushPermission } from "../pwa/push.js";
+import { getVapidPublicKey } from "../transport/rest.js";
+import { isPushRegisteredForWorkflow, registerPush, unregisterPush, usePushPermission } from "../pwa/push.js";
 import { ThemeToggle } from "../pwa/ThemeToggle.js";
 
-interface PushApi {
-  get: (path: string) => Promise<unknown>;
-  post: (path: string, body: unknown) => Promise<unknown>;
-  del: (path: string, body?: unknown) => Promise<unknown>;
-}
-
-function PushToggle({ api }: { api: PushApi }): ReactElement | null {
+function PushToggle({ conn, workflowId }: { conn: Connection; workflowId: string }): ReactElement | null {
   const permission = usePushPermission();
   const [subscribed, setSubscribed] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
@@ -24,15 +20,15 @@ function PushToggle({ api }: { api: PushApi }): ReactElement | null {
 
   useEffect(() => {
     let cancelled = false;
-    api.get("/api/push/vapid-public-key")
+    getVapidPublicKey(conn)
       .then((res) => {
         if (cancelled) return;
-        const key = (res as { publicKey?: string } | null)?.publicKey;
+        const key = res.publicKey;
         setServerSupported(typeof key === "string" && key.length > 0);
       })
       .catch(() => { if (!cancelled) setServerSupported(false); });
     return () => { cancelled = true; };
-  }, [api]);
+  }, [conn]);
 
   useEffect(() => {
     if (permission !== "granted") {
@@ -40,12 +36,11 @@ function PushToggle({ api }: { api: PushApi }): ReactElement | null {
       return;
     }
     let cancelled = false;
-    void navigator.serviceWorker?.ready
-      .then((reg) => reg.pushManager.getSubscription())
-      .then((sub) => { if (!cancelled) setSubscribed(sub !== null); })
+    void isPushRegisteredForWorkflow(conn, workflowId)
+      .then((isRegistered) => { if (!cancelled) setSubscribed(isRegistered); })
       .catch(() => { if (!cancelled) setSubscribed(false); });
     return () => { cancelled = true; };
-  }, [permission]);
+  }, [conn, permission, workflowId]);
 
   if (permission === "unsupported") return null;
   if (serverSupported === false) return null;
@@ -56,10 +51,10 @@ function PushToggle({ api }: { api: PushApi }): ReactElement | null {
     setError(null);
     try {
       if (isSubscribed) {
-        await unregisterPush(api);
+        await unregisterPush(conn, workflowId);
         setSubscribed(false);
       } else {
-        const ok = await registerPush(api);
+        const ok = await registerPush(conn, workflowId);
         setSubscribed(ok);
         if (!ok) {
           setError("Notifications were blocked. Update your browser settings to allow them.");
@@ -115,7 +110,8 @@ function SseStatusPill({ connId }: { connId: string }): ReactElement | null {
 interface HeaderProps {
   resourceIndicator?: ReactNode;
   installPrompt?: ReactNode;
-  api?: PushApi | null;
+  conn?: Connection | null;
+  pushWorkflowId?: string | null;
 }
 
 function VersionPopover({ connId }: { connId: string }): ReactElement | null {
@@ -165,7 +161,7 @@ function VersionPopover({ connId }: { connId: string }): ReactElement | null {
   );
 }
 
-export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): ReactElement {
+export function Header({ resourceIndicator, installPrompt, conn, pushWorkflowId }: HeaderProps): ReactElement {
   const { connections, activeId } = useConnectionStore(useShallow(s => ({
     connections: s.connections,
     activeId: s.activeId,
@@ -227,14 +223,15 @@ export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): 
         {(resourceIndicator || installPrompt) && (
           <div className="h-5 w-px bg-border mx-1 flex-shrink-0" aria-hidden="true" />
         )}
-        {api && <PushToggle api={api} />}
+        {conn && pushWorkflowId && <PushToggle conn={conn} workflowId={pushWorkflowId} />}
         <ThemeToggle />
       </div>
 
       <MobileActions
         resourceIndicator={resourceIndicator}
         installPrompt={installPrompt}
-        api={api ?? null}
+        conn={conn ?? null}
+        pushWorkflowId={pushWorkflowId ?? null}
         connId={activeId ?? null}
       />
     </div>
@@ -244,11 +241,12 @@ export function Header({ resourceIndicator, installPrompt, api }: HeaderProps): 
 interface MobileActionsProps {
   resourceIndicator?: ReactNode;
   installPrompt?: ReactNode;
-  api: PushApi | null;
+  conn: Connection | null;
+  pushWorkflowId: string | null;
   connId: string | null;
 }
 
-function MobileActions({ resourceIndicator, installPrompt, api, connId }: MobileActionsProps): ReactElement {
+function MobileActions({ resourceIndicator, installPrompt, conn, pushWorkflowId, connId }: MobileActionsProps): ReactElement {
   const [open, setOpen] = useState(false);
   return (
     <div className="sm:hidden relative flex-shrink-0">
@@ -278,9 +276,9 @@ function MobileActions({ resourceIndicator, installPrompt, api, connId }: Mobile
               </div>
             )}
             {installPrompt && <div className="px-2 py-1">{installPrompt}</div>}
-            {api && (
+            {conn && pushWorkflowId && (
               <div className="flex items-center gap-2 px-2 py-1">
-                <PushToggle api={api} />
+                <PushToggle conn={conn} workflowId={pushWorkflowId} />
                 <span className="text-xs text-fg-muted">Push</span>
               </div>
             )}

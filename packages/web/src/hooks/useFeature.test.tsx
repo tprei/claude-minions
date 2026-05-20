@@ -33,9 +33,12 @@ describe("useFeature", () => {
       libraryVersion: "0.1.0",
       buildSha: "test",
       provider: "stub",
+      providers: ["stub"],
       features: ["voice-input"],
+      featuresPending: [],
       repos: [],
       pluginSet: [],
+      startedAt: "2026-05-17T12:00:00.000Z",
     });
     container = document.createElement("div");
     document.body.appendChild(container);

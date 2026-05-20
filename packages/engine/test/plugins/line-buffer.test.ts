@@ -44,4 +44,11 @@ describe("LineBuffer", () => {
     expect(r1).toEqual([]);
     expect(buf.flush()).toEqual([]);
   });
+
+  it("throws when an unterminated line exceeds the residual cap", () => {
+    const buf = new LineBuffer(5);
+    expect(() => buf.push(new TextEncoder().encode("123456"))).toThrow(
+      "line buffer residual exceeded 5 characters",
+    );
+  });
 });

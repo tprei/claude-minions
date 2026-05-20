@@ -46,34 +46,55 @@ export class HostFs implements WorkspaceFs {
 }
 
 export class DockerFs implements WorkspaceFs {
-  constructor(private readonly commandPrefix: readonly string[]) {}
+  private static readonly DEFAULT_TIMEOUT_MS = 30_000;
 
-  private exec(cmd: string): Promise<string> {
+  constructor(
+    private readonly commandPrefix: readonly string[],
+    private readonly timeoutMs = DockerFs.DEFAULT_TIMEOUT_MS,
+  ) {}
+
+  private exec(args: readonly string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      const [bin, ...args] = [...this.commandPrefix, "sh", "-c", cmd];
+      const [bin, ...spawnArgs] = [...this.commandPrefix, ...args];
       if (!bin) {
         reject(new Error("DockerFs: commandPrefix is empty"));
         return;
       }
-      const proc = spawn(bin, args);
+      const proc = spawn(bin, spawnArgs);
       const chunks: Buffer[] = [];
       const errChunks: Buffer[] = [];
+      let timedOut = false;
+      let sigkillTimer: NodeJS.Timeout | undefined;
+      const killTimer = setTimeout(() => {
+        timedOut = true;
+        proc.kill("SIGTERM");
+        sigkillTimer = setTimeout(() => proc.kill("SIGKILL"), 1_000);
+      }, this.timeoutMs);
       proc.stdout.on("data", (c: Buffer) => chunks.push(c));
       proc.stderr.on("data", (c: Buffer) => errChunks.push(c));
       proc.on("close", (code) => {
+        clearTimeout(killTimer);
+        if (sigkillTimer !== undefined) clearTimeout(sigkillTimer);
         if (code === 0) {
           resolve(Buffer.concat(chunks).toString("utf8").trim());
         } else {
-          reject(new Error(`docker exec sh -c ${JSON.stringify(cmd)} exited ${code}: ${Buffer.concat(errChunks).toString("utf8").trim()}`));
+          const cmd = [bin, ...spawnArgs].map((part) => JSON.stringify(part)).join(" ");
+          const stderr = Buffer.concat(errChunks).toString("utf8").trim();
+          const status = timedOut ? `timed out after ${this.timeoutMs}ms` : `exited ${code}`;
+          reject(new Error(`${cmd} ${status}: ${stderr}`));
         }
       });
-      proc.on("error", reject);
+      proc.on("error", (err) => {
+        clearTimeout(killTimer);
+        if (sigkillTimer !== undefined) clearTimeout(sigkillTimer);
+        reject(err);
+      });
     });
   }
 
   async pathExists(path: string): Promise<boolean> {
     try {
-      await this.exec(`test -e ${JSON.stringify(path)} && echo y`);
+      await this.exec(["test", "-e", path]);
       return true;
     } catch {
       return false;
@@ -82,7 +103,7 @@ export class DockerFs implements WorkspaceFs {
 
   async gitMarkerExists(path: string): Promise<boolean> {
     try {
-      await this.exec(`test -e ${JSON.stringify(path + "/.git")} && echo y`);
+      await this.exec(["test", "-e", `${path}/.git`]);
       return true;
     } catch {
       return false;
@@ -90,7 +111,7 @@ export class DockerFs implements WorkspaceFs {
   }
 
   async removeRecursive(path: string): Promise<void> {
-    await this.exec(`rm -rf ${JSON.stringify(path)}`);
+    await this.exec(["rm", "-rf", "--", path]);
   }
 
   async ensureDir(_path: string): Promise<void> {

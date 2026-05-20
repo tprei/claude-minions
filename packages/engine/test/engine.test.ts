@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createEngine } from "../src/engine.js";
+import { buildBootstrapClone, createEngine } from "../src/engine.js";
 import type { Engine, EngineConfig } from "../src/engine.js";
 import { silentLogger } from "./test-helpers.js";
 import type { RuntimeAttachOptions, RuntimeBackend, RuntimeOutputChunk, RuntimeStartResult, RuntimeStartSpec } from "../src/plugins/runtime-backend.js";
@@ -12,10 +12,55 @@ import { applyCommand } from "../src/application/commands.js";
 import { createSingleTaskWorkflow } from "../src/domain/workflow.js";
 import { StubProviderPlugin } from "../src/plugins/providers/stub.js";
 import { StubRuntimeBackend } from "../src/plugins/stub-runtime.js";
+import { StubWorkspaceBackend } from "../src/plugins/workspace/stub-workspace.js";
+
+async function waitForTaskStatus(
+  engine: Engine,
+  workflowId: string,
+  taskId: string,
+  status: string,
+  timeoutMs = 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const workflow = await engine.repo.get(workflowId);
+    if (workflow?.graph[taskId]?.executionStatus === status) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const workflow = await engine.repo.get(workflowId);
+  throw new Error(`Timed out waiting for ${taskId} to reach ${status}; actual=${workflow?.graph[taskId]?.executionStatus ?? "missing"}`);
+}
 
 function makeTempPath(): string {
   const dir = mkdtempSync(join(tmpdir(), "engine-test-"));
   return join(dir, "test.db");
+}
+
+describe("buildBootstrapClone", () => {
+  it("keeps github remotes clean and moves auth into askpass env", () => {
+    const result = buildBootstrapClone("https://github.com/openai/example.git", "ghp-secret");
+    expect(result.remote).toBe("https://github.com/openai/example.git");
+    expect(result.env).toEqual(expect.objectContaining({
+      GH_TOKEN: "ghp-secret",
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: expect.stringContaining("gh-askpass.sh"),
+    }));
+  });
+
+  it("does not attach auth env for non-github remotes", () => {
+    const result = buildBootstrapClone("https://gitlab.example.com/group/repo.git", "ghp-secret");
+    expect(result).toEqual({ remote: "https://gitlab.example.com/group/repo.git" });
+  });
+});
+
+class FinalFrameRuntime extends StubRuntimeBackend {
+  attach(sessionId: string, _opts?: RuntimeAttachOptions): AsyncIterable<RuntimeOutputChunk> {
+    return {
+      [Symbol.asyncIterator]: async function* () {
+        yield { sessionId, offset: 0, bytes: new TextEncoder().encode("final\n") };
+      },
+    };
+  }
 }
 
 describe("createEngine", () => {
@@ -76,6 +121,32 @@ describe("createEngine", () => {
     const body = await getRes.json() as { id: string };
     expect(body.id).toBe("wf-engine-1");
     engine = second;
+  });
+
+  it("uses a no-op quality gate by default so completed tasks can finalize", async () => {
+    engine = await createEngine({
+      dbPath,
+      repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }],
+      providerFactory: () => new StubProviderPlugin({ frames: [[{ kind: "final", sessionRef: "session-ref" }]] }),
+      runtime: new FinalFrameRuntime(),
+      workspace: new StubWorkspaceBackend(),
+      now: () => "2026-05-04T11:19:00.000Z",
+      log: silentLogger(),
+    });
+
+    const res = await engine.server.fetch(new Request("http://localhost/workflows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "wf-default-quality",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "task", title: "T", prompt: "P" }],
+      }),
+    }));
+    expect(res.status).toBe(201);
+
+    await waitForTaskStatus(engine, "wf-default-quality", "task", "merged");
   });
 });
 
