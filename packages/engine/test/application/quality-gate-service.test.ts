@@ -213,11 +213,19 @@ describe("QualityGateService", () => {
 
   it("aborts on detach — runForTask stops", async () => {
     const repo = makeRepo();
-    const wf = createSingleTaskWorkflow(WORKFLOW_ID, { title: "T", prompt: "P" }, now);
-    await repo.save(wf, []);
+    await makeTaskCompleted(repo);
 
     const ctrl = new AbortController();
-    const plugin = new StubQualityPlugin({ configs: [], result: { status: "passed", checks: [] }, rejectOnAbort: true });
+    let runSignal: AbortSignal | undefined;
+    const plugin: QualityPlugin = {
+      loadConfig: vi.fn().mockResolvedValue([{ name: "lint", command: "pnpm lint" }]),
+      run: vi.fn((_configs, _path, opts) => {
+        runSignal = opts.signal;
+        return new Promise<QualityRunResult>((_resolve, reject) => {
+          opts.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        });
+      }),
+    };
     const service = new QualityGateService({
       workflowRepo: repo,
       workspace: makeWorkspace(makeHandle()),
@@ -229,13 +237,20 @@ describe("QualityGateService", () => {
     });
 
     service.attach(WORKFLOW_ID);
-    await new Promise((r) => setImmediate(r));
+    const deadline = Date.now() + 1000;
+    while (runSignal === undefined && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(runSignal).toBeDefined();
 
     service.detach(WORKFLOW_ID);
     await new Promise((r) => setTimeout(r, 50));
     ctrl.abort();
 
-    expect(true).toBe(true);
+    expect(runSignal?.aborted).toBe(true);
+    const saved = await repo.get(WORKFLOW_ID);
+    expect(saved?.graph[TASK_ID]?.executionStatus).toBe("quality-pending");
+    expect(saved?.graph[TASK_ID]?.artifacts.some((artifact) => artifact.kind === "quality-report")).toBe(false);
   });
 
   it("attach scans existing completed tasks at attach time", async () => {

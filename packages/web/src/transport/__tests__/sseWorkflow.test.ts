@@ -10,36 +10,34 @@ const CONN: Connection = {
   color: "#fff",
 };
 
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  url: string;
-  closed = false;
-  readonly listeners = new Map<string, Set<(e: { type: string; data?: string }) => void>>();
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-  addEventListener(kind: string, handler: (e: { type: string; data?: string }) => void): void {
-    let set = this.listeners.get(kind);
-    if (!set) {
-      set = new Set();
-      this.listeners.set(kind, set);
-    }
-    set.add(handler);
-  }
-  removeEventListener(kind: string, handler: (e: { type: string; data?: string }) => void): void {
-    this.listeners.get(kind)?.delete(handler);
-  }
-  close(): void {
-    this.closed = true;
-  }
-  fire(kind: string, payload?: unknown): void {
-    const event =
-      payload === undefined
-        ? { type: kind }
-        : { type: kind, data: JSON.stringify(payload) };
-    for (const h of [...(this.listeners.get(kind) ?? [])]) h(event);
-  }
+const FETCH_MOCK = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();
+const encoder = new TextEncoder();
+let activeController: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+function streamResponse(): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        activeController = controller;
+      },
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    },
+  );
+}
+
+function emitSse(kind: string, payload: unknown, id?: number): void {
+  const idLine = id !== undefined ? `id: ${id}\n` : "";
+  activeController?.enqueue(
+    encoder.encode(`${idLine}event: ${kind}\ndata: ${JSON.stringify(payload)}\n\n`),
+  );
+}
+
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function taskTransitionedEvent(workflowId: string): WorkflowEvent {
@@ -61,23 +59,44 @@ function taskTransitionedEvent(workflowId: string): WorkflowEvent {
 
 describe("connectWorkflowSse", () => {
   beforeEach(() => {
-    FakeEventSource.instances.length = 0;
-    vi.stubGlobal("EventSource", FakeEventSource);
+    activeController = null;
+    FETCH_MOCK.mockImplementation(() => Promise.resolve(streamResponse()));
+    vi.stubGlobal("fetch", FETCH_MOCK);
     vi.useFakeTimers();
   });
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    FETCH_MOCK.mockReset();
   });
 
   it("opens SSE to /workflows/:id/events", async () => {
     const { connectWorkflowSse } = await import("../sse.js");
     const conn = connectWorkflowSse(CONN, "wf-1", {});
+    await flush();
 
-    expect(FakeEventSource.instances).toHaveLength(1);
-    const es = FakeEventSource.instances[0]!;
-    expect(es.url).toBe("http://engine-sse/workflows/wf-1/events");
+    expect(FETCH_MOCK).toHaveBeenCalledOnce();
+    const [url, init] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://engine-sse/workflows/wf-1/events");
+    expect((init.headers as Headers).get("Authorization")).toBe("Bearer tok");
+    expect((init.headers as Headers).get("Accept")).toBe("text/event-stream");
 
+    conn.close();
+  });
+
+  it("does not fire onReconnect on the initial open, but does after a reconnect", async () => {
+    const onReconnect = vi.fn();
+    const { connectWorkflowSse } = await import("../sse.js");
+    const conn = connectWorkflowSse(CONN, "wf-1", { onReconnect });
+    await flush();
+
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    activeController?.error(new Error("network"));
+    await flush();
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    expect(onReconnect).toHaveBeenCalledOnce();
     conn.close();
   });
 
@@ -85,10 +104,11 @@ describe("connectWorkflowSse", () => {
     const onEvent = vi.fn();
     const { connectWorkflowSse } = await import("../sse.js");
     const conn = connectWorkflowSse(CONN, "wf-1", { onEvent });
+    await flush();
 
-    const es = FakeEventSource.instances[0]!;
     const event = taskTransitionedEvent("wf-1");
-    es.fire("task-transitioned", event);
+    emitSse("task-transitioned", event, 1);
+    await flush();
 
     expect(onEvent).toHaveBeenCalledOnce();
     const received = onEvent.mock.calls[0]?.[0] as WorkflowEvent;
@@ -105,8 +125,8 @@ describe("connectWorkflowSse", () => {
     const onEvent = vi.fn();
     const { connectWorkflowSse } = await import("../sse.js");
     const conn = connectWorkflowSse(CONN, "wf-ci", { onEvent });
+    await flush();
 
-    const es = FakeEventSource.instances[0]!;
     const ciEvent: WorkflowEvent = {
       cursor: 0,
       workflowId: "wf-ci",
@@ -122,7 +142,8 @@ describe("connectWorkflowSse", () => {
         ],
       },
     };
-    es.fire("ci-poll-result", ciEvent);
+    emitSse("ci-poll-result", ciEvent);
+    await flush();
 
     expect(onEvent).toHaveBeenCalledOnce();
     const received = onEvent.mock.calls[0]?.[0] as WorkflowEvent;
@@ -140,8 +161,8 @@ describe("connectWorkflowSse", () => {
     const onEvent = vi.fn();
     const { connectWorkflowSse } = await import("../sse.js");
     const conn = connectWorkflowSse(CONN, "wf-2", { onEvent });
+    await flush();
 
-    const es = FakeEventSource.instances[0]!;
     const statusEvent: WorkflowEvent = {
       cursor: 5,
       workflowId: "wf-2",
@@ -149,7 +170,8 @@ describe("connectWorkflowSse", () => {
       kind: "workflow-status-changed",
       payload: { fromStatus: "active", toStatus: "completed" },
     };
-    es.fire("workflow-status-changed", statusEvent);
+    emitSse("workflow-status-changed", statusEvent);
+    await flush();
 
     expect(onEvent).toHaveBeenCalledOnce();
     const received = onEvent.mock.calls[0]?.[0] as WorkflowEvent;
@@ -161,14 +183,32 @@ describe("connectWorkflowSse", () => {
   it("reconnects with exponential backoff after error", async () => {
     const { connectWorkflowSse } = await import("../sse.js");
     const conn = connectWorkflowSse(CONN, "wf-1", {});
+    await flush();
 
-    expect(FakeEventSource.instances).toHaveLength(1);
-    const es0 = FakeEventSource.instances[0]!;
-    es0.fire("error");
-    expect(es0.closed).toBe(true);
+    expect(FETCH_MOCK).toHaveBeenCalledTimes(1);
+    activeController?.error(new Error("network"));
+    await flush();
 
     await vi.advanceTimersByTimeAsync(31_000);
-    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(FETCH_MOCK).toHaveBeenCalledTimes(2);
+
+    conn.close();
+  });
+
+  it("reconnects from the last durable SSE id", async () => {
+    const { connectWorkflowSse } = await import("../sse.js");
+    const conn = connectWorkflowSse(CONN, "wf-1", {});
+    await flush();
+
+    emitSse("task-transitioned", taskTransitionedEvent("wf-1"), 9);
+    await flush();
+    activeController?.error(new Error("network"));
+    await flush();
+
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(FETCH_MOCK).toHaveBeenCalledTimes(2);
+    const [url] = FETCH_MOCK.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe("http://engine-sse/workflows/wf-1/events?since=9");
 
     conn.close();
   });
@@ -176,23 +216,24 @@ describe("connectWorkflowSse", () => {
   it("does not reconnect after close", async () => {
     const { connectWorkflowSse } = await import("../sse.js");
     const conn = connectWorkflowSse(CONN, "wf-1", {});
+    await flush();
 
     conn.close();
-    const es0 = FakeEventSource.instances[0]!;
-    es0.fire("error");
+    activeController?.error(new Error("network"));
+    await flush();
 
     await vi.advanceTimersByTimeAsync(31_000);
-    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FETCH_MOCK).toHaveBeenCalledTimes(1);
   });
 
   it("ignores malformed JSON without throwing", async () => {
     const onEvent = vi.fn();
     const { connectWorkflowSse } = await import("../sse.js");
     const conn = connectWorkflowSse(CONN, "wf-1", { onEvent });
+    await flush();
 
-    const es = FakeEventSource.instances[0]!;
-    const badEvent = { type: "task-transitioned", data: "{ not json" };
-    for (const h of [...(es["listeners"].get("task-transitioned") ?? [])]) h(badEvent);
+    activeController?.enqueue(encoder.encode("event: task-transitioned\ndata: { not json\n\n"));
+    await flush();
 
     expect(onEvent).not.toHaveBeenCalled();
 

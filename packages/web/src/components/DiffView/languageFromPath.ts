@@ -22,6 +22,10 @@ const EXT_TO_LANG: Record<string, string> = {
   htm: "xml",
   svg: "xml",
   css: "css",
+  diff: "diff",
+  go: "go",
+  rs: "rust",
+  rust: "rust",
 };
 
 export function languageFromPath(path: string): string | undefined {

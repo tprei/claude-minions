@@ -48,6 +48,7 @@ const DEFAULT_CADENCE: PollCadence = {
 const FAILED_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out", "action_required", "stale"]);
 const PASSING_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 const OVERALL_FAILURE_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out", "action_required"]);
+const ACTIVE_CI_STATUSES = new Set(["pr-open", "ci-pending"]);
 
 function deriveOverallStatus(runs: GhCheckRun[]): CIPollOverallStatus {
   if (runs.length === 0) return "pending";
@@ -127,7 +128,7 @@ export interface CIBabysitterServiceDeps {
 
 export class CIBabysitterService {
   private readonly deps: CIBabysitterServiceDeps;
-  private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent>>();
+  private readonly activeIterators = new Map<string, { iterator: AsyncIterator<WorkflowEvent> | null }>();
   private readonly taskControllers = new Map<string, AbortController>();
   private readonly cadence: PollCadence;
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -138,11 +139,12 @@ export class CIBabysitterService {
     this.sleep = deps.sleep ?? defaultSleep;
 
     deps.signal.addEventListener("abort", () => {
-      for (const iter of this.activeIterators.values()) {
-        if (iter !== null) {
-          void iter.return?.();
+      for (const attachment of this.activeIterators.values()) {
+        if (attachment.iterator !== null) {
+          void attachment.iterator.return?.();
         }
       }
+      this.activeIterators.clear();
       for (const ctrl of this.taskControllers.values()) {
         ctrl.abort();
       }
@@ -152,18 +154,24 @@ export class CIBabysitterService {
 
   attach(workflowId: string): void {
     if (this.activeIterators.has(workflowId)) return;
-    this.activeIterators.set(workflowId, null as unknown as AsyncIterator<WorkflowEvent>);
-    void this.attachAsync(workflowId);
+    const attachment = { iterator: null };
+    this.activeIterators.set(workflowId, attachment);
+    void this.attachAsync(workflowId, attachment);
   }
 
-  private async attachAsync(workflowId: string): Promise<void> {
+  private isAttached(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): boolean {
+    return !this.deps.signal.aborted && this.activeIterators.get(workflowId) === attachment;
+  }
+
+  private async attachAsync(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): Promise<void> {
     const workflow = await this.deps.workflowRepo.get(workflowId);
+    if (!this.isAttached(workflowId, attachment)) return;
     if (!workflow) {
-      this.activeIterators.delete(workflowId);
+      if (this.activeIterators.get(workflowId) === attachment) this.activeIterators.delete(workflowId);
       return;
     }
     for (const [taskId, task] of Object.entries(workflow.graph)) {
-      if (task.executionStatus === "pr-open") {
+      if (ACTIVE_CI_STATUSES.has(task.executionStatus)) {
         const key = `${workflowId}:${taskId}`;
         if (!this.taskControllers.has(key)) {
           const ctrl = new AbortController();
@@ -178,12 +186,12 @@ export class CIBabysitterService {
         }
       }
     }
-    void this.consume(workflowId);
+    void this.consume(workflowId, attachment);
   }
 
   detach(workflowId: string): void {
-    const iter = this.activeIterators.get(workflowId);
-    if (iter) void iter.return?.();
+    const attachment = this.activeIterators.get(workflowId);
+    if (attachment?.iterator) void attachment.iterator.return?.();
     this.activeIterators.delete(workflowId);
 
     for (const key of this.taskControllers.keys()) {
@@ -194,17 +202,22 @@ export class CIBabysitterService {
     }
   }
 
-  private async consume(workflowId: string): Promise<void> {
+  private async consume(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): Promise<void> {
     const latestCursor = await this.deps.workflowRepo.latestCursor(workflowId);
+    if (!this.isAttached(workflowId, attachment)) return;
     const iterable = this.deps.workflowRepo.subscribe(workflowId, latestCursor);
     const iter = iterable[Symbol.asyncIterator]();
-    this.activeIterators.set(workflowId, iter);
+    if (!this.isAttached(workflowId, attachment)) {
+      void iter.return?.();
+      return;
+    }
+    attachment.iterator = iter;
     try {
       while (true) {
-        if (this.deps.signal.aborted) break;
+        if (!this.isAttached(workflowId, attachment)) break;
         const result = await iter.next();
         if (result.done) break;
-        if (this.deps.signal.aborted) break;
+        if (!this.isAttached(workflowId, attachment)) break;
 
         const event = result.value;
         if (event.kind !== "task-transitioned") continue;
@@ -212,7 +225,7 @@ export class CIBabysitterService {
         const { taskId, fromExecutionStatus: from, toExecutionStatus: to } = event.payload;
         const key = `${workflowId}:${taskId}`;
 
-        if (to === "pr-open" && from !== "pr-open") {
+        if (to === "pr-open" && from !== "pr-open" && from !== "ci-pending") {
           const existing = this.taskControllers.get(key);
           if (existing) {
             existing.abort();
@@ -227,7 +240,7 @@ export class CIBabysitterService {
               this.taskControllers.delete(key);
             }
           });
-        } else if (from === "pr-open" && to !== "pr-open") {
+        } else if (ACTIVE_CI_STATUSES.has(from) && !ACTIVE_CI_STATUSES.has(to)) {
           const ctrl = this.taskControllers.get(key);
           if (ctrl) {
             ctrl.abort();
@@ -238,7 +251,7 @@ export class CIBabysitterService {
     } catch (err) {
       this.deps.log.error(`ci-babysitter: consume error for ${workflowId}`, { error: (err as Error).message });
     } finally {
-      this.activeIterators.delete(workflowId);
+      if (this.activeIterators.get(workflowId) === attachment) this.activeIterators.delete(workflowId);
     }
   }
 
@@ -249,8 +262,24 @@ export class CIBabysitterService {
     if (!workflow) return;
     const repoCoords = requireGithubCoords(repoRegistry, workflow.repoId);
 
-    const task = workflow.graph[taskId];
-    if (!task || task.executionStatus !== "pr-open") return;
+    let task = workflow.graph[taskId];
+    if (!task || !ACTIVE_CI_STATUSES.has(task.executionStatus)) return;
+
+    if (task.executionStatus === "pr-open") {
+      try {
+        const result = await applyCommand({
+          kind: "transition-task",
+          workflowId,
+          transition: { kind: "start-ci-gate", taskId, now: now() },
+        });
+        task = result.workflow.graph[taskId] ?? task;
+      } catch {
+        const refreshed = await workflowRepo.get(workflowId);
+        const refreshedTask = refreshed?.graph[taskId];
+        if (!refreshedTask || !ACTIVE_CI_STATUSES.has(refreshedTask.executionStatus)) return;
+        task = refreshedTask;
+      }
+    }
 
     const prArtifact = [...task.artifacts].reverse().find((a) => a.kind === "pr");
     if (!prArtifact) {
@@ -305,7 +334,7 @@ export class CIBabysitterService {
 
       const wfCurrent = await workflowRepo.get(workflowId);
       const taskCurrent = wfCurrent?.graph[taskId];
-      if (!taskCurrent || taskCurrent.executionStatus !== "pr-open") return;
+      if (!taskCurrent || !ACTIVE_CI_STATUSES.has(taskCurrent.executionStatus)) return;
 
       let prCurrent: Awaited<ReturnType<GitHubClient["getPR"]>> | null = null;
       try {
@@ -433,10 +462,30 @@ export class CIBabysitterService {
 
         const refreshed = await workflowRepo.get(workflowId);
         const refreshedTask = refreshed?.graph[taskId];
-        if (!refreshed || !refreshedTask || refreshedTask.executionStatus !== "pr-open") return;
+        if (!refreshed || !refreshedTask || !ACTIVE_CI_STATUSES.has(refreshedTask.executionStatus)) return;
 
-        if (!refreshed.policy.autoMergeOnGreen) return;
-        if (!this.deps.mergeService) return;
+        if (refreshedTask.executionStatus === "ci-pending") {
+          try {
+            await applyCommand({
+              kind: "transition-task",
+              workflowId,
+              transition: {
+                kind: "complete-ci-gate",
+                taskId,
+                now: now(),
+              },
+            });
+          } catch (err) {
+            this.deps.log.error(`ci-babysitter: complete-ci-gate transition failed for task ${taskId}`, {
+              taskId,
+              workflowId,
+              error: (err as Error).message,
+            });
+            return;
+          }
+        }
+
+        if (!refreshed.policy.autoMergeOnGreen || !this.deps.mergeService) return;
 
         try {
           await this.deps.mergeService.merge({ workflowId, taskId, signal });

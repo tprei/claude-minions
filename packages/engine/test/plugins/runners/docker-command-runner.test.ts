@@ -12,30 +12,23 @@ class CapturingRunner implements CommandRunner {
 }
 
 describe("DockerCommandRunner", () => {
-  it("composes command with prefix + sh -c wrapping", async () => {
+  it("composes docker exec argv with workdir and command argv", async () => {
     const host = new CapturingRunner();
     const docker = new DockerCommandRunner(["docker", "exec", "ctr"], host);
 
-    await docker.run({ cwd: "/workspace/app", command: "npm test" });
+    await docker.run({ cwd: "/workspace/app", argv: ["npm", "test"] });
 
     expect(host.lastOpts).toBeDefined();
-    expect(host.lastOpts!.command).toContain("docker");
-    expect(host.lastOpts!.command).toContain("exec");
-    expect(host.lastOpts!.command).toContain("ctr");
-    expect(host.lastOpts!.command).toContain("sh");
-    expect(host.lastOpts!.command).toContain("/workspace/app");
-    expect(host.lastOpts!.command).toContain("npm test");
+    expect(host.lastOpts!.argv).toEqual(["docker", "exec", "--workdir", "/workspace/app", "ctr", "npm", "test"]);
   });
 
-  it("composed command uses sh -c inner and shell-quoting", async () => {
+  it("preserves spaces in cwd and argument boundaries", async () => {
     const host = new CapturingRunner();
     const docker = new DockerCommandRunner(["docker", "exec", "ctr"], host);
 
-    await docker.run({ cwd: "/path with spaces", command: "npm test" });
+    await docker.run({ cwd: "/path with spaces", argv: ["npm", "run", "test:unit"] });
 
-    expect(host.lastOpts!.command).toContain("sh");
-    expect(host.lastOpts!.command).toContain("-c");
-    expect(host.lastOpts!.command).toContain("npm test");
+    expect(host.lastOpts!.argv).toEqual(["docker", "exec", "--workdir", "/path with spaces", "ctr", "npm", "run", "test:unit"]);
   });
 
   it("forwards timeoutMs and signal", async () => {
@@ -43,40 +36,41 @@ describe("DockerCommandRunner", () => {
     const docker = new DockerCommandRunner(["docker", "exec", "ctr"], host);
 
     const ctrl = new AbortController();
-    await docker.run({ cwd: "/app", command: "test", timeoutMs: 5000, signal: ctrl.signal });
+    await docker.run({ cwd: "/app", argv: ["test"], timeoutMs: 5000, signal: ctrl.signal });
 
     expect(host.lastOpts!.timeoutMs).toBe(5000);
     expect(host.lastOpts!.signal).toBe(ctrl.signal);
   });
 
-  it("forwards env", async () => {
+  it("forwards env as docker exec flags", async () => {
     const host = new CapturingRunner();
     const docker = new DockerCommandRunner(["docker", "exec", "ctr"], host);
 
-    await docker.run({ cwd: "/app", command: "test", env: { MY: "val" } });
+    await docker.run({ cwd: "/app", argv: ["test"], env: { MY: "val" } });
 
-    expect(host.lastOpts!.env).toEqual({ MY: "val" });
+    expect(host.lastOpts!.argv).toEqual(["docker", "exec", "--env", "MY=val", "--workdir", "/app", "ctr", "test"]);
+    expect(host.lastOpts!.env).toBeUndefined();
   });
 
   it("omits timeoutMs and signal when not provided", async () => {
     const host = new CapturingRunner();
     const docker = new DockerCommandRunner(["docker", "exec", "ctr"], host);
 
-    await docker.run({ cwd: "/app", command: "test" });
+    await docker.run({ cwd: "/app", argv: ["test"] });
 
     expect(host.lastOpts).toBeDefined();
     expect(host.lastOpts!.timeoutMs).toBeUndefined();
     expect(host.lastOpts!.signal).toBeUndefined();
   });
 
-  it("uses real host runner: sh -c wrapping passes through to local sh", async () => {
+  it("passes through the host runner result", async () => {
     const runnerSpy = vi.fn().mockResolvedValue(
       { exitCode: 0, stdout: "ok", stderr: "", timedOut: false } satisfies CommandRunResult,
     );
     const hostSpy: CommandRunner = { run: runnerSpy };
-    const docker = new DockerCommandRunner(["sh", "-c"], hostSpy);
+    const docker = new DockerCommandRunner(["docker", "exec", "ctr"], hostSpy);
 
-    const result = await docker.run({ cwd: "/tmp", command: "echo hello" });
+    const result = await docker.run({ cwd: "/tmp", argv: ["echo", "hello"] });
 
     expect(result.exitCode).toBe(0);
     expect(runnerSpy).toHaveBeenCalledOnce();

@@ -108,6 +108,32 @@ describe("Audit + Alert HTTP routes", () => {
       expect(body.events).toHaveLength(2);
     });
 
+    it("paginates records with identical timestamps using beforeTs and beforeId", async () => {
+      const timestamp = "2026-05-03T00:00:00.000Z";
+      supervisor.auditRepo.insert(makeAuditEvent({ id: "ev-a", timestamp }));
+      supervisor.auditRepo.insert(makeAuditEvent({ id: "ev-b", timestamp }));
+      supervisor.auditRepo.insert(makeAuditEvent({ id: "ev-c", timestamp }));
+
+      const firstRes = await app.request("/audit/events?limit=2");
+      const firstBody = await firstRes.json() as { events: AuditEvent[] };
+      const last = firstBody.events[1]!;
+      const params = new URLSearchParams({ limit: "2", beforeTs: last.timestamp, beforeId: last.id });
+
+      const secondRes = await app.request(`/audit/events?${params.toString()}`);
+      const secondBody = await secondRes.json() as { events: AuditEvent[] };
+
+      expect(firstBody.events.map((event) => event.id)).toEqual(["ev-c", "ev-b"]);
+      expect(secondBody.events.map((event) => event.id)).toEqual(["ev-a"]);
+    });
+
+    it("rejects malformed beforeTs", async () => {
+      const res = await app.request("/audit/events?beforeTs=not-a-date&beforeId=ev-1");
+      expect(res.status).toBe(400);
+      const body = await res.json() as { code: string; details: { field: string } };
+      expect(body.code).toBe("invalid_request");
+      expect(body.details.field).toBe("beforeTs");
+    });
+
     it("503 when supervisor is not configured", async () => {
       const appNoSup = createServer({ repo, recoveryService: createRecoveryService(repo, new NoopRestackExecutor(), new StubRuntimeBackend(), () => new Date().toISOString(), nullLog), executor: new NoopRestackExecutor() });
       const res = await appNoSup.request("/audit/events");
@@ -147,6 +173,40 @@ describe("Audit + Alert HTTP routes", () => {
       const res = await app.request("/alerts");
       const body = await res.json() as { alerts: Alert[] };
       expect(body.alerts).toHaveLength(1);
+    });
+
+    it("paginates records with identical timestamps using beforeTs and beforeId", async () => {
+      const timestamp = "2026-05-03T00:00:00.000Z";
+      supervisor.alertRepo.insert(makeAlert({ id: "al-a", timestamp }));
+      supervisor.alertRepo.insert(makeAlert({ id: "al-b", timestamp }));
+      supervisor.alertRepo.insert(makeAlert({ id: "al-c", timestamp }));
+
+      const firstRes = await app.request("/alerts?limit=2");
+      const firstBody = await firstRes.json() as { alerts: Alert[] };
+      const last = firstBody.alerts[1]!;
+      const params = new URLSearchParams({ limit: "2", beforeTs: last.timestamp, beforeId: last.id });
+
+      const secondRes = await app.request(`/alerts?${params.toString()}`);
+      const secondBody = await secondRes.json() as { alerts: Alert[] };
+
+      expect(firstBody.alerts.map((alert) => alert.id)).toEqual(["al-c", "al-b"]);
+      expect(secondBody.alerts.map((alert) => alert.id)).toEqual(["al-a"]);
+    });
+
+    it("rejects malformed beforeTs", async () => {
+      const res = await app.request("/alerts?beforeTs=not-a-date&beforeId=al-1");
+      expect(res.status).toBe(400);
+      const body = await res.json() as { code: string; details: { field: string } };
+      expect(body.code).toBe("invalid_request");
+      expect(body.details.field).toBe("beforeTs");
+    });
+
+    it("requires beforeId when beforeTs is set", async () => {
+      const res = await app.request("/alerts?beforeTs=2026-05-03T00:00:00.000Z");
+      expect(res.status).toBe(400);
+      const body = await res.json() as { code: string; details: { field: string } };
+      expect(body.code).toBe("invalid_request");
+      expect(body.details.field).toBe("beforeId");
     });
 
     it("503 when supervisor is not configured", async () => {

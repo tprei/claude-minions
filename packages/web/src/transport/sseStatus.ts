@@ -8,13 +8,13 @@ export interface SseStatusStore {
   clear(connectionId: string): void;
   registerReconnect(connectionId: string, fn: () => void): void;
   forceReconnect(connectionId: string): boolean;
-  unregisterReconnect(connectionId: string): void;
+  unregisterReconnect(connectionId: string, fn: () => void): void;
   subscribe(listener: () => void): () => void;
 }
 
 export function createSseStatusStore(): SseStatusStore {
   const map = new Map<string, SseStatus>();
-  const reconnectFns = new Map<string, () => void>();
+  const reconnectFns = new Map<string, Set<() => void>>();
   const listeners = new Set<() => void>();
 
   function scopedKeys(connectionId: string): string[] {
@@ -52,21 +52,31 @@ export function createSseStatusStore(): SseStatusStore {
       notify();
     },
     registerReconnect(connectionId, fn) {
-      reconnectFns.set(connectionId, fn);
+      const existing = reconnectFns.get(connectionId);
+      if (existing) {
+        existing.add(fn);
+        return;
+      }
+      reconnectFns.set(connectionId, new Set([fn]));
     },
     forceReconnect(connectionId) {
-      const fn = reconnectFns.get(connectionId);
-      if (fn) {
-        fn();
+      const direct = reconnectFns.get(connectionId);
+      if (direct && direct.size > 0) {
+        for (const fn of direct) fn();
         return true;
       }
       const prefix = `${connectionId}:`;
-      const scoped = [...reconnectFns.entries()].filter(([key]) => key.startsWith(prefix));
-      for (const [, reconnect] of scoped) reconnect();
+      const scoped = [...reconnectFns.entries()].filter(([key, fns]) => key.startsWith(prefix) && fns.size > 0);
+      for (const [, fns] of scoped) {
+        for (const reconnect of fns) reconnect();
+      }
       return scoped.length > 0;
     },
-    unregisterReconnect(connectionId) {
-      reconnectFns.delete(connectionId);
+    unregisterReconnect(connectionId, fn) {
+      const existing = reconnectFns.get(connectionId);
+      if (!existing) return;
+      existing.delete(fn);
+      if (existing.size === 0) reconnectFns.delete(connectionId);
     },
     subscribe(listener) {
       listeners.add(listener);

@@ -75,6 +75,37 @@ describe("Diff", () => {
     expect(pre?.textContent).toBe(PLAIN_TEXT);
   });
 
+  it("renders zero-hunk binary and rename diffs", () => {
+    const diff = `diff --git a/img.png b/img.png
+Binary files a/img.png and b/img.png differ
+diff --git a/old.ts b/new.ts
+similarity index 100%
+rename from old.ts
+rename to new.ts
+`;
+    act(() => {
+      root.render(createElement(Diff, { text: diff }));
+    });
+    expect(container.textContent).toContain("img.png");
+    expect(container.textContent).toContain("Binary file");
+    expect(container.textContent).toContain("old.ts → new.ts");
+    expect(container.textContent).toContain("Renamed file");
+  });
+
+  it("highlights Go diffs with the same language map as DiffPane", () => {
+    const diff = `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1,1 +1,1 @@
+-func old() {}
++func next() {}
+`;
+    act(() => {
+      root.render(createElement(Diff, { text: diff }));
+    });
+    expect(container.querySelectorAll(".hljs-keyword").length).toBeGreaterThan(0);
+  });
+
   it("preserves line backgrounds (add/remove kind classes)", () => {
     act(() => {
       root.render(createElement(Diff, { text: TS_DIFF }));

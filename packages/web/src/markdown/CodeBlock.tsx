@@ -1,7 +1,7 @@
 import { useState } from "react";
-import DOMPurify from "dompurify";
 import { cx } from "../util/classnames.js";
-import { highlight } from "./highlight.js";
+import { highlight, languageClassName } from "./highlight.js";
+import { sanitizeMarkdownHtml } from "./sanitize.js";
 import "./highlight.css";
 
 interface Props {
@@ -13,8 +13,8 @@ interface Props {
 
 export function CodeBlock({ code, language, className, copy = true }: Props) {
   const [copied, setCopied] = useState(false);
-  const html = DOMPurify.sanitize(highlight(code, language), { USE_PROFILES: { html: true } });
-  const lang = language || "plaintext";
+  const html = sanitizeMarkdownHtml(highlight(code, language));
+  const lang = languageClassName(language);
 
   function onCopy() {
     void navigator.clipboard.writeText(code).then(() => {

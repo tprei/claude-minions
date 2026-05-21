@@ -18,5 +18,7 @@ export function domainErrorToHttp(error: DomainError): HttpErrorResponse {
       return { status: 409, body: { code: error.code, message: error.message, details: error.details } };
     case "invalid_plan":
       return { status: 422, body: { code: error.code, message: error.message, details: error.details } };
+    default:
+      return { status: 500, body: { code: "internal_error", message: "internal server error", details: {} } };
   }
 }

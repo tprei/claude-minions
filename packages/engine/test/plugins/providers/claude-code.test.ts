@@ -120,6 +120,42 @@ describe("ClaudeCodeProvider", () => {
     expect(events[2]).toMatchObject({ kind: "final", sessionRef: "sess-idle" });
   });
 
+  it("error_during_execution stays recoverable and preserves the upstream message", () => {
+    const line = encode({
+      type: "result",
+      subtype: "error_during_execution",
+      result: "Not logged in. Please run /login.",
+      session_id: "sess-resume",
+      usage: { input_tokens: 1, output_tokens: 0 },
+    });
+    const events = provider.parseFrame(line);
+    expect(events[0]).toEqual({
+      kind: "error",
+      recoverable: true,
+      message: "Not logged in. Please run /login.",
+    });
+    expect(events[1]).toMatchObject({ kind: "usage" });
+    expect(events[2]).toMatchObject({ kind: "final", sessionRef: "sess-resume" });
+  });
+
+  it("Anthropic-prefixed stream idle timeout result is recoverable", () => {
+    const line = encode({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: "Anthropic API Error: Stream idle timeout - partial response received",
+      session_id: "sess-idle",
+      usage: { input_tokens: 1, output_tokens: 0 },
+    });
+    const events = provider.parseFrame(line);
+    expect(events[0]).toEqual({
+      kind: "error",
+      recoverable: true,
+      source: "stream_idle_timeout",
+      message: "Anthropic API Error: Stream idle timeout - partial response received",
+    });
+  });
+
   it("system api_retry emits recoverable error with source api_retry", () => {
     const line = encode({ type: "system", subtype: "api_retry", message: "retry attempt 1" });
     const events = provider.parseFrame(line);
@@ -372,9 +408,20 @@ describe("ClaudeCodeProvider", () => {
         prompt: "continue from here",
       });
       expect(inv.command).toEqual([
-        "claude", "-p", "continue from here", "--resume", "abc-uuid", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
+        "claude", "-p", "continue from here", "--resume=abc-uuid", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
       ]);
       expect(inv.providerType).toBe("claude-code");
+    });
+
+    it("binds forged session refs as the value of --resume instead of a new flag", async () => {
+      const inv = await provider.resume({
+        taskId: "t1",
+        workflowId: "wf1",
+        sessionRef: "--dangerous-flag",
+        prompt: "continue from here",
+      });
+      expect(inv.command).toContain("--resume=--dangerous-flag");
+      expect(inv.command).not.toContain("--dangerous-flag");
     });
 
     it("throws when prompt is empty", async () => {
@@ -400,8 +447,7 @@ describe("ClaudeCodeProvider", () => {
       expect(inv.command).not.toContain("--dangerously-skip-permissions");
       expect(inv.command).toContain("--allowedTools");
       expect(inv.command).toContain("--disallowedTools");
-      expect(inv.command).toContain("--resume");
-      expect(inv.command).toContain("abc-uuid");
+      expect(inv.command).toContain("--resume=abc-uuid");
     });
   });
 

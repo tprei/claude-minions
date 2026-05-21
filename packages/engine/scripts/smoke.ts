@@ -216,7 +216,7 @@ async function autoMergeGreen(): Promise<void> {
       taskId: "task-auto-merge",
       policy: { autoLand: true, autoMergeOnGreen: true },
     });
-    await waitForTaskStatus(client, "smoke-auto-merge", "task-auto-merge", ["pr-open"]);
+    await waitForTaskStatus(client, "smoke-auto-merge", "task-auto-merge", ["pr-open", "ci-pending"]);
     const pr = scm.getPRForBranch(branchName("smoke-auto-merge", "task-auto-merge"));
     if (!pr) throw new Error("auto-merge PR was not created");
     scm.setCheckRuns(pr.headSha, [{ name: "ci", status: "completed", conclusion: "success" }]);
@@ -274,6 +274,7 @@ async function manualMerge(): Promise<void> {
     qualityCommand: "pass",
     scm,
     githubClient: asGitHubClient(new FakeGitHubClient(scm)),
+    ciBabysitterCadence: FAST_CADENCE,
     providerFactory: makeProvider,
     runtime: makeFinalRuntime(),
   });
@@ -283,6 +284,10 @@ async function manualMerge(): Promise<void> {
       taskId: "task-manual-merge",
       policy: { autoLand: true, autoMergeOnGreen: false },
     });
+    await waitForTaskStatus(client, "smoke-manual-merge", "task-manual-merge", ["pr-open", "ci-pending"]);
+    const pr = scm.getPRForBranch(branchName("smoke-manual-merge", "task-manual-merge"));
+    if (!pr) throw new Error("manual-merge PR was not created");
+    scm.setCheckRuns(pr.headSha, [{ name: "ci", status: "completed", conclusion: "success" }]);
     await waitForTaskStatus(client, "smoke-manual-merge", "task-manual-merge", ["pr-open"]);
     const res = await client.post("/workflows/smoke-manual-merge/tasks/task-manual-merge/merge");
     assertStatus("POST manual merge", res.status, 200);

@@ -11,6 +11,23 @@ export interface RunProviderOptions {
   fromOffset?: number;
 }
 
+function parserError(err: unknown): ProviderEvent {
+  return {
+    kind: "error",
+    recoverable: false,
+    source: "provider_parser",
+    message: err instanceof Error ? err.message : "provider parser error",
+  };
+}
+
+function parseProviderFrame(provider: ProviderPlugin, line: string): ProviderEvent[] {
+  try {
+    return provider.parseFrame(line);
+  } catch (err) {
+    return [parserError(err)];
+  }
+}
+
 // Offset is the upper bound of bytes received so far for the chunk.
 // Yielding it before events means latestOffset is always >= the byte position
 // of any event in the same chunk, so resume re-attaches from a safe position.
@@ -27,9 +44,15 @@ export async function* runProvider(
   for await (const chunk of runtime.attach(sessionId, attachOpts)) {
     const offset = chunk.offset + chunk.bytes.byteLength;
     yield { kind: "offset", offset };
-    const lines = buffer.push(chunk.bytes);
+    let lines: string[];
+    try {
+      lines = buffer.push(chunk.bytes);
+    } catch (err) {
+      yield { kind: "provider", event: parserError(err) };
+      return;
+    }
     for (const line of lines) {
-      const events = provider.parseFrame(line);
+      const events = parseProviderFrame(provider, line);
       for (const event of events) {
         yield { kind: "provider", event };
       }
@@ -38,7 +61,7 @@ export async function* runProvider(
 
   const tail = buffer.flush();
   for (const line of tail) {
-    const events = provider.parseFrame(line);
+    const events = parseProviderFrame(provider, line);
     for (const event of events) {
       yield { kind: "provider", event };
     }

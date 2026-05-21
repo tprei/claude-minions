@@ -28,13 +28,13 @@ describe("GitHubScmPlugin", () => {
     await expect(scm.pushBranch("/repo", "feature")).resolves.toBeUndefined();
 
     expect(run).toHaveBeenNthCalledWith(1, "/repo", ["push", "-u", "--force-with-lease", "origin", "feature"], expect.objectContaining({
-      env: expect.objectContaining({ GH_TOKEN: "tok" }),
+      env: expect.objectContaining({ GH_TOKEN: "tok", GIT_TERMINAL_PROMPT: "0" }),
     }));
     expect(run).toHaveBeenNthCalledWith(2, "/repo", ["fetch", "origin", "feature"], expect.objectContaining({
-      env: expect.objectContaining({ GH_TOKEN: "tok" }),
+      env: expect.objectContaining({ GH_TOKEN: "tok", GIT_TERMINAL_PROMPT: "0" }),
     }));
     expect(run).toHaveBeenNthCalledWith(3, "/repo", ["push", "-u", "--force-with-lease", "origin", "feature"], expect.objectContaining({
-      env: expect.objectContaining({ GH_TOKEN: "tok" }),
+      env: expect.objectContaining({ GH_TOKEN: "tok", GIT_TERMINAL_PROMPT: "0" }),
     }));
   });
 

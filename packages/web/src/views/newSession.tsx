@@ -9,6 +9,7 @@ import { AttachmentBar, useAttachments } from "../chat/attachments.js";
 import { startListening, stopListening, isVoiceSupported, type VoiceSession } from "../chat/voice.js";
 import { useFeature } from "../hooks/useFeature.js";
 import { cx } from "../util/classnames.js";
+import { randomId } from "../util/randomId.js";
 import { PlanPreviewModal } from "./PlanPreviewModal.js";
 
 interface ApiClient {
@@ -26,7 +27,7 @@ interface Props {
 const NONE_REPO = "__none__";
 
 function generateId(): string {
-  return `wf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  return randomId();
 }
 
 export function NewSessionView({ api: _api, filterRepo = null }: Props) {
@@ -111,9 +112,9 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
   }, [title, trimmedPrompt]);
 
   function makeSingleTaskSpec(): WorkflowSpec {
-    const taskId = generateId();
+    const taskId = `t-${generateId()}`;
     return {
-      id: generateId(),
+      id: `wf-${generateId()}`,
       kind: "single-task",
       repoId,
       tasks: [{
@@ -127,9 +128,9 @@ export function NewSessionView({ api: _api, filterRepo = null }: Props) {
   }
 
   function makeThinkThreadSpec(): WorkflowSpec {
-    const taskId = generateId();
+    const taskId = `t-${generateId()}`;
     return {
-      id: generateId(),
+      id: `wf-${generateId()}`,
       kind: "think-thread",
       repoId,
       tasks: [{

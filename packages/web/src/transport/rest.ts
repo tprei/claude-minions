@@ -26,12 +26,13 @@ export async function apiFetch<T>(
   init?: RequestInit,
 ): Promise<T> {
   const url = `${conn.baseUrl.replace(/\/$/, "")}${path}`;
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const token = conn.token.trim();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(url, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
+    headers,
   });
 
   if (!res.ok) {
@@ -154,11 +155,25 @@ export interface PushSubscribeInput {
   };
 }
 
+export interface WorkflowPushSubscriptionsResponse {
+  subscriptions: Array<{ endpoint: string }>;
+}
+
 export function subscribePush(conn: Connection, sub: PushSubscribeInput): Promise<{ ok: boolean }> {
   return apiFetch<{ ok: boolean }>(conn, "/push/subscribe", {
     method: "POST",
     body: JSON.stringify(sub),
   });
+}
+
+export function listPushSubscriptions(
+  conn: Connection,
+  workflowId: string,
+): Promise<WorkflowPushSubscriptionsResponse> {
+  return apiFetch<WorkflowPushSubscriptionsResponse>(
+    conn,
+    `/workflows/${encodeURIComponent(workflowId)}/push-subscriptions`,
+  );
 }
 
 export function unsubscribePush(
@@ -175,6 +190,7 @@ export function unsubscribePush(
 export interface AuditEventsOptions {
   limit?: number;
   beforeTs?: string;
+  beforeId?: string;
   action?: string;
   workflowId?: string;
 }
@@ -186,6 +202,7 @@ export function getAuditEvents(
   const params = new URLSearchParams();
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.beforeTs) params.set("beforeTs", opts.beforeTs);
+  if (opts?.beforeId) params.set("beforeId", opts.beforeId);
   if (opts?.action) params.set("action", opts.action);
   if (opts?.workflowId) params.set("workflowId", opts.workflowId);
   const qs = params.toString();
@@ -195,11 +212,12 @@ export function getAuditEvents(
 export function getWorkflowAuditEvents(
   conn: Connection,
   workflowId: string,
-  opts?: Pick<AuditEventsOptions, "limit" | "beforeTs">,
+  opts?: Pick<AuditEventsOptions, "limit" | "beforeTs" | "beforeId">,
 ): Promise<{ events: unknown[] }> {
   const params = new URLSearchParams();
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.beforeTs) params.set("beforeTs", opts.beforeTs);
+  if (opts?.beforeId) params.set("beforeId", opts.beforeId);
   const qs = params.toString();
   return apiFetch<{ events: unknown[] }>(
     conn,
@@ -235,11 +253,12 @@ export function planWorkflow(
 
 export function getAlerts(
   conn: Connection,
-  opts?: Pick<AuditEventsOptions, "limit" | "beforeTs">,
+  opts?: Pick<AuditEventsOptions, "limit" | "beforeTs" | "beforeId">,
 ): Promise<{ alerts: unknown[] }> {
   const params = new URLSearchParams();
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.beforeTs) params.set("beforeTs", opts.beforeTs);
+  if (opts?.beforeId) params.set("beforeId", opts.beforeId);
   const qs = params.toString();
   return apiFetch<{ alerts: unknown[] }>(conn, qs ? `/alerts?${qs}` : "/alerts");
 }

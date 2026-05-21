@@ -263,7 +263,8 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
 
       await waitFor(async () => {
         const wf = await getWorkflow(harness.fetch, wfId);
-        return wf.graph[taskId]?.executionStatus === "pr-open";
+        const status = wf.graph[taskId]?.executionStatus;
+        return status === "pr-open" || status === "ci-pending";
       });
 
       // Set CI checks to green so CIBabysitter auto-merges
@@ -291,8 +292,17 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
       }, 10_000);
 
       await phaseCollector2;
-      // CIBabysitter's merge() emits all 12 phases (6 phases × {started, completed})
+      // The completion dispatcher opens the PR first (openOnly emits 8 phases),
+      // then CIBabysitter's merge() emits 12 phases (6 phases × {started, completed}).
       const expectedMergePhases2: Array<{ phase: string; status: string }> = [
+        { phase: "prepareMerge", status: "started" },
+        { phase: "prepareMerge", status: "completed" },
+        { phase: "commit", status: "started" },
+        { phase: "commit", status: "completed" },
+        { phase: "squash", status: "started" },
+        { phase: "squash", status: "completed" },
+        { phase: "rebase", status: "started" },
+        { phase: "rebase", status: "completed" },
         { phase: "prepareMerge", status: "started" },
         { phase: "prepareMerge", status: "completed" },
         { phase: "commit", status: "started" },
@@ -402,9 +412,15 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
         transition: { kind: "mark-running", taskId: "frontend", sessionId: "sess-front", workspaceId: frontendHandle.workspaceId, now },
       });
 
-      // Verify pre-restack state
+      // Verify pre-restack state. The default no-op quality gate finalizes the
+      // completed backend task through to pr-open asynchronously, so wait for it
+      // to settle before asserting.
+      await waitFor(async () => {
+        const wf = await getWorkflow(harness.fetch, wfId);
+        return wf.graph["backend"]?.executionStatus === "pr-open";
+      });
       const preLandWf = await getWorkflow(harness.fetch, wfId);
-      expect(preLandWf.graph["backend"]?.executionStatus).toBe("completed");
+      expect(preLandWf.graph["backend"]?.executionStatus).toBe("pr-open");
       expect(preLandWf.graph["frontend"]?.executionStatus).toBe("running");
 
       // Request restack on backend (propagates restack-pending to tests)
@@ -454,8 +470,8 @@ describe.skipIf(!HAS_GIT)("integration: pipeline", () => {
       // frontend unaffected — still running
       expect(postRestackWf.graph["frontend"]?.executionStatus).toBe("running");
 
-      // backend unchanged at completed
-      expect(postRestackWf.graph["backend"]?.executionStatus).toBe("completed");
+      // backend unaffected by the restack — still at pr-open
+      expect(postRestackWf.graph["backend"]?.executionStatus).toBe("pr-open");
 
       // No orphan workspace for tests task (it was never started)
       const testsWorkspaceId = `ws-${slugify(wfId)}_${slugify("tests")}`;

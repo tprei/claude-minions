@@ -93,4 +93,22 @@ describe("TokenBucket", () => {
 
     expect(order).toEqual([1, 2, 3]);
   });
+
+  it("keeps one scheduled drain for concurrent waiters", async () => {
+    let t = 0;
+    const now = () => t;
+    const bucket = new TokenBucket({ capacity: 1, refillPerSec: 1, now });
+
+    await bucket.acquire();
+    const waiters = Array.from({ length: 20 }, () => bucket.acquire());
+
+    expect(vi.getTimerCount()).toBe(1);
+
+    for (let i = 1; i <= 20; i++) {
+      t = i * 1000;
+      vi.advanceTimersByTime(1000);
+      await waiters[i - 1];
+      if (i < 20) expect(vi.getTimerCount()).toBe(1);
+    }
+  });
 });

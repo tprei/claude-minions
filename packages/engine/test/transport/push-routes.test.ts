@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
 import { InMemorySubscriptionRepository } from "../../src/application/subscription-repository.js";
 import { NoopRestackExecutor } from "../../src/application/restack-executor.js";
@@ -362,6 +362,30 @@ describe("DELETE /push/subscribe", () => {
     expect(remaining).toHaveLength(0);
   });
 
+  it("detaches the push consumer when the last workflow subscription is removed", async () => {
+    const { app, repo, subscriptions, pushService } = makeApp() as ReturnType<typeof makeApp> & {
+      subscriptions: InMemorySubscriptionRepository;
+      pushService: PushService;
+    };
+    const detachSpy = vi.spyOn(pushService, "detach");
+    const wf = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
+    await repo.save(wf, []);
+    await subscriptions.upsert({
+      endpoint: "https://push.example.com/sub1",
+      workflowId: "wf-1",
+      keys: { p256dh: "key1", auth: "auth1" },
+    });
+
+    const res = await app.request("/push/subscribe", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: "https://push.example.com/sub1", workflowId: "wf-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(detachSpy).toHaveBeenCalledWith("wf-1");
+  });
+
   it("returns 200 idempotently for nonexistent endpoint", async () => {
     const { app } = makeApp();
 
@@ -411,6 +435,50 @@ describe("DELETE /push/subscribe", () => {
   });
 });
 
+describe("GET /workflows/:id/push-subscriptions", () => {
+  it("returns subscriptions scoped to the requested workflow", async () => {
+    const { app, repo, subscriptions } = makeApp() as ReturnType<typeof makeApp> & { subscriptions: InMemorySubscriptionRepository };
+    const wf1 = createSingleTaskWorkflow("wf-1", { title: "T1", prompt: "P1" }, () => now);
+    const wf2 = createSingleTaskWorkflow("wf-2", { title: "T2", prompt: "P2" }, () => now);
+    await repo.save(wf1, []);
+    await repo.save(wf2, []);
+    await subscriptions.upsert({
+      endpoint: "https://push.example.com/sub1",
+      workflowId: "wf-1",
+      keys: { p256dh: "key1", auth: "auth1" },
+    });
+    await subscriptions.upsert({
+      endpoint: "https://push.example.com/sub2",
+      workflowId: "wf-2",
+      keys: { p256dh: "key2", auth: "auth2" },
+    });
+
+    const res = await app.request("/workflows/wf-1/push-subscriptions");
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { subscriptions: Array<{ endpoint: string }> };
+    expect(body).toEqual({
+      subscriptions: [{ endpoint: "https://push.example.com/sub1" }],
+    });
+  });
+
+  it("returns 404 when the workflow does not exist", async () => {
+    const { app } = makeApp();
+
+    const res = await app.request("/workflows/missing/push-subscriptions");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 503 when push is not configured", async () => {
+    const { app } = makeApp(false);
+
+    const res = await app.request("/workflows/wf-1/push-subscriptions");
+
+    expect(res.status).toBe(503);
+  });
+});
+
 describe("CORS preflight", () => {
   it("OPTIONS includes DELETE in allowed methods", async () => {
     const { app } = makeApp();
@@ -418,5 +486,29 @@ describe("CORS preflight", () => {
     expect(res.status).toBe(204);
     const allow = res.headers.get("Access-Control-Allow-Methods") ?? "";
     expect(allow).toContain("DELETE");
+  });
+});
+
+describe("DELETE /workflows/:id", () => {
+  it("removes push subscriptions for the deleted workflow", async () => {
+    const { app, repo, subscriptions } = makeApp() as ReturnType<typeof makeApp> & { subscriptions: InMemorySubscriptionRepository };
+    const wf = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
+    await repo.save(wf, []);
+    await subscriptions.upsert({
+      endpoint: "https://push.example.com/sub1",
+      workflowId: "wf-1",
+      keys: { p256dh: "key1", auth: "auth1" },
+    });
+    await subscriptions.upsert({
+      endpoint: "https://push.example.com/sub2",
+      workflowId: "wf-2",
+      keys: { p256dh: "key2", auth: "auth2" },
+    });
+
+    const res = await app.request("/workflows/wf-1", { method: "DELETE" });
+
+    expect(res.status).toBe(204);
+    expect(await subscriptions.listByWorkflow("wf-1")).toHaveLength(0);
+    expect(await subscriptions.listByWorkflow("wf-2")).toHaveLength(1);
   });
 });

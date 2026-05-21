@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { parseUrl } from "./parseUrl.js";
+import { setUrlState } from "./urlState.js";
 
 function setLocation(path: string): void {
   window.history.replaceState(null, "", path);
@@ -63,6 +64,35 @@ describe("parseUrl", () => {
       view: "dag",
       sessionSlug: "session-abc",
       query: {},
+    });
+  });
+
+  it("decodes encoded path segments without splitting encoded slashes", () => {
+    setLocation("/c/conn%2Fencoded/dag/session%2Fwith%20space?repo=repo%2Fone");
+    const result = parseUrl();
+    expect(result).toEqual({
+      connectionId: "conn/encoded",
+      view: "dag",
+      sessionSlug: "session/with space",
+      query: { repo: "repo/one" },
+    });
+  });
+
+  it("encodes path and query segments when pushing URL state", () => {
+    setUrlState({
+      connectionId: "conn/encoded",
+      view: "dag",
+      sessionSlug: "session/with space",
+      query: { repo: "repo/one" },
+    });
+
+    expect(window.location.pathname).toBe("/c/conn%2Fencoded/dag/session%2Fwith%20space");
+    expect(window.location.search).toBe("?repo=repo%2Fone");
+    expect(parseUrl()).toEqual({
+      connectionId: "conn/encoded",
+      view: "dag",
+      sessionSlug: "session/with space",
+      query: { repo: "repo/one" },
     });
   });
 

@@ -7,7 +7,7 @@ export interface CommandRunResult {
 
 export interface CommandRunOptions {
   cwd: string;
-  command: string;
+  argv: string[];
   env?: Record<string, string>;
   timeoutMs?: number;
   signal?: AbortSignal;

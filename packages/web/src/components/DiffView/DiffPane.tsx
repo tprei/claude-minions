@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
-import DOMPurify from "dompurify";
 import { Button } from "../Button.js";
-import { highlight } from "../../markdown/highlight.js";
+import { highlight, languageClassName } from "../../markdown/highlight.js";
+import { sanitizeMarkdownHtml } from "../../markdown/sanitize.js";
 import { cx } from "../../util/classnames.js";
 import { languageFromPath } from "./languageFromPath.js";
 import type { DiffLine, ParsedFile } from "./parsePatch.js";
@@ -87,9 +87,7 @@ function DiffLineRow({
   line: DiffLine;
   lang: string | undefined;
 }): ReactElement {
-  const html = DOMPurify.sanitize(highlight(line.text, lang), {
-    USE_PROFILES: { html: true },
-  });
+  const html = sanitizeMarkdownHtml(highlight(line.text, lang));
   const bg =
     line.kind === "add"
       ? "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-300"
@@ -107,7 +105,7 @@ function DiffLineRow({
       </span>
       <span className="select-none px-1 shrink-0">{sign}</span>
       <code
-        className={`hljs language-${lang ?? "plaintext"} whitespace-pre-wrap break-words flex-1`}
+        className={`hljs language-${languageClassName(lang)} whitespace-pre-wrap break-words flex-1`}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>

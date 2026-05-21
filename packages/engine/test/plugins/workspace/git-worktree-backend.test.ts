@@ -1,6 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { GitWorktreeWorkspaceBackend } from "../../../src/plugins/workspace/git-worktree-backend.js";
 import type { GitClient } from "../../../src/plugins/git/git-client.js";
+import type { RepoRegistry, ResolvedRepoBinding } from "../../../src/application/repo-registry.js";
 
 vi.mock("node:fs/promises", () => ({
   realpath: vi.fn(async (p: unknown) => String(p)),
@@ -34,6 +35,19 @@ async function makeBackend(gitClient: GitClient): Promise<GitWorktreeWorkspaceBa
   });
 }
 
+function makeRegistry(bindings: ResolvedRepoBinding[]): RepoRegistry {
+  const byId = new Map(bindings.map((binding) => [binding.id, binding]));
+  return {
+    all: () => bindings.slice(),
+    get: (repoId) => byId.get(repoId),
+    require: (repoId) => {
+      const binding = byId.get(repoId);
+      if (!binding) throw new Error(`unknown repoId: ${repoId}`);
+      return binding;
+    },
+  };
+}
+
 beforeEach(async () => {
   vi.clearAllMocks();
   const fsp = vi.mocked(await import("node:fs/promises"));
@@ -43,6 +57,10 @@ beforeEach(async () => {
   fsp.access.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
   fsp.symlink.mockResolvedValue(undefined);
   fsp.readdir.mockResolvedValue([]);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("GitWorktreeWorkspaceBackend", () => {
@@ -169,6 +187,51 @@ describe("GitWorktreeWorkspaceBackend", () => {
       expect(calls).toContain("B");
       resolveFirst();
       await Promise.all([pA, pB]);
+    });
+
+    it("does not release the repo lock until a timed-out operation settles", async () => {
+      const gitClient = makeGitClient();
+      let releaseFirst!: () => void;
+      const firstBarrier = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      let addCount = 0;
+      (gitClient.worktreeAdd as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        addCount += 1;
+        if (addCount === 1) await firstBarrier;
+      });
+
+      const backend = await GitWorktreeWorkspaceBackend.create({
+        gitClient,
+        repoPath: FAKE_REPO,
+        workspaceRoot: FAKE_ROOT,
+        operationTimeoutMs: 1,
+      });
+
+      const first = backend.create({
+        workflowId: "wf-a",
+        taskId: "task-a",
+        repoId: "fixture-repo",
+        branch: "b-a",
+        mode: "worktree",
+      });
+      while (addCount === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      await expect(first).rejects.toMatchObject({ code: "lock_timeout" });
+
+      const second = backend.create({
+        workflowId: "wf-b",
+        taskId: "task-b",
+        repoId: "fixture-repo",
+        branch: "b-b",
+        mode: "worktree",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(addCount).toBe(1);
+
+      releaseFirst();
+      await second;
+      expect(addCount).toBe(2);
     });
   });
 
@@ -359,6 +422,64 @@ describe("GitWorktreeWorkspaceBackend", () => {
       expect(gitClient.worktreeRemove).toHaveBeenCalledWith(
         FAKE_REPO,
         "/fake/workspaces/wf1-a16d54_task1-943be8",
+        { force: true },
+      );
+    });
+
+    it("multi-repo cleanup resolves repo slug back to the configured repo id", async () => {
+      const gitClient = makeGitClient();
+      const registry = makeRegistry([
+        { id: "local-repo", label: "Local", defaultBranch: "main", localPath: "/repos/local" },
+      ]);
+      const backend = await GitWorktreeWorkspaceBackend.create({
+        gitClient,
+        repoPath: "/repos/local",
+        workspaceRoot: FAKE_ROOT,
+        registry,
+        defaultRepoId: "local-repo",
+      });
+
+      const handle = await backend.create({
+        workflowId: "wf-local-ok",
+        taskId: "t1",
+        repoId: "local-repo",
+        branch: "minions/wf-local-ok/t1",
+        mode: "worktree",
+      });
+      await backend.cleanup(handle.workspaceId);
+
+      expect(gitClient.worktreeRemove).toHaveBeenLastCalledWith(
+        "/repos/local",
+        handle.path,
+        { force: true },
+      );
+    });
+
+    it("multi-repo cleanup handles repo ids whose slug contains the separator", async () => {
+      const gitClient = makeGitClient();
+      const registry = makeRegistry([
+        { id: "my--repo", label: "Repo", defaultBranch: "main", localPath: "/repos/my" },
+      ]);
+      const backend = await GitWorktreeWorkspaceBackend.create({
+        gitClient,
+        repoPath: "/repos/my",
+        workspaceRoot: FAKE_ROOT,
+        registry,
+        defaultRepoId: "my--repo",
+      });
+
+      const handle = await backend.create({
+        workflowId: "wf1",
+        taskId: "task1",
+        repoId: "my--repo",
+        branch: "minions/wf1/task1",
+        mode: "worktree",
+      });
+      await backend.cleanup(handle.workspaceId);
+
+      expect(gitClient.worktreeRemove).toHaveBeenLastCalledWith(
+        "/repos/my",
+        handle.path,
         { force: true },
       );
     });

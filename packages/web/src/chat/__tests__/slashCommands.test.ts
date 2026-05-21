@@ -40,7 +40,7 @@ describe("slashCommands", () => {
     });
   });
 
-  it("/cancel dispatches the current transition-task shape", () => {
+  it("/cancel dispatches cancel-task transition", () => {
     const cmd = slashCommands.find((c) => c.name === "cancel");
     const result = cmd?.build([], ctx);
     expect(result).toEqual({
@@ -49,7 +49,7 @@ describe("slashCommands", () => {
         kind: "transition-task",
         workflowId: "wf-1",
         transition: {
-          kind: "cancel",
+          kind: "cancel-task",
           taskId: "task-1",
           now: expect.any(String),
         },

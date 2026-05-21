@@ -53,12 +53,48 @@ describe("AlertRepo", () => {
     expect(results[1]?.id).toBe("al-1");
   });
 
-  it("paginates with beforeTs", () => {
+  it("paginates with deterministic cursor", () => {
     repo.insert(makeAlert({ id: "al-1", timestamp: "2026-05-01T00:00:00.000Z" }));
     repo.insert(makeAlert({ id: "al-2", timestamp: "2026-05-03T00:00:00.000Z" }));
-    const results = repo.list({ beforeTs: "2026-05-03T00:00:00.000Z" });
+    const results = repo.list({ before: { timestamp: "2026-05-03T00:00:00.000Z", id: "al-2" } });
     expect(results.map((r) => r.id)).toContain("al-1");
     expect(results.map((r) => r.id)).not.toContain("al-2");
+  });
+
+  it("paginates records with identical timestamps", () => {
+    const timestamp = "2026-05-03T00:00:00.000Z";
+    repo.insert(makeAlert({ id: "al-a", timestamp }));
+    repo.insert(makeAlert({ id: "al-b", timestamp }));
+    repo.insert(makeAlert({ id: "al-c", timestamp }));
+
+    const firstPage = repo.list({ limit: 2 });
+    const last = firstPage[1]!;
+    const secondPage = repo.list({ limit: 2, before: { timestamp: last.timestamp, id: last.id } });
+
+    expect(firstPage.map((alert) => alert.id)).toEqual(["al-c", "al-b"]);
+    expect(secondPage.map((alert) => alert.id)).toEqual(["al-a"]);
+  });
+
+  it("does not overwrite an existing alert on id collision", () => {
+    repo.insert(makeAlert({
+      id: "al-collision",
+      timestamp: "2026-05-01T00:00:00.000Z",
+      message: "original",
+    }));
+
+    expect(() => repo.insert(makeAlert({
+      id: "al-collision",
+      timestamp: "2026-05-02T00:00:00.000Z",
+      message: "replacement",
+    }))).toThrow();
+
+    const results = repo.list();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      id: "al-collision",
+      timestamp: "2026-05-01T00:00:00.000Z",
+      message: "original",
+    });
   });
 
   it("preserves detail as JSON round-trip", () => {
@@ -66,6 +102,17 @@ describe("AlertRepo", () => {
     repo.insert(alert);
     const results = repo.list();
     expect(results[0]?.detail).toEqual({ count: 7 });
+  });
+
+  it("omits malformed stored detail without failing list", () => {
+    db.prepare(
+      "INSERT INTO alerts (id, timestamp, kind, severity, message, workflow_id, task_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("al-malformed", "2026-05-01T00:00:00.000Z", "merge-inconsistent", "error", "malformed", null, null, "{");
+
+    const results = repo.list();
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe("al-malformed");
+    expect(results[0]?.detail).toBeUndefined();
   });
 
   it("clamps limit to [1, 500]", () => {

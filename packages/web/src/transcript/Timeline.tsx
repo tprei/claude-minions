@@ -9,6 +9,7 @@ const ALL_KINDS: TranscriptEventKind[] = [
   "turn_completed",
   "assistant_text",
   "thinking",
+  "usage",
   "tool_call",
   "tool_result",
   "status",
@@ -25,6 +26,7 @@ function eventSource(event: TranscriptEvent): string {
   if (event.kind === "turn_started" && event.reason) return event.reason;
   if (event.kind === "tool_call") return event.toolName;
   if (event.kind === "tool_result" && event.toolName) return event.toolName;
+  if (event.kind === "usage") return "tokens";
   if (event.kind === "status") return event.level;
   if (event.kind === "turn_completed") return event.outcome;
   return "";

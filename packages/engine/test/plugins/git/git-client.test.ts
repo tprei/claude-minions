@@ -4,6 +4,9 @@ import { GitClient, GitError } from "../../../src/plugins/git/git-client.js";
 
 vi.mock("node:child_process");
 
+const DISABLED_HOOKS_PATH = process.platform === "win32" ? "NUL" : "/dev/null";
+const DISABLED_HOOKS_ARGS = ["-c", `core.hooksPath=${DISABLED_HOOKS_PATH}`];
+
 interface MockProc extends EventEmitter {
   stdout: EventEmitter;
   stderr: EventEmitter;
@@ -36,6 +39,27 @@ function makeHangingProc(): MockProc {
   return proc;
 }
 
+function patchEnv(entries: Record<string, string | undefined>): () => void {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(entries)) {
+    previous.set(key, process.env[key]);
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  return () => {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
+}
+
 let spawnMock: Mock;
 
 beforeEach(async () => {
@@ -60,11 +84,10 @@ describe("GitClient", () => {
         resetBranch: true,
       });
 
-      expect(spawnMock).toHaveBeenCalledWith(
-        "git",
-        ["worktree", "add", "-B", "minions/wf_task", "/workspace/wf_task", "HEAD"],
-        { cwd: "/repo" },
-      );
+      const call = spawnMock.mock.calls[0] as [string, string[], { cwd: string; env: Record<string, string> }];
+      expect(call[0]).toBe("git");
+      expect(call[1]).toEqual([...DISABLED_HOOKS_ARGS, "worktree", "add", "-B", "minions/wf_task", "/workspace/wf_task", "HEAD"]);
+      expect(call[2]).toEqual(expect.objectContaining({ cwd: "/repo", env: expect.any(Object) }));
     });
 
     it("resetBranch: true with baseRef uses -B flag with baseRef", async () => {
@@ -78,11 +101,10 @@ describe("GitClient", () => {
         resetBranch: true,
       });
 
-      expect(spawnMock).toHaveBeenCalledWith(
-        "git",
-        ["worktree", "add", "-B", "minions/wf_task", "/workspace/wf_task", "main"],
-        { cwd: "/repo" },
-      );
+      const call = spawnMock.mock.calls[0] as [string, string[], { cwd: string; env: Record<string, string> }];
+      expect(call[0]).toBe("git");
+      expect(call[1]).toEqual([...DISABLED_HOOKS_ARGS, "worktree", "add", "-B", "minions/wf_task", "/workspace/wf_task", "main"]);
+      expect(call[2]).toEqual(expect.objectContaining({ cwd: "/repo", env: expect.any(Object) }));
     });
 
     it("resetBranch: false, branch not yet existing — uses -b flag", async () => {
@@ -103,8 +125,8 @@ describe("GitClient", () => {
       expect(calls).toHaveLength(2);
       expect(calls[1]).toEqual([
         "git",
-        ["worktree", "add", "-b", "minions/wf_task", "/workspace/wf_task", "HEAD"],
-        { cwd: "/repo" },
+        [...DISABLED_HOOKS_ARGS, "worktree", "add", "-b", "minions/wf_task", "/workspace/wf_task", "HEAD"],
+        expect.objectContaining({ cwd: "/repo", env: expect.any(Object) }),
       ]);
     });
 
@@ -126,8 +148,8 @@ describe("GitClient", () => {
       expect(calls).toHaveLength(2);
       expect(calls[1]).toEqual([
         "git",
-        ["worktree", "add", "/workspace/wf_task", "minions/wf_task"],
-        { cwd: "/repo" },
+        [...DISABLED_HOOKS_ARGS, "worktree", "add", "/workspace/wf_task", "minions/wf_task"],
+        expect.objectContaining({ cwd: "/repo", env: expect.any(Object) }),
       ]);
     });
   });
@@ -139,37 +161,70 @@ describe("GitClient", () => {
 
       await client.worktreePrune("/repo");
 
-      expect(spawnMock).toHaveBeenCalledWith(
-        "docker",
-        ["exec", "worker", "git", "worktree", "prune"],
-        { cwd: "/repo" },
-      );
+      const call = spawnMock.mock.calls[0] as [string, string[], { cwd: string; env: Record<string, string> }];
+      expect(call[0]).toBe("docker");
+      expect(call[1]).toEqual(["exec", "worker", "git", ...DISABLED_HOOKS_ARGS, "worktree", "prune"]);
+      expect(call[2]).toEqual(expect.objectContaining({ cwd: "/repo", env: expect.any(Object) }));
     });
   });
 
   describe("run env option", () => {
-    it("merges opts.env into process.env and passes to spawn", async () => {
+    it("does not propagate parent secrets by default while preserving safe variables", async () => {
       const client = new GitClient();
       spawnMock.mockReturnValue(makeMockProc("", "", 0));
+      const restoreEnv = patchEnv({
+        PATH: "/test/bin",
+        HOME: "/test/home",
+        GIT_AUTHOR_NAME: "Minions Bot",
+        GIT_AUTHOR_EMAIL: "bot@example.com",
+        SSH_AUTH_SOCK: "/tmp/ssh-agent.sock",
+        GIT_SSH_COMMAND: "ssh -i /tmp/id_ed25519",
+        AWS_SECRET_ACCESS_KEY: "top-secret",
+      });
 
-      await client.run("/repo", ["status"], { env: { FOO: "bar" } });
+      try {
+        await client.run("/repo", ["status"]);
+      } finally {
+        restoreEnv();
+      }
 
       const call = spawnMock.mock.calls[0] as [string, string[], { cwd: string; env: Record<string, string> }];
+      expect(call[1]).toEqual([...DISABLED_HOOKS_ARGS, "status"]);
       expect(call[2].env).toBeDefined();
-      expect(call[2].env["FOO"]).toBe("bar");
+      expect(call[2].env["PATH"]).toBe("/test/bin");
+      expect(call[2].env["HOME"]).toBe("/test/home");
+      expect(call[2].env["GIT_AUTHOR_NAME"]).toBe("Minions Bot");
+      expect(call[2].env["GIT_AUTHOR_EMAIL"]).toBe("bot@example.com");
+      expect(call[2].env["SSH_AUTH_SOCK"]).toBe("/tmp/ssh-agent.sock");
+      expect(call[2].env["GIT_SSH_COMMAND"]).toBe("ssh -i /tmp/id_ed25519");
+      expect(call[2].env["AWS_SECRET_ACCESS_KEY"]).toBeUndefined();
     });
 
-    it("does not set env key when opts.env is not provided", async () => {
+    it("passes opts.env alongside the sanitized environment", async () => {
       const client = new GitClient();
       spawnMock.mockReturnValue(makeMockProc("", "", 0));
+      const restoreEnv = patchEnv({
+        PATH: "/test/bin",
+        HOME: "/test/home",
+        GITHUB_TOKEN: "host-token",
+      });
 
-      await client.run("/repo", ["status"]);
+      try {
+        await client.run("/repo", ["status"], { env: { FOO: "bar", GIT_ASKPASS: "/scripts/askpass.sh", GH_TOKEN: "scoped-token" } });
+      } finally {
+        restoreEnv();
+      }
 
-      const call = spawnMock.mock.calls[0] as [string, string[], { cwd: string; env?: unknown }];
-      expect(call[2].env).toBeUndefined();
+      const call = spawnMock.mock.calls[0] as [string, string[], { cwd: string; env: Record<string, string> }];
+      expect(call[2].env["PATH"]).toBe("/test/bin");
+      expect(call[2].env["HOME"]).toBe("/test/home");
+      expect(call[2].env["FOO"]).toBe("bar");
+      expect(call[2].env["GIT_ASKPASS"]).toBe("/scripts/askpass.sh");
+      expect(call[2].env["GH_TOKEN"]).toBe("scoped-token");
+      expect(call[2].env["GITHUB_TOKEN"]).toBeUndefined();
     });
 
-    it("honors commandPrefix alongside env passthrough", async () => {
+    it("injects hook suppression into prefixed invocations and preserves opts.env", async () => {
       const client = new GitClient({ commandPrefix: ["docker", "exec", "worker"] });
       spawnMock.mockReturnValue(makeMockProc("", "", 0));
 
@@ -177,7 +232,7 @@ describe("GitClient", () => {
 
       const call = spawnMock.mock.calls[0] as [string, string[], { cwd: string; env: Record<string, string> }];
       expect(call[0]).toBe("docker");
-      expect(call[1]).toEqual(["exec", "worker", "git", "push", "origin", "main"]);
+      expect(call[1]).toEqual(["exec", "worker", "git", ...DISABLED_HOOKS_ARGS, "push", "origin", "main"]);
       expect(call[2].env["GIT_ASKPASS"]).toBe("/scripts/askpass.sh");
     });
   });

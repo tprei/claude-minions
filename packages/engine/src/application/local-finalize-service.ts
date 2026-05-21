@@ -13,69 +13,95 @@ export interface LocalFinalizeServiceDeps {
   signal: AbortSignal;
   now: () => string;
   log: Logger;
+  retryDelayMs?: number;
+  shouldFinalize?: (repoId: string) => boolean;
   workspace?: WorkspaceBackend;
   gitClient?: GitClient;
   repoRegistry?: RepoRegistry;
 }
 
 export class LocalFinalizeService {
+  private static readonly DEFAULT_RETRY_DELAY_MS = 30_000;
   private readonly deps: LocalFinalizeServiceDeps;
-  private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent> | null>();
+  private readonly activeIterators = new Map<string, { iterator: AsyncIterator<WorkflowEvent> | null }>();
+  private readonly activeTasks = new Set<string>();
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(deps: LocalFinalizeServiceDeps) {
     this.deps = deps;
     deps.signal.addEventListener("abort", () => {
-      for (const iter of this.activeIterators.values()) {
-        if (iter !== null) void iter.return?.();
+      for (const attachment of this.activeIterators.values()) {
+        if (attachment.iterator !== null) void attachment.iterator.return?.();
       }
       this.activeIterators.clear();
+      for (const timer of this.retryTimers.values()) clearTimeout(timer);
+      this.retryTimers.clear();
     });
   }
 
   attach(workflowId: string): void {
     if (this.activeIterators.has(workflowId)) return;
-    this.activeIterators.set(workflowId, null);
-    void this.attachAsync(workflowId);
+    const attachment = { iterator: null };
+    this.activeIterators.set(workflowId, attachment);
+    void this.attachAsync(workflowId, attachment);
   }
 
   detach(workflowId: string): void {
-    const iter = this.activeIterators.get(workflowId);
-    if (iter) void iter.return?.();
+    const attachment = this.activeIterators.get(workflowId);
+    if (attachment?.iterator) void attachment.iterator.return?.();
     this.activeIterators.delete(workflowId);
+    for (const key of this.retryTimers.keys()) {
+      if (key.startsWith(`${workflowId}:`)) {
+        this.clearRetryTimer(key);
+      }
+    }
   }
 
-  private async attachAsync(workflowId: string): Promise<void> {
+  private isAttached(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): boolean {
+    return !this.deps.signal.aborted && this.activeIterators.get(workflowId) === attachment;
+  }
+
+  private async attachAsync(workflowId: string, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): Promise<void> {
     const cursor = await this.deps.workflowRepo.latestCursor(workflowId);
+    if (!this.isAttached(workflowId, attachment)) return;
     const workflow = await this.deps.workflowRepo.get(workflowId);
+    if (!this.isAttached(workflowId, attachment)) return;
     if (!workflow) {
-      this.activeIterators.delete(workflowId);
+      if (this.activeIterators.get(workflowId) === attachment) this.activeIterators.delete(workflowId);
       return;
     }
     for (const [taskId, task] of Object.entries(workflow.graph)) {
       if (task.executionStatus === "finalizing") {
-        void this.finalizeTask(workflowId, taskId);
+        this.enqueueFinalizeTask(workflowId, taskId);
       }
     }
-    void this.consume(workflowId, cursor);
+    void this.consume(workflowId, cursor, attachment);
   }
 
-  private async consume(workflowId: string, fromCursor: number): Promise<void> {
+  private async consume(workflowId: string, fromCursor: number, attachment: { iterator: AsyncIterator<WorkflowEvent> | null }): Promise<void> {
     const iterable = this.deps.workflowRepo.subscribe(workflowId, fromCursor);
     const iter = iterable[Symbol.asyncIterator]();
-    this.activeIterators.set(workflowId, iter);
+    if (!this.isAttached(workflowId, attachment)) {
+      void iter.return?.();
+      return;
+    }
+    attachment.iterator = iter;
     try {
       while (true) {
-        if (this.deps.signal.aborted) break;
+        if (!this.isAttached(workflowId, attachment)) break;
         const result = await iter.next();
         if (result.done) break;
-        if (this.deps.signal.aborted) break;
+        if (!this.isAttached(workflowId, attachment)) break;
 
         const event = result.value;
         if (event.kind !== "task-transitioned") continue;
 
-        const { taskId, toExecutionStatus: to } = event.payload;
-        if (to === "finalizing") {
-          void this.finalizeTask(workflowId, taskId);
+        const { taskId, fromExecutionStatus: from, toExecutionStatus: to } = event.payload;
+        const key = `${workflowId}:${taskId}`;
+        if (to === "finalizing" && from !== "finalizing") {
+          this.enqueueFinalizeTask(workflowId, taskId);
+        } else if (from === "finalizing" && to !== "finalizing") {
+          this.clearRetryTimer(key);
         }
       }
     } catch (err) {
@@ -83,16 +109,31 @@ export class LocalFinalizeService {
         error: (err as Error).message,
       });
     } finally {
-      this.activeIterators.delete(workflowId);
+      if (this.activeIterators.get(workflowId) === attachment) this.activeIterators.delete(workflowId);
     }
+  }
+
+  private enqueueFinalizeTask(workflowId: string, taskId: string): void {
+    if (this.deps.signal.aborted) return;
+    const key = `${workflowId}:${taskId}`;
+    if (this.activeTasks.has(key)) return;
+    this.activeTasks.add(key);
+    void this.finalizeTask(workflowId, taskId).finally(() => {
+      this.activeTasks.delete(key);
+    });
   }
 
   private async finalizeTask(workflowId: string, taskId: string): Promise<void> {
     if (this.deps.signal.aborted) return;
-
-    const mergeResult = await this.tryMerge(workflowId, taskId);
+    const workflow = await this.deps.workflowRepo.get(workflowId);
+    const task = workflow?.graph[taskId];
+    if (!workflow || !task) return;
+    if (task.executionStatus !== "finalizing") return;
+    if (this.deps.shouldFinalize !== undefined && !this.deps.shouldFinalize(workflow.repoId)) return;
+    const key = `${workflowId}:${taskId}`;
 
     try {
+      const mergeResult = await this.tryMerge(workflowId, taskId);
       if (mergeResult.kind === "merged") {
         await this.deps.applyCommand({
           kind: "transition-task",
@@ -122,10 +163,12 @@ export class LocalFinalizeService {
           },
         });
       }
+      this.clearRetryTimer(key);
     } catch (err) {
       this.deps.log.error(`local-finalize-service: transition error for ${workflowId}:${taskId}`, {
         error: (err as Error).message,
       });
+      this.scheduleRetry(key, workflowId, taskId);
     }
   }
 
@@ -237,6 +280,25 @@ export class LocalFinalizeService {
       }
 
       return { kind: "needs-review", reason: `merge conflict: ${msg}` };
+    }
+  }
+
+  private scheduleRetry(key: string, workflowId: string, taskId: string): void {
+    this.clearRetryTimer(key);
+    if (this.deps.signal.aborted) return;
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(key);
+      if (this.deps.signal.aborted || !this.activeIterators.has(workflowId)) return;
+      this.enqueueFinalizeTask(workflowId, taskId);
+    }, this.deps.retryDelayMs ?? LocalFinalizeService.DEFAULT_RETRY_DELAY_MS);
+    this.retryTimers.set(key, timer);
+  }
+
+  private clearRetryTimer(key: string): void {
+    const timer = this.retryTimers.get(key);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.retryTimers.delete(key);
     }
   }
 }

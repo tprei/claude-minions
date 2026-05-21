@@ -374,5 +374,27 @@ describe("buildSinksFromEnv", () => {
     });
     expect(sinks).toHaveLength(3);
     expect(sinks[2]).toBeInstanceOf(HttpSink);
+    const httpSink = sinks[2] as unknown as {
+      token?: string;
+      batchSize: number;
+      flushMs: number;
+      queueCap: number;
+    };
+    expect(httpSink.token).toBe("secret-token");
+    expect(httpSink.batchSize).toBe(25);
+    expect(httpSink.flushMs).toBe(3000);
+    expect(httpSink.queueCap).toBe(500);
+  });
+
+  it.each([
+    ["MWF_LOG_HTTP_BATCH_SIZE", "0"],
+    ["MWF_LOG_HTTP_BATCH_SIZE", "nope"],
+    ["MWF_LOG_HTTP_FLUSH_MS", "-1"],
+    ["MWF_LOG_HTTP_QUEUE_CAP", "1.5"],
+  ])("throws on invalid %s override", (name, value) => {
+    expect(() => buildSinksFromEnv({
+      MWF_LOG_HTTP_URL: "https://logs.example.com",
+      [name]: value,
+    })).toThrow(`invalid ${name}="${value}"; must be a positive integer`);
   });
 });

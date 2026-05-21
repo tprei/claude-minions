@@ -6,7 +6,7 @@ import { Spinner } from "./components/Spinner.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { buildActions, type PaletteSessionRef } from "./components/CommandPalette.actions.js";
 import { parseUrl, type ViewKind } from "./routing/parseUrl.js";
-import { subscribeUrlChanges, setUrlState } from "./routing/urlState.js";
+import { subscribeUrlChanges, setUrlState, replaceUrlState } from "./routing/urlState.js";
 import { useConnectionStore } from "./connections/store.js";
 import { useRootStore } from "./store/root.js";
 import { useWorkflowStore, EMPTY_WORKFLOWS } from "./store/workflowStore.js";
@@ -59,6 +59,7 @@ export function App(): ReactElement {
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const hydrated = useConnectionStore(s => s._hydrated);
+  const connections = useConnectionStore(s => s.connections);
   const activeConn = useRootStore(s => s.getActiveConnection());
   const activeId = useConnectionStore(s => s.activeId);
   const workflowsMap = useWorkflowStore(s => (activeId ? s.byConnection.get(activeId) ?? EMPTY_WORKFLOWS : EMPTY_WORKFLOWS));
@@ -102,6 +103,10 @@ export function App(): ReactElement {
 
   const { view, sessionSlug } = urlState;
   const filterRepo = urlState.query["repo"] ?? null;
+  const routeConnectionIsUnknown = useMemo(() => (
+    urlState.connectionId !== null &&
+    !connections.some((conn) => conn.id === urlState.connectionId)
+  ), [urlState.connectionId, connections]);
 
   const setFilterRepo = useCallback((repoId: string | null) => {
     const nextQuery = { ...urlState.query };
@@ -115,11 +120,15 @@ export function App(): ReactElement {
     });
   }, [urlState]);
 
-  if (!hydrated) {
-    return <LoadingScreen />;
-  }
-
-  const api = activeConn ? makeApi(activeConn) : null;
+  const api = useMemo(() => activeConn ? makeApi(activeConn) : null, [activeConn]);
+  const pushWorkflowId = useMemo(() => {
+    if (!sessionSlug) return null;
+    if (workflowsMap.has(sessionSlug)) return sessionSlug;
+    for (const workflow of workflowsMap.values()) {
+      if (workflow.graph[sessionSlug]) return workflow.id;
+    }
+    return null;
+  }, [sessionSlug, workflowsMap]);
 
   useEffect(() => {
     try { initInstallPrompt(); } catch (err) { console.error("initInstallPrompt failed", err); }
@@ -127,10 +136,34 @@ export function App(): ReactElement {
     try { registerServiceWorker(); } catch (err) { console.error("registerServiceWorker failed", err); }
   }, []);
 
+  useEffect(() => {
+    if (!hydrated || !routeConnectionIsUnknown) return;
+    replaceUrlState({
+      connectionId: activeId,
+      view: urlState.view,
+      sessionSlug: urlState.sessionSlug ?? null,
+      query: urlState.query,
+    });
+  }, [hydrated, routeConnectionIsUnknown, activeId, urlState]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const routeConnId = urlState.connectionId;
+    if (!routeConnId || routeConnId === activeId) return;
+    const hasRouteConnection = connections.some((conn) => conn.id === routeConnId);
+    if (hasRouteConnection) {
+      useConnectionStore.getState().setActive(routeConnId);
+    }
+  }, [hydrated, urlState.connectionId, activeId, connections]);
+
+  if (!hydrated || routeConnectionIsUnknown) {
+    return <LoadingScreen />;
+  }
+
   return (
     <>
       <AppLayout
-        header={<Header api={api} installPrompt={<InstallButton />} />}
+        header={<Header conn={activeConn} pushWorkflowId={pushWorkflowId} installPrompt={<InstallButton />} />}
         sidebar={({ closeMobile }) => (
           <Sidebar
             currentView={view as ViewKind}

@@ -22,6 +22,14 @@ const ASKPASS_PATH = join(
   "../../../scripts/gh-askpass.sh",
 );
 
+export function gitAuthEnv(token: string): Record<string, string> {
+  return {
+    GIT_ASKPASS: ASKPASS_PATH,
+    GIT_TERMINAL_PROMPT: "0",
+    GH_TOKEN: token,
+  };
+}
+
 function isStalePushRejection(err: unknown): boolean {
   if (!(err instanceof GitError)) return false;
   const output = `${err.stdout}\n${err.stderr}`;
@@ -87,14 +95,14 @@ export class GitHubScmPlugin implements SCMPlugin {
 
   async pushBranch(path: string, branch: string): Promise<void> {
     const push = () => this.git.run(path, ["push", "-u", "--force-with-lease", "origin", branch], {
-      env: { GIT_ASKPASS: ASKPASS_PATH, GH_TOKEN: this.token },
+      env: gitAuthEnv(this.token),
     });
     try {
       await push();
     } catch (err) {
       if (!isStalePushRejection(err)) throw err;
       await this.git.run(path, ["fetch", "origin", branch], {
-        env: { GIT_ASKPASS: ASKPASS_PATH, GH_TOKEN: this.token },
+        env: gitAuthEnv(this.token),
       });
       await push();
     }

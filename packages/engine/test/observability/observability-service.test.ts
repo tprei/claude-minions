@@ -14,6 +14,23 @@ class RecordingSink implements Sink {
   write(r: LogRecord) { this.records.push(r); }
 }
 
+class PausedLatestCursorRepository extends InMemoryWorkflowRepository {
+  private releaseLatestCursor!: () => void;
+  private readonly latestCursorGate = new Promise<void>((resolve) => { this.releaseLatestCursor = resolve; });
+  private latestCursorStartedResolve!: () => void;
+  readonly latestCursorStarted = new Promise<void>((resolve) => { this.latestCursorStartedResolve = resolve; });
+
+  override async latestCursor(workflowId: string): Promise<number> {
+    this.latestCursorStartedResolve();
+    await this.latestCursorGate;
+    return super.latestCursor(workflowId);
+  }
+
+  continueLatestCursor(): void {
+    this.releaseLatestCursor();
+  }
+}
+
 async function makeRepo(workflowId = WORKFLOW_ID): Promise<InMemoryWorkflowRepository> {
   const repo = new InMemoryWorkflowRepository();
   const wf = createSingleTaskWorkflow(workflowId, { title: "T", prompt: "P" }, () => NOW);
@@ -37,6 +54,38 @@ function makeService(opts: {
 }
 
 describe("ObservabilityService", () => {
+  it("does not resurrect a subscription when detach wins attach setup", async () => {
+    const repo = new PausedLatestCursorRepository();
+    const wf = createSingleTaskWorkflow(WORKFLOW_ID, { title: "T", prompt: "P" }, () => NOW);
+    await repo.save(wf, []);
+    const sink = new RecordingSink();
+    const { service, ctrl } = makeService({ repo, sink });
+
+    service.attach(WORKFLOW_ID);
+    await repo.latestCursorStarted;
+
+    service.detach(WORKFLOW_ID);
+    repo.continueLatestCursor();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    await repo.save(
+      { ...wf, version: wf.version + 1 },
+      [{
+        cursor: 0,
+        workflowId: WORKFLOW_ID,
+        occurredAt: NOW,
+        kind: "workflow-status-changed",
+        payload: { fromStatus: "active", toStatus: "completed" },
+      }],
+    );
+    await new Promise((r) => setImmediate(r));
+    ctrl.abort();
+
+    expect(repo.subscriberCount(WORKFLOW_ID)).toBe(0);
+    expect(sink.records.filter((r) => r.kind === "workflow-status-changed")).toHaveLength(0);
+  });
+
   it("attach is idempotent: calling attach twice yields exactly ONE service-attached log line", async () => {
     const repo = await makeRepo();
     const sink = new RecordingSink();

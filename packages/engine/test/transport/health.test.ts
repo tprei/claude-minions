@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { NoopRestackExecutor } from "../../src/application/restack-executor.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
 import { createRecoveryService } from "../../src/application/recovery-service.js";
@@ -21,6 +21,63 @@ describe("GET /health", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { status: string };
     expect(body.status).toBe("ok");
+  });
+
+  it("uses the doctor report when configured and maps non-ok status to 503", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const executor = new NoopRestackExecutor();
+    const runtime = new StubRuntimeBackend();
+    const recoveryService = createRecoveryService(repo, executor, runtime, () => "2026-05-10T00:00:00.000Z", silentLogger());
+    const app = createServer({
+      repo,
+      recoveryService,
+      executor,
+      doctor: async () => ({
+        status: "error",
+        checkedAt: "2026-05-10T00:00:00.000Z",
+        checks: [{ name: "disk-free", status: "error", checkedAt: "2026-05-10T00:00:00.000Z" }],
+      }),
+    });
+
+    const res = await app.request("/health");
+    expect(res.status).toBe(503);
+    const body = await res.json() as { status: string; checkedAt: string };
+    expect(body).toEqual({
+      status: "error",
+      checkedAt: "2026-05-10T00:00:00.000Z",
+    });
+  });
+
+  it("prefers the cheap health summary over doctor for /health", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const executor = new NoopRestackExecutor();
+    const runtime = new StubRuntimeBackend();
+    const recoveryService = createRecoveryService(repo, executor, runtime, () => "2026-05-10T00:00:00.000Z", silentLogger());
+    const doctor = vi.fn(async () => ({
+      status: "error" as const,
+      checkedAt: "2026-05-10T00:00:00.000Z",
+      checks: [{ name: "disk-free", status: "error" as const, checkedAt: "2026-05-10T00:00:00.000Z" }],
+    }));
+    const health = vi.fn(async () => ({
+      status: "ok" as const,
+      checkedAt: "2026-05-10T00:00:00.000Z",
+    }));
+    const app = createServer({
+      repo,
+      recoveryService,
+      executor,
+      doctor,
+      health,
+    });
+
+    const res = await app.request("/health");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      status: "ok",
+      checkedAt: "2026-05-10T00:00:00.000Z",
+    });
+    expect(health).toHaveBeenCalledOnce();
+    expect(doctor).not.toHaveBeenCalled();
   });
 
   it("returns version metadata when configured", async () => {

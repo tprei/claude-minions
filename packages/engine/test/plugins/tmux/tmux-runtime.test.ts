@@ -201,6 +201,11 @@ describe("TmuxRuntimeBackend", () => {
     const newSessionIdx = callOrder.indexOf("newSession");
     expect(writeIdx).toBeGreaterThanOrEqual(0);
     expect(newSessionIdx).toBeGreaterThan(writeIdx);
+    expect(fs.writeFile).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/data\/sessions\/.+\.sh$/),
+      expect.any(String),
+      expect.objectContaining({ mode: 0o700 }),
+    );
   });
 
   it("sessionId matches mwf-<slug>-<hash8>-<shortid> pattern", async () => {
@@ -239,7 +244,7 @@ describe("TmuxRuntimeBackend", () => {
     expect(client.killSession).toHaveBeenCalledOnce();
   });
 
-  it("start failure does NOT delete script or log files", async () => {
+  it("start failure deletes launcher script", async () => {
     const backend = await makeBackend();
     const client = await getMockClientInner();
     const fsp = await import("node:fs/promises");
@@ -250,10 +255,10 @@ describe("TmuxRuntimeBackend", () => {
       backend.start({ taskId: "t1", workflowId: "wf-1", command: ["echo"] }),
     ).rejects.toThrow();
 
-    expect(fsp.unlink).not.toHaveBeenCalled();
+    expect(fsp.unlink).toHaveBeenCalledWith(expect.stringMatching(/^\/data\/sessions\/.+\.sh$/));
   });
 
-  it("stop calls killSession and swallows TmuxNoSuchSessionError; does NOT delete log or script", async () => {
+  it("stop calls killSession, swallows TmuxNoSuchSessionError, and deletes launcher script", async () => {
     const backend = await makeBackend();
     const client = await getMockClientInner();
     const fsp = await import("node:fs/promises");
@@ -263,10 +268,10 @@ describe("TmuxRuntimeBackend", () => {
 
     await expect(backend.stop("any-session")).resolves.toBeUndefined();
     expect(client.killSession).toHaveBeenCalledWith("any-session");
-    expect(fsp.unlink).not.toHaveBeenCalled();
+    expect(fsp.unlink).toHaveBeenCalledWith("/data/sessions/any-session.sh");
   });
 
-  it("stop propagates non-TmuxNoSuchSession errors and does NOT delete log or script", async () => {
+  it("stop propagates non-TmuxNoSuchSession errors and still deletes launcher script", async () => {
     const backend = await makeBackend();
     const client = await getMockClientInner();
     const fsp = await import("node:fs/promises");
@@ -277,7 +282,7 @@ describe("TmuxRuntimeBackend", () => {
     );
 
     await expect(backend.stop("session")).rejects.toThrow("socket error");
-    expect(fsp.unlink).not.toHaveBeenCalled();
+    expect(fsp.unlink).toHaveBeenCalledWith("/data/sessions/session.sh");
   });
 
   it("probe: sessionExists=false → 'missing'", async () => {
@@ -646,6 +651,7 @@ describe("TmuxRuntimeBackend", () => {
     expect(unlinkMock).toHaveBeenCalledWith(
       expect.stringContaining("cleanup-session.log.done"),
     );
+    expect(unlinkMock).toHaveBeenCalledWith("/data/sessions/cleanup-session.sh");
   });
 });
 

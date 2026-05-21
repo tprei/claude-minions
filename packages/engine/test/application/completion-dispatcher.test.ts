@@ -61,6 +61,7 @@ function makeService(
   repo: InMemoryWorkflowRepository,
   mergeService: MergeService,
   signal: AbortSignal,
+  shouldDispatch?: (repoId: string) => boolean,
 ) {
   return new CompletionDispatcher({
     workflowRepo: repo,
@@ -69,7 +70,14 @@ function makeService(
     signal,
     now,
     log: silentLogger(),
+    ...(shouldDispatch !== undefined ? { shouldDispatch } : {}),
   });
+}
+
+async function flushMicrotasks(turns = 8): Promise<void> {
+  for (let i = 0; i < turns; i++) {
+    await Promise.resolve();
+  }
 }
 
 describe("CompletionDispatcher", () => {
@@ -200,6 +208,43 @@ describe("CompletionDispatcher", () => {
     expect(workflow?.graph[TASK_ID]?.executionStatus).toBe("finalizing");
   });
 
+  it("retries transient openOnly failures without a restart", async () => {
+    vi.useFakeTimers();
+    const repo = makeRepo();
+    await makeWorkflowInFinalizing(repo, true);
+    const mergeService = makeMergeService({
+      openOnly: vi.fn()
+        .mockRejectedValueOnce(new Error("temporary github outage"))
+        .mockResolvedValue({ workflow: null, events: [] } as unknown as CommandResult),
+    });
+    const ctrl = new AbortController();
+
+    try {
+      const service = new CompletionDispatcher({
+        workflowRepo: repo,
+        applyCommand: (cmd) => applyCommand(repo, cmd),
+        mergeService,
+        signal: ctrl.signal,
+        now,
+        log: silentLogger(),
+        retryDelayMs: 50,
+      });
+      service.attach(WORKFLOW_ID);
+
+      await flushMicrotasks();
+      expect(mergeService.openOnly).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(49);
+      expect(mergeService.openOnly).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mergeService.openOnly).toHaveBeenCalledTimes(2);
+    } finally {
+      ctrl.abort();
+      vi.useRealTimers();
+    }
+  });
+
   it("attach scans existing finalizing tasks at attach time", async () => {
     const repo = makeRepo();
     await makeWorkflowInFinalizing(repo, true);
@@ -259,6 +304,23 @@ describe("CompletionDispatcher", () => {
     ctrl.abort();
 
     expect(mergeService.openOnly).toHaveBeenCalledWith(expect.objectContaining({ workflowId: WORKFLOW_ID, taskId: TASK_ID }));
+  });
+
+  it("skips repos rejected by the dispatch predicate", async () => {
+    const repo = makeRepo();
+    await makeWorkflowInFinalizing(repo, true);
+    const mergeService = makeMergeService();
+    const ctrl = new AbortController();
+
+    const service = makeService(repo, mergeService, ctrl.signal, () => false);
+    service.attach(WORKFLOW_ID);
+
+    await new Promise((r) => setTimeout(r, 50));
+    ctrl.abort();
+
+    expect(mergeService.openOnly).not.toHaveBeenCalled();
+    const workflow = await repo.get(WORKFLOW_ID);
+    expect(workflow?.graph[TASK_ID]?.executionStatus).toBe("finalizing");
   });
 
   it("engine signal cascade aborts all", async () => {

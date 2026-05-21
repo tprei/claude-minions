@@ -208,4 +208,115 @@ diff --git a/x.ts b/x.ts
     expect(result).toHaveLength(1);
     expect(result[0]!.path).toBe("x.ts");
   });
+
+  it("parses CRLF-terminated diffs", () => {
+    const raw = [
+      "diff --git a/x.ts b/x.ts",
+      "--- a/x.ts",
+      "+++ b/x.ts",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\r\n");
+    const result = parsePatch(raw);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.path).toBe("x.ts");
+    expect(result[0]!.hunks[0]!.lines.map((l) => l.kind)).toEqual(["del", "add"]);
+  });
+
+  it("parses git-quoted paths", () => {
+    const raw = `diff --git "a/src/hello world.ts" "b/src/hello world.ts"
+--- "a/src/hello world.ts"
++++ "b/src/hello world.ts"
+@@ -1,1 +1,1 @@
+-old
++new
+`;
+    const result = parsePatch(raw);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.path).toBe("src/hello world.ts");
+  });
+
+  it("does not split filenames containing b slash", () => {
+    const raw = `diff --git a/src/b/value.ts b/src/b/value.ts
+--- a/src/b/value.ts
++++ b/src/b/value.ts
+@@ -1,1 +1,1 @@
+-old
++new
+`;
+    const result = parsePatch(raw);
+    expect(result[0]!.path).toBe("src/b/value.ts");
+  });
+
+  it("strips timestamp suffixes from file header paths", () => {
+    const raw = `diff --git a/src/x.ts b/src/x.ts
+--- a/src/x.ts\t2026-05-17 10:00:00
++++ b/src/x.ts\t2026-05-17 10:00:01
+@@ -1,1 +1,1 @@
+-old
++new
+`;
+    const result = parsePatch(raw);
+    expect(result[0]!.status).toBe("modified");
+    expect(result[0]!.path).toBe("src/x.ts");
+  });
+
+  it("keeps hunk lines that begin with file header markers", () => {
+    const raw = `diff --git a/readme.md b/readme.md
+--- a/readme.md
++++ b/readme.md
+@@ -1,2 +1,2 @@
+---- old heading
+++++ new heading
+`;
+    const result = parsePatch(raw);
+    expect(result[0]!.hunks[0]!.lines).toEqual([
+      { kind: "del", text: "--- old heading", oldNo: 1 },
+      { kind: "add", text: "+++ new heading", newNo: 1 },
+    ]);
+  });
+
+  it("strips custom git prefixes", () => {
+    const raw = `diff --git old/src/x.ts new/src/x.ts
+--- old/src/x.ts
++++ new/src/x.ts
+@@ -1,1 +1,1 @@
+-old
++new
+`;
+    const result = parsePatch(raw);
+    expect(result[0]!.path).toBe("src/x.ts");
+  });
+
+  it("preserves zero-hunk rename files", () => {
+    const raw = `diff --git a/old.ts b/new.ts
+similarity index 100%
+rename from old.ts
+rename to new.ts
+`;
+    const result = parsePatch(raw);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      status: "renamed",
+      oldPath: "old.ts",
+      path: "new.ts",
+      hunks: [],
+    });
+  });
+
+  it("preserves zero-hunk mode-only files", () => {
+    const raw = `diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755
+`;
+    const result = parsePatch(raw);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      status: "modified",
+      path: "script.sh",
+      hunks: [],
+    });
+  });
 });

@@ -24,6 +24,39 @@ function isConnectionPayload(v: unknown): v is ConnectionPayload {
   );
 }
 
+function isLocalHttpHost(hostname: string): boolean {
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "0.0.0.0" ||
+    hostname === "[::1]";
+}
+
+function validateBaseUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error("QR payload baseUrl must be an absolute URL");
+  }
+
+  if (url.username || url.password) {
+    throw new Error("QR payload baseUrl must not include credentials");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("QR payload baseUrl must use http or https");
+  }
+  if (url.protocol === "http:" && !isLocalHttpHost(url.hostname)) {
+    throw new Error("QR payload baseUrl must use https unless it targets localhost");
+  }
+  if (!url.hostname) {
+    throw new Error("QR payload baseUrl must include a host");
+  }
+
+  url.hash = "";
+  url.search = "";
+  return url.toString().replace(/\/$/, "");
+}
+
 export function QrImportModal({ onImport, onClose }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerRef = useRef<QrScanner | null>(null);
@@ -52,7 +85,8 @@ export function QrImportModal({ onImport, onClose }: Props) {
         throw new Error("QR payload missing required fields: label, baseUrl, token");
       }
 
-      const url = `${parsed.baseUrl.replace(/\/$/, "")}/version`;
+      const baseUrl = validateBaseUrl(parsed.baseUrl);
+      const url = `${baseUrl}/version`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${parsed.token}` },
       });
@@ -64,7 +98,7 @@ export function QrImportModal({ onImport, onClose }: Props) {
       await res.json() as VersionInfo;
 
       setStatus("done");
-      onImport(parsed);
+      onImport({ ...parsed, baseUrl });
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Validation failed");
       setStatus("error");

@@ -188,6 +188,41 @@ describe("useWorkflowStore — optimistic + rollback", () => {
     expect(useWorkflowStore.getState().byConnection.get(CONN)?.get("wf1")?.status).toBe("active");
   });
 
+  it("rollback preserves SSE events applied during the optimistic window", () => {
+    const wf = makeWorkflow("wf1", [makeTask("t1", "wf1")]);
+    useWorkflowStore.getState().replaceAll(CONN, [wf]);
+
+    const rollback = useWorkflowStore.getState().applyOptimisticWorkflow(
+      CONN,
+      "wf1",
+      (prev) => ({ ...prev, status: "completed" }),
+    );
+
+    const event: WorkflowEvent = {
+      cursor: 2,
+      workflowId: "wf1",
+      occurredAt: "2026-05-01T01:00:00.000Z",
+      kind: "task-transitioned",
+      payload: {
+        taskId: "t1",
+        fromExecutionStatus: "pending",
+        toExecutionStatus: "running",
+        fromStackStatus: "clean",
+        toStackStatus: "clean",
+        taskVersion: 2,
+      },
+    };
+    useWorkflowStore.getState().applyEvent(CONN, event);
+
+    rollback();
+
+    const stored = useWorkflowStore.getState().byConnection.get(CONN)?.get("wf1");
+    expect(stored?.status).toBe("active");
+    expect(stored?.updatedAt).toBe("2026-05-01T01:00:00.000Z");
+    expect(stored?.graph["t1"]?.executionStatus).toBe("running");
+    expect(stored?.graph["t1"]?.version).toBe(2);
+  });
+
   it("applyOptimisticWorkflow is a no-op when workflow is missing", () => {
     const rollback = useWorkflowStore.getState().applyOptimisticWorkflow(
       CONN,

@@ -4,8 +4,10 @@ export interface Viewport {
   scale: number;
 }
 
+const VIEWPORT_KEY_PREFIX = "dag:viewport:";
+
 function key(connId: string, dagId: string): string {
-  return `dag:viewport:${connId}:${dagId}`;
+  return `${VIEWPORT_KEY_PREFIX}${connId}:${dagId}`;
 }
 
 function isViewport(value: unknown): value is Viewport {
@@ -39,5 +41,24 @@ export function setViewport(connId: string, dagId: string, vp: Viewport): void {
     globalThis.localStorage.setItem(key(connId, dagId), JSON.stringify(vp));
   } catch {
     // storage full or unavailable — drop silently
+  }
+}
+
+export function clearConnectionViewports(connId: string): void {
+  if (typeof globalThis.localStorage === "undefined") return;
+  const prefix = `${VIEWPORT_KEY_PREFIX}${connId}:`;
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < globalThis.localStorage.length; index += 1) {
+      const storageKey = globalThis.localStorage.key(index);
+      if (storageKey?.startsWith(prefix)) {
+        keys.push(storageKey);
+      }
+    }
+    for (const storageKey of keys) {
+      globalThis.localStorage.removeItem(storageKey);
+    }
+  } catch {
+    // storage unavailable — drop silently
   }
 }

@@ -1,14 +1,17 @@
 import { create } from "zustand";
-import type { RepoBinding } from "@minions/shared";
+import type { PendingFeature, RepoBinding, VersionInfo } from "@minions/shared";
 
 export interface ConnectionMeta {
   apiVersion: string;
   libraryVersion: string;
   buildSha: string;
   provider: string;
+  providers: string[];
   features: string[];
+  featuresPending: PendingFeature[];
   repos: RepoBinding[];
   pluginSet: string[];
+  startedAt: string;
 }
 
 /**
@@ -29,11 +32,12 @@ interface VersionStore {
   workflowVersions: Map<string, Map<string, number>>;
   setConnectionMeta: (connId: string, meta: ConnectionMeta) => void;
   /** Alias for setConnectionMeta, accepts VersionInfo from @minions/shared for backward compat. */
-  setVersion: (connId: string, info: { apiVersion: string; libraryVersion: string; buildSha: string; provider: string; features: string[]; repos: RepoBinding[]; pluginSet: string[] }) => void;
+  setVersion: (connId: string, info: VersionInfo) => void;
   setWorkflowVersion: (connId: string, workflowId: string, version: number) => void;
   getWorkflowVersion: (connId: string, workflowId: string) => number | undefined;
   /** Bulk-seed versions from a snapshot of workflows. */
   seedFromWorkflows: (connId: string, entries: WorkflowVersionEntry[]) => void;
+  clearConnection: (connId: string) => void;
 }
 
 const EMPTY_META: ConnectionMeta = {
@@ -41,9 +45,12 @@ const EMPTY_META: ConnectionMeta = {
   libraryVersion: "",
   buildSha: "",
   provider: "",
+  providers: [],
   features: [],
+  featuresPending: [],
   repos: [],
   pluginSet: [],
+  startedAt: "",
 };
 
 export const useVersionStore = create<VersionStore>((set, get) => ({
@@ -66,9 +73,12 @@ export const useVersionStore = create<VersionStore>((set, get) => ({
         libraryVersion: info.libraryVersion,
         buildSha: info.buildSha,
         provider: info.provider,
+        providers: info.providers,
         features: info.features,
+        featuresPending: info.featuresPending,
         repos: info.repos,
         pluginSet: info.pluginSet,
+        startedAt: info.startedAt,
       });
       return { byConnection: next };
     });
@@ -97,6 +107,17 @@ export const useVersionStore = create<VersionStore>((set, get) => ({
       }
       workflowVersions.set(connId, inner);
       return { workflowVersions };
+    });
+  },
+
+  clearConnection(connId) {
+    set((s) => {
+      const byConnection = new Map(s.byConnection);
+      const workflowVersions = new Map(s.workflowVersions);
+      const hadConnection = byConnection.delete(connId);
+      const hadVersions = workflowVersions.delete(connId);
+      if (!hadConnection && !hadVersions) return s;
+      return { byConnection, workflowVersions };
     });
   },
 }));

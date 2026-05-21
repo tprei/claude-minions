@@ -7,7 +7,7 @@ import {
   type Workflow,
 } from "@minions/engine";
 
-const ENGINE_URL = "http://engine.test";
+const ENGINE_URL = "https://engine.test";
 const NOW = "2026-05-14T00:00:00.000Z";
 
 const STACK_LABEL: Record<TaskStackStatus, string | undefined> = {

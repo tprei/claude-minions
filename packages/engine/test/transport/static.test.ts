@@ -8,6 +8,12 @@ import { createServer } from "../../src/transport/server.js";
 
 const now = "2026-05-04T11:19:00.000Z";
 
+function extractAssetList(source: string): string[] {
+  const match = source.match(/const\s+ASSETS\s*=\s*\[([\s\S]*?)\];/);
+  if (!match) throw new Error("service worker ASSETS list not found");
+  return Array.from(match[1]!.matchAll(/"([^"]+)"/g), ([, asset]) => asset!);
+}
+
 function makeApp(pwaRoot?: string) {
   const repo = new InMemoryWorkflowRepository();
   const executor = new NoopRestackExecutor();
@@ -79,6 +85,35 @@ describe("static serving with pwaRoot set", () => {
     const app = makeApp(pwaRoot);
     const res = await app.request("/assets/app-v1.js");
     expect(res.status).toBe(200);
+  });
+});
+
+describe("static serving with production PWA assets", () => {
+  const pwaRoot = "pwa";
+
+  it("serves every install-critical asset referenced by the manifest and service worker", async () => {
+    const app = makeApp(pwaRoot);
+
+    const manifestRes = await app.request("/manifest.json");
+    expect(manifestRes.status).toBe(200);
+    const manifest = await manifestRes.json() as { icons: Array<{ src: string }> };
+    const iconPaths = manifest.icons.map((icon) => icon.src);
+    expect(iconPaths).toEqual(["/icons/icon-192.png", "/icons/icon-512.png"]);
+
+    const swRes = await app.request("/sw.js");
+    expect(swRes.status).toBe(200);
+    const serviceWorkerAssets = extractAssetList(await swRes.text());
+    expect(serviceWorkerAssets).toContain("/");
+    expect(serviceWorkerAssets).toContain("/manifest.json");
+    expect(serviceWorkerAssets).toContain("/assets/app-v1.js");
+    expect(serviceWorkerAssets).toContain("/assets/styles-v1.css");
+    expect(serviceWorkerAssets).toContain("/icons/icon-192.png");
+    expect(serviceWorkerAssets).toContain("/icons/icon-512.png");
+
+    for (const asset of new Set([...serviceWorkerAssets, ...iconPaths])) {
+      const res = await app.request(asset);
+      expect(res.status).toBe(200);
+    }
   });
 });
 

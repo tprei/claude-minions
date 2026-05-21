@@ -7,6 +7,7 @@ import type { WorkflowRepository } from "../src/application/repository.js";
 import type { RuntimeProbeState } from "../src/application/recovery.js";
 import { StubRuntimeBackend } from "../src/plugins/stub-runtime.js";
 import { createSingleTaskWorkflow } from "../src/domain/workflow.js";
+import { completeTask, makeThreeNodeWorkflow } from "../src/testing/builders.js";
 import { silentLogger } from "./test-helpers.js";
 
 const started = "2026-05-04T11:19:00.000Z";
@@ -44,25 +45,27 @@ describe("RecoveryService.scan", () => {
 
   it("resumes a pending restack operation to completed via NoopRestackExecutor", async () => {
     const repo = new InMemoryWorkflowRepository();
-    const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => started);
+    let workflow = makeThreeNodeWorkflow();
+    workflow = completeTask(workflow, "backend", "feature/backend");
+    workflow = completeTask(workflow, "frontend", "feature/frontend");
     await repo.save(workflow, []);
 
     await applyCommand(repo, {
       kind: "request-restack",
-      workflowId: "wf-1",
+      workflowId: workflow.id,
       input: {
         operationId: "op-1",
-        ancestorId: "wf-1:task",
+        ancestorId: "backend",
         idempotencyKey: "k1",
         now: started,
       },
     });
 
     const service = createRecoveryService(repo, new NoopRestackExecutor(), new StubRuntimeBackend(), () => started, silentLogger());
-    const results = await service.scan("wf-1", defaultOptions);
+    const results = await service.scan(workflow.id, defaultOptions);
 
     expect(results.length).toBeGreaterThanOrEqual(1);
-    const saved = await repo.get("wf-1");
+    const saved = await repo.get(workflow.id);
     expect(saved?.operations["op-1"]?.status).toBe("completed");
   });
 
@@ -93,7 +96,7 @@ describe("RecoveryService.scan", () => {
 
     await service.scan("wf-1", defaultOptions);
 
-    const key = `recovery:wf-1:wf-1:task:recover-task:0`;
+    const key = "recovery:wf-1:wf-1:task:recover-task:version:2";
     const ref = await repo.lookupIdempotency("wf-1", key);
     expect(ref).toBe("recovery:recover-task:wf-1:task");
   });
@@ -157,7 +160,7 @@ describe("RecoveryService.scan", () => {
 
   it("skips dispatch when the idempotency key is pre-recorded", async () => {
     const repo = await seedReady();
-    const key = `recovery:wf-1:wf-1:task:recover-task:0`;
+    const key = "recovery:wf-1:wf-1:task:recover-task:version:2";
     // Seed the idempotency row via save() — recordIdempotency is removed from the interface
     const wf = await repo.get("wf-1");
     await repo.save({ ...wf!, version: wf!.version + 1 }, [], [{ key, resultRef: "recovery:recover-task:wf-1:task" }]);
@@ -348,6 +351,82 @@ describe("RecoveryService.scan", () => {
     // task-b: stale-ready recover DID execute — back to pending.
     expect(saved?.graph["wf-x:b"]?.executionStatus).toBe("pending");
     expect(results).toHaveLength(1);
+  });
+
+  it("stale invalid_transition is skipped; later recovery actions in the same scan still execute", async () => {
+    const inner = new InMemoryWorkflowRepository();
+
+    const { createWorkflow } = await import("../src/domain/workflow.js");
+    const workflow = createWorkflow(
+      {
+        id: "wf-y",
+        kind: "manual-dag",
+        repoId: "fixture-repo",
+        tasks: [
+          { id: "wf-y:a", title: "A", prompt: "A" },
+          { id: "wf-y:b", title: "B", prompt: "B" },
+        ],
+        policy: { maxConcurrent: 2 },
+      },
+      () => started,
+    );
+    await inner.save(workflow, []);
+
+    await applyCommand(inner, {
+      kind: "transition-task",
+      workflowId: "wf-y",
+      transition: { kind: "mark-ready", taskId: "wf-y:a", now: started },
+    });
+    await applyCommand(inner, {
+      kind: "transition-task",
+      workflowId: "wf-y",
+      transition: { kind: "mark-ready", taskId: "wf-y:b", now: started },
+    });
+
+    const snapshot = await inner.get("wf-y");
+
+    await applyCommand(inner, {
+      kind: "transition-task",
+      workflowId: "wf-y",
+      transition: { kind: "recover-task", taskId: "wf-y:a", now: started },
+    });
+
+    let firstGet = true;
+    const staleScanRepo: WorkflowRepository = {
+      get: async (id) => {
+        if (firstGet) {
+          firstGet = false;
+          return snapshot;
+        }
+        return inner.get(id);
+      },
+      save: (w, e, i) => inner.save(w, e, i),
+      delete: (id) => inner.delete(id),
+      eventsSince: (id, cursor) => inner.eventsSince(id, cursor),
+      latestCursor: (id) => inner.latestCursor(id),
+      subscribe: (id, cursor) => inner.subscribe(id, cursor),
+      publishTransient: (id, event) => inner.publishTransient(id, event),
+      lookupIdempotency: (id, key) => inner.lookupIdempotency(id, key),
+      listRecoverable: () => inner.listRecoverable(),
+      list: (opts) => inner.list(opts),
+      appendTranscript: (wid, rid, oat, pe) => inner.appendTranscript(wid, rid, oat, pe),
+      listTranscript: (wid, rid) => inner.listTranscript(wid, rid),
+    };
+
+    const service = createRecoveryService(
+      staleScanRepo,
+      new NoopRestackExecutor(),
+      new StubRuntimeBackend(),
+      () => started,
+      silentLogger(),
+    );
+
+    const results = await service.scan("wf-y", defaultOptions);
+
+    expect(results).toHaveLength(1);
+    const saved = await inner.get("wf-y");
+    expect(saved?.graph["wf-y:a"]?.executionStatus).toBe("pending");
+    expect(saved?.graph["wf-y:b"]?.executionStatus).toBe("pending");
   });
 
   it("stale quality-pending → probe-gate → complete-quality-gate{passed:false} with stale artifact", async () => {

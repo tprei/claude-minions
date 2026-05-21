@@ -36,12 +36,25 @@ export function closeLatestRun(
   runs: NodeRun[],
   terminalReason: NodeRunTerminalReason,
   endedAt: string,
+  exitMetadata?: Record<string, unknown>,
 ): NodeRun[] {
   const open = getOpenRun(runs);
   if (!open) return runs;
 
   const realIndex = runs.indexOf(open);
-  const closed: NodeRun = { ...open, endedAt, terminalReason };
+  const closed: NodeRun = {
+    ...open,
+    endedAt,
+    terminalReason,
+    ...(exitMetadata !== undefined
+      ? {
+          exitMetadata: {
+            ...(open.exitMetadata ?? {}),
+            ...exitMetadata,
+          },
+        }
+      : {}),
+  };
   return [...runs.slice(0, realIndex), closed, ...runs.slice(realIndex + 1)];
 }
 

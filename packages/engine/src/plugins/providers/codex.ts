@@ -8,6 +8,19 @@ import type {
   ProviderResumeSpec,
 } from "../provider-plugin.js";
 
+const LOGIN_STATUS_TIMEOUT_MS = 5_000;
+
+function parseJsonObject(line: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(line);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export class CodexProvider implements ProviderPlugin {
   readonly name = "codex";
 
@@ -21,6 +34,7 @@ export class CodexProvider implements ProviderPlugin {
   };
 
   // This state ties one provider instance to one conversation; the engine MUST construct a fresh instance per run.
+  private threadStarted = false;
   private lastThreadId: string | undefined;
 
   async prepare(spec: ProviderPrepareSpec): Promise<ProviderInvocation> {
@@ -34,7 +48,7 @@ export class CodexProvider implements ProviderPlugin {
   async resume(spec: ProviderResumeSpec): Promise<ProviderInvocation> {
     if (spec.prompt.trim() === "") throw new Error("prompt must be non-empty");
     return {
-      command: ["codex", "exec", "resume", "--json", spec.sessionRef, spec.prompt],
+      command: ["codex", "exec", "resume", "--json", "--", spec.sessionRef, spec.prompt],
       providerType: "codex",
     };
   }
@@ -45,20 +59,24 @@ export class CodexProvider implements ProviderPlugin {
   parseFrame(line: string): ProviderEvent[] {
     if (line.trim().length === 0) return [];
 
-    let json: Record<string, unknown>;
-    try {
-      json = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      return [];
-    }
+    const json = parseJsonObject(line);
+    if (json === null) return [];
 
     const type = json["type"];
 
     switch (type) {
       case "thread.started": {
-        if (this.lastThreadId !== undefined) {
-          throw new Error("CodexProvider instance reused across conversations; construct a fresh instance per run");
+        if (this.threadStarted) {
+          return [
+            {
+              kind: "error",
+              recoverable: false,
+              source: "provider_parser",
+              message: "CodexProvider instance reused across conversations; construct a fresh instance per run",
+            },
+          ];
         }
+        this.threadStarted = true;
         this.lastThreadId = typeof json["thread_id"] === "string" ? json["thread_id"] : undefined;
         return [];
       }
@@ -204,6 +222,21 @@ export class CodexProvider implements ProviderPlugin {
       }
 
       case "item.updated": {
+        const item = json["item"] as Record<string, unknown> | undefined;
+        const itemType = item?.["type"] as string | undefined;
+        if (itemType === "command_execution") {
+          const output = item?.["delta"] ?? item?.["output_delta"] ?? item?.["aggregated_output"] ?? null;
+          if (output === null) return [];
+          const status = item?.["status"] as string | undefined;
+          return [
+            {
+              kind: "tool_result",
+              id: String(item?.["id"] ?? ""),
+              output,
+              isError: status === "failed" || status === "declined",
+            },
+          ];
+        }
         return [];
       }
 
@@ -231,11 +264,26 @@ export class CodexProvider implements ProviderPlugin {
 
   loginStatus(): Promise<{ loggedIn: boolean; details?: string }> {
     return new Promise((resolve) => {
-      const child = spawn("codex", ["login", "status"]);
+      const child = spawn("codex", ["login", "status"], { stdio: ["ignore", "pipe", "pipe"] });
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill("SIGTERM");
+        resolve({ loggedIn: false, details: "login status timed out" });
+      }, LOGIN_STATUS_TIMEOUT_MS);
+      child.stdout?.resume();
+      child.stderr?.resume();
       child.on("close", (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         resolve({ loggedIn: code === 0 });
       });
       child.on("error", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         resolve({ loggedIn: false });
       });
     });

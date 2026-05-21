@@ -36,6 +36,17 @@ function readString(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
 }
 
+function parseJsonObject(line: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(line);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export class PiProvider implements ProviderPlugin {
   readonly name = "pi";
 
@@ -90,6 +101,7 @@ USER QUESTION:
   readonly toolsAllowlist: string;
 
   // This state ties one provider instance to one conversation; the engine MUST construct a fresh instance per run.
+  private sessionStarted = false;
   lastSessionId: string | null = null;
 
   constructor(config: PiProviderConfig = {}) {
@@ -165,21 +177,25 @@ USER QUESTION:
   parseFrame(line: string): ProviderEvent[] {
     if (line.trim().length === 0) return [];
 
-    let json: Record<string, unknown>;
-    try {
-      json = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      return [];
-    }
+    const json = parseJsonObject(line);
+    if (json === null) return [];
 
     const type = json["type"];
     if (typeof type !== "string") return [];
 
     switch (type) {
       case "session": {
-        if (this.lastSessionId !== null) {
-          throw new Error("PiProvider instance reused across conversations; construct a fresh instance per run");
+        if (this.sessionStarted) {
+          return [
+            {
+              kind: "error",
+              recoverable: false,
+              source: "provider_parser",
+              message: "PiProvider instance reused across conversations; construct a fresh instance per run",
+            },
+          ];
         }
+        this.sessionStarted = true;
         const id = json["id"];
         this.lastSessionId = typeof id === "string" ? id : null;
         return [];
@@ -257,7 +273,15 @@ USER QUESTION:
         const exitMetadata: Record<string, unknown> = {};
         if (typeof json["exit_code"] === "number") exitMetadata["exit_code"] = json["exit_code"];
         if (typeof json["reason"] === "string") exitMetadata["reason"] = json["reason"];
-        return [
+        const events: ProviderEvent[] = [];
+        if (typeof json["exit_code"] === "number" && json["exit_code"] !== 0) {
+          events.push({
+            kind: "error",
+            recoverable: false,
+            message: `pi exited with code ${json["exit_code"]}`,
+          });
+        }
+        events.push(
           {
             kind: "usage",
             inputTokens: typeof usage?.["input_tokens"] === "number" ? usage["input_tokens"] : 0,
@@ -275,7 +299,8 @@ USER QUESTION:
             sessionRef: this.lastSessionId ?? "",
             exitMetadata,
           },
-        ];
+        );
+        return events;
       }
 
       case "error": {

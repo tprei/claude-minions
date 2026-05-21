@@ -6,20 +6,29 @@ import type { Connection } from "../../connections/store.js";
 
 vi.mock("../../transport/rest.js", () => ({
   dispatchCommand: vi.fn(async () => ({ ok: true })),
+  deleteWorkflow: vi.fn(async () => ({ ok: true })),
+}));
+
+const workflowStoreState = vi.hoisted(() => ({
+  remove: vi.fn(),
 }));
 
 vi.mock("../../store/workflowStore.js", () => ({
-  useWorkflowStore: vi.fn(() => ({ remove: vi.fn() })),
+  useWorkflowStore: Object.assign(
+    vi.fn(),
+    { getState: () => workflowStoreState },
+  ),
 }));
 
 vi.mock("../../connections/store.js", () => ({
   useConnectionStore: Object.assign(
-    vi.fn((sel: (s: { activeId: string | null }) => unknown) => sel({ activeId: "c1" })),
-    { getState: () => ({ activeId: "c1" }) },
+    vi.fn((sel: (s: { activeId: string | null }) => unknown) => sel({ activeId: "other-active" })),
+    { getState: () => ({ activeId: "other-active" }) },
   ),
 }));
 
 import { SessionActionsMenu } from "../SessionActionsMenu.js";
+import { deleteWorkflow, dispatchCommand } from "../../transport/rest.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -31,6 +40,9 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  vi.mocked(dispatchCommand).mockClear();
+  vi.mocked(deleteWorkflow).mockClear();
+  workflowStoreState.remove.mockClear();
 });
 
 afterEach(() => {
@@ -145,5 +157,62 @@ describe("SessionActionsMenu", () => {
     });
     clickTrigger();
     expect(parentSpy).not.toHaveBeenCalled();
+  });
+
+  it("confirms cancel with cancel-task transition", async () => {
+    const workflow = makeWorkflow("active");
+    act(() => {
+      root.render(
+        createElement(SessionActionsMenu, { workflow, conn: TEST_CONN }),
+      );
+    });
+    clickTrigger();
+    const cancel = Array.from(document.querySelectorAll("[role='menuitem']")).find(
+      (el) => el.textContent?.trim() === "Cancel",
+    ) as HTMLButtonElement | undefined;
+    act(() => {
+      cancel?.click();
+    });
+    const confirm = Array.from(document.querySelectorAll("button")).find(
+      (el) => el.textContent?.trim() === "Cancel task",
+    ) as HTMLButtonElement | undefined;
+    await act(async () => {
+      confirm?.click();
+    });
+
+    expect(dispatchCommand).toHaveBeenCalledWith(TEST_CONN, {
+      kind: "transition-task",
+      workflowId: "wf-1",
+      transition: {
+        kind: "cancel-task",
+        taskId: "task-1",
+        now: expect.any(String),
+      },
+    });
+  });
+
+  it("removes from the rendered connection slice after delete confirmation", async () => {
+    const workflow = makeWorkflow("active");
+    act(() => {
+      root.render(
+        createElement(SessionActionsMenu, { workflow, conn: TEST_CONN }),
+      );
+    });
+    clickTrigger();
+    const remove = Array.from(document.querySelectorAll("[role='menuitem']")).find(
+      (el) => el.textContent?.trim() === "Remove…",
+    ) as HTMLButtonElement | undefined;
+    act(() => {
+      remove?.click();
+    });
+    const confirm = Array.from(document.querySelectorAll("button")).find(
+      (el) => el.textContent?.trim() === "Remove",
+    ) as HTMLButtonElement | undefined;
+    await act(async () => {
+      confirm?.click();
+    });
+
+    expect(deleteWorkflow).toHaveBeenCalledWith(TEST_CONN, "wf-1");
+    expect(workflowStoreState.remove).toHaveBeenCalledWith(TEST_CONN.id, "wf-1");
   });
 });

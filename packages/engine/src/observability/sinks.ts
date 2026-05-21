@@ -42,6 +42,18 @@ export interface HttpSinkOptions {
   fallback?: Sink;
 }
 
+function parsePositiveIntegerEnv(name: string, raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`invalid ${name}="${raw}"; must be a positive integer`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`invalid ${name}="${raw}"; must be a positive integer`);
+  }
+  return value;
+}
+
 export class HttpSink implements Sink {
   private readonly url: string;
   private readonly token: string | undefined;
@@ -142,12 +154,12 @@ export function buildSinksFromEnv(env: NodeJS.ProcessEnv = process.env): Sink[] 
     const opts: HttpSinkOptions = { url: httpUrl, fallback: sinks[0] as Sink };
     const tok = env["MWF_LOG_HTTP_TOKEN"];
     if (tok) opts.token = tok;
-    const bs = env["MWF_LOG_HTTP_BATCH_SIZE"];
-    if (bs) opts.batchSize = Math.max(1, parseInt(bs, 10));
-    const fm = env["MWF_LOG_HTTP_FLUSH_MS"];
-    if (fm) opts.flushMs = Math.max(1, parseInt(fm, 10));
-    const cap = env["MWF_LOG_HTTP_QUEUE_CAP"];
-    if (cap) opts.queueCap = Math.max(1, parseInt(cap, 10));
+    const batchSize = parsePositiveIntegerEnv("MWF_LOG_HTTP_BATCH_SIZE", env["MWF_LOG_HTTP_BATCH_SIZE"]);
+    if (batchSize !== undefined) opts.batchSize = batchSize;
+    const flushMs = parsePositiveIntegerEnv("MWF_LOG_HTTP_FLUSH_MS", env["MWF_LOG_HTTP_FLUSH_MS"]);
+    if (flushMs !== undefined) opts.flushMs = flushMs;
+    const queueCap = parsePositiveIntegerEnv("MWF_LOG_HTTP_QUEUE_CAP", env["MWF_LOG_HTTP_QUEUE_CAP"]);
+    if (queueCap !== undefined) opts.queueCap = queueCap;
     sinks.push(new HttpSink(opts));
   }
   return sinks;

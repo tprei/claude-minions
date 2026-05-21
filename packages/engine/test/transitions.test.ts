@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DomainError } from "../src/domain/errors.js";
 import { createSingleTaskWorkflow, createWorkflow } from "../src/domain/workflow.js";
 import { transitionTask } from "../src/application/transitions.js";
+import { fixedNow, makeThreeNodeWorkflow } from "../src/testing/builders.js";
 
 const now = "2026-05-04T11:19:00.000Z";
 
@@ -122,6 +123,67 @@ describe("recover-task routing", () => {
 
     expect(workflow.graph["task-1:task"]?.executionStatus).toBe("needs-review");
     expect(workflow.graph["task-1:task"]?.sessionId).toBeUndefined();
+  });
+
+  it("stream idle recovery below cap routes back to pending and records recovery metadata", () => {
+    let workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => now);
+    workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "task-1:task", now });
+    workflow = transitionTask(workflow, {
+      kind: "mark-running",
+      taskId: "task-1:task",
+      sessionId: "session-1",
+      now,
+    });
+    workflow = transitionTask(workflow, {
+      kind: "recover-task",
+      taskId: "task-1:task",
+      reason: "stream_idle_timeout",
+      now,
+    });
+
+    const task = workflow.graph["task-1:task"]!;
+    expect(task.executionStatus).toBe("pending");
+    expect(task.sessionId).toBeUndefined();
+    expect(task.runs[0]?.terminalReason).toBe("recovered");
+    expect(task.runs[0]?.exitMetadata).toEqual({
+      recoverySource: "stream_idle_timeout",
+      streamIdleAutoRecoveryAttempt: 1,
+      streamIdleAutoRecoveryLimit: 3,
+      streamIdleAutoRecovered: true,
+    });
+  });
+
+  it("stream idle recovery above cap routes to needs-review and records exhaustion metadata", () => {
+    let workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => now);
+
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "task-1:task", now });
+      workflow = transitionTask(workflow, {
+        kind: "mark-running",
+        taskId: "task-1:task",
+        sessionId: `session-${attempt}`,
+        now,
+      });
+      workflow = transitionTask(workflow, {
+        kind: "recover-task",
+        taskId: "task-1:task",
+        reason: "stream_idle_timeout",
+        now,
+      });
+    }
+
+    const task = workflow.graph["task-1:task"]!;
+    const latestRun = task.runs[task.runs.length - 1]!;
+    expect(task.executionStatus).toBe("needs-review");
+    expect(task.sessionId).toBeUndefined();
+    expect(latestRun.terminalReason).toBe("timeout");
+    expect(latestRun.exitMetadata).toEqual({
+      recoverySource: "stream_idle_timeout",
+      streamIdleAutoRecoveryAttempt: 4,
+      streamIdleAutoRecoveryLimit: 3,
+      streamIdleAutoRecovered: false,
+      streamIdleAutoRecoveryExhausted: true,
+    });
   });
 });
 
@@ -418,6 +480,31 @@ describe("mark-interrupted transition", () => {
   });
 });
 
+describe("clear-session transition", () => {
+  it("clears session from a completed task without changing its execution status", () => {
+    let workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => now);
+    workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "task-1:task", now });
+    workflow = transitionTask(workflow, {
+      kind: "mark-running",
+      taskId: "task-1:task",
+      sessionId: "session-1",
+      now,
+    });
+    workflow = transitionTask(workflow, { kind: "complete-runtime", taskId: "task-1:task", now });
+    workflow = transitionTask(workflow, {
+      kind: "clear-session",
+      taskId: "task-1:task",
+      expectedSessionId: "session-1",
+      now,
+    });
+
+    const task = workflow.graph["task-1:task"]!;
+    expect(task.executionStatus).toBe("completed");
+    expect(task.sessionId).toBeUndefined();
+    expect(task.runs[0]?.terminalReason).toBe("completed");
+  });
+});
+
 describe("cancel-task from needs-review", () => {
   it("cancels an interrupted task in needs-review", () => {
     let workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => now);
@@ -495,6 +582,73 @@ describe("workflow status derivation", () => {
     next = transitionTask(next, { kind: "cancel-task", taskId: "b", now });
 
     expect(next.status).toBe("cancelled");
+  });
+
+  it("cascades failed dependencies into cancelled pending descendants", () => {
+    let workflow = createWorkflow(
+      {
+        id: "wf-failure-cascade",
+        kind: "manual-dag",
+        repoId: "fixture-repo",
+        tasks: [
+          { id: "a", title: "A", prompt: "A" },
+          { id: "b", title: "B", prompt: "B", dependsOn: ["a"] },
+          { id: "c", title: "C", prompt: "C", dependsOn: ["b"] },
+        ],
+        policy: { maxConcurrent: 1 },
+      },
+      () => now,
+    );
+
+    workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "a", now });
+    workflow = transitionTask(workflow, { kind: "mark-running", taskId: "a", sessionId: "s1", now });
+    workflow = transitionTask(workflow, { kind: "fail-task", taskId: "a", now });
+
+    expect(workflow.graph.a?.executionStatus).toBe("failed");
+    expect(workflow.graph.b?.executionStatus).toBe("cancelled");
+    expect(workflow.graph.c?.executionStatus).toBe("cancelled");
+    expect(workflow.status).toBe("failed");
+  });
+
+  it("cascades cancelled dependencies into cancelled pending descendants", () => {
+    let workflow = createWorkflow(
+      {
+        id: "wf-cancel-cascade",
+        kind: "manual-dag",
+        repoId: "fixture-repo",
+        tasks: [
+          { id: "a", title: "A", prompt: "A" },
+          { id: "b", title: "B", prompt: "B", dependsOn: ["a"] },
+          { id: "c", title: "C", prompt: "C", dependsOn: ["b"] },
+        ],
+        policy: { maxConcurrent: 1 },
+      },
+      () => now,
+    );
+
+    workflow = transitionTask(workflow, { kind: "cancel-task", taskId: "a", now });
+
+    expect(workflow.graph.a?.executionStatus).toBe("cancelled");
+    expect(workflow.graph.b?.executionStatus).toBe("cancelled");
+    expect(workflow.graph.c?.executionStatus).toBe("cancelled");
+    expect(workflow.status).toBe("cancelled");
+  });
+
+  it("cancels a fan-in child when any dependency fails while leaving unrelated roots dispatchable", () => {
+    let workflow = makeThreeNodeWorkflow();
+    workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "backend", now: fixedNow });
+    workflow = transitionTask(workflow, {
+      kind: "mark-running",
+      taskId: "backend",
+      sessionId: "backend-session",
+      now: fixedNow,
+    });
+    workflow = transitionTask(workflow, { kind: "fail-task", taskId: "backend", now: fixedNow });
+
+    expect(workflow.graph.backend?.executionStatus).toBe("failed");
+    expect(workflow.graph.frontend?.executionStatus).toBe("pending");
+    expect(workflow.graph.tests?.executionStatus).toBe("cancelled");
+    expect(workflow.status).toBe("active");
   });
 });
 

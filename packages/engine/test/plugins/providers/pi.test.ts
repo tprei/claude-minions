@@ -334,12 +334,24 @@ describe("PiProvider", () => {
       expect(finalEvent.sessionRef).toBe("11111111-2222-3333-4444-555555555555");
     });
 
-    it("second session header on the same instance throws", () => {
+    it("second session header on the same instance emits parser error", () => {
       const provider = new PiProvider();
       provider.parseFrame(encode({ type: "session", id: "session-1" }));
-      expect(() =>
-        provider.parseFrame(encode({ type: "session", id: "session-2" })),
-      ).toThrow("PiProvider instance reused across conversations");
+      expect(provider.parseFrame(encode({ type: "session", id: "session-2" }))).toEqual([
+        {
+          kind: "error",
+          recoverable: false,
+          source: "provider_parser",
+          message: "PiProvider instance reused across conversations; construct a fresh instance per run",
+        },
+      ]);
+    });
+
+    it("non-string session id still marks the provider instance as started", () => {
+      const provider = new PiProvider();
+      expect(provider.parseFrame(encode({ type: "session", id: 123 }))).toEqual([]);
+      const events = provider.parseFrame(encode({ type: "session", id: "session-2" }));
+      expect(events[0]).toMatchObject({ kind: "error", source: "provider_parser" });
     });
 
     it("tool_execution_end with is_error:true propagates isError", () => {
@@ -457,6 +469,25 @@ describe("PiProvider", () => {
       expect(usage.cachedInputTokens).toBeUndefined();
       expect(usage.reasoningTokens).toBeUndefined();
       expect(usage.costUsd).toBeUndefined();
+    });
+
+    it("agent_end with nonzero exit emits non-recoverable error before final", () => {
+      const provider = new PiProvider();
+      provider.parseFrame(encode({ type: "session", id: "sess-failed" }));
+      const events = provider.parseFrame(
+        encode({ type: "agent_end", usage: { input_tokens: 1, output_tokens: 2 }, exit_code: 2 }),
+      );
+
+      expect(events[0]).toEqual({
+        kind: "error",
+        recoverable: false,
+        message: "pi exited with code 2",
+      });
+      expect(events.find((event) => event.kind === "final")).toMatchObject({
+        kind: "final",
+        sessionRef: "sess-failed",
+        exitMetadata: { exit_code: 2 },
+      });
     });
 
     it("quota-style error frame emits non-recoverable error with source quota", () => {

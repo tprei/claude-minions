@@ -9,13 +9,17 @@ export interface UrlStatePartial {
 
 export const URL_CHANGE_EVENT = "urlchange";
 
+function encodePathSegment(value: string): string {
+  return encodeURIComponent(value);
+}
+
 function buildPath(state: UrlStatePartial): string {
   const connId = state.connectionId;
   if (!connId) return "/";
   const view = state.view ?? "list";
   const slug = state.sessionSlug;
-  let path = `/c/${connId}/${view}`;
-  if (slug) path += `/${slug}`;
+  let path = `/c/${encodePathSegment(connId)}/${encodePathSegment(view)}`;
+  if (slug) path += `/${encodePathSegment(slug)}`;
   if (state.query && Object.keys(state.query).length > 0) {
     const params = new URLSearchParams(state.query);
     path += `?${params.toString()}`;

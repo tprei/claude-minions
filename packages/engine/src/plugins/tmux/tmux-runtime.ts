@@ -42,6 +42,14 @@ function makeSessionId(taskId: string, shortIdLen: number): string {
   return `mwf-${slug}-${hash8}-${shortId}`;
 }
 
+function isIgnoredStopError(err: unknown): boolean {
+  return (
+    err instanceof TmuxNoSuchSessionError ||
+    err instanceof TmuxServerNotRunningError ||
+    isDockerDown(err)
+  );
+}
+
 export class TmuxRuntimeBackend implements RuntimeBackend {
   private readonly client: TmuxClient;
   private readonly config: Required<TmuxRuntimeConfig>;
@@ -86,7 +94,7 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
         releaseToken,
         tmuxBin: this.config.tmuxBin,
       }),
-      { mode: 0o755 },
+      { mode: 0o700 },
     );
 
     // Touch the log file so followLog can open it immediately
@@ -103,6 +111,7 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
       await this.client.waitForSignal(releaseToken);
     } catch (err) {
       await this.client.killSession(sessionId).catch(() => {});
+      await fsp.unlink(scriptPath).catch(() => {});
       throw err;
     }
 
@@ -110,24 +119,22 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
   }
 
   async stop(sessionId: string): Promise<void> {
+    const scriptPath = `${this.config.dataDir}/sessions/${sessionId}.sh`;
+    let stopError: unknown;
+
     try {
       await this.client.pipePaneOff(sessionId).catch((err) => {
-        if (
-          err instanceof TmuxNoSuchSessionError ||
-          err instanceof TmuxServerNotRunningError ||
-          isDockerDown(err)
-        ) return;
+        if (isIgnoredStopError(err)) return;
         throw err;
       });
       await this.client.killSession(sessionId);
     } catch (err) {
-      if (
-        err instanceof TmuxNoSuchSessionError ||
-        err instanceof TmuxServerNotRunningError ||
-        isDockerDown(err)
-      ) return;
-      throw err;
+      if (!isIgnoredStopError(err)) stopError = err;
+    } finally {
+      await fsp.unlink(scriptPath).catch(() => {});
     }
+
+    if (stopError !== undefined) throw stopError;
   }
 
   async probe(sessionId: string): Promise<RuntimeProbeState> {
@@ -154,6 +161,7 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
   ): AsyncIterable<RuntimeOutputChunk> {
     const logPath = `${this.config.dataDir}/sessions/${sessionId}.log`;
     const donePath = `${logPath}.done`;
+    const scriptPath = `${this.config.dataDir}/sessions/${sessionId}.sh`;
     const fromOffset = opts.fromOffset ?? 0;
     const internal = new AbortController();
     const signal = opts.signal
@@ -221,7 +229,10 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
     }
 
     const handle = await fsp.open(logPath, "r").catch(() => null);
-    if (handle === null) return;
+    if (handle === null) {
+      await fsp.unlink(scriptPath).catch(() => {});
+      return;
+    }
     try {
       const stat = await handle.stat();
       const finalSize = stat.size;
@@ -236,8 +247,8 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
       }
     } finally {
       await handle.close();
-      // Clean up the transient drain sentinel; swallow if already gone.
       await fsp.unlink(donePath).catch(() => {});
+      await fsp.unlink(scriptPath).catch(() => {});
     }
   }
 }

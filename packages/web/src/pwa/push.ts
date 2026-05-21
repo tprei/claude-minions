@@ -1,11 +1,6 @@
 import { useState, useEffect } from "react";
-import type { VapidPublicKeyResponse } from "@minions/shared";
-
-interface PushApi {
-  get: (path: string) => Promise<unknown>;
-  post: (path: string, body: unknown) => Promise<unknown>;
-  del: (path: string, body?: unknown) => Promise<unknown>;
-}
+import type { Connection } from "../connections/store.js";
+import { getVapidPublicKey, listPushSubscriptions, subscribePush, unsubscribePush } from "../transport/rest.js";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -18,8 +13,26 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return output;
 }
 
-export async function registerPush(api: PushApi): Promise<boolean> {
-  const vapidRes = await api.get("/api/push/vapid-public-key") as VapidPublicKeyResponse | null;
+function matchesApplicationServerKey(subscription: PushSubscription, expected: Uint8Array): boolean {
+  const current = subscription.options.applicationServerKey;
+  if (current === null) return false;
+  const bytes = new Uint8Array(current);
+  if (bytes.length !== expected.length) return false;
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] !== expected[i]) return false;
+  }
+  return true;
+}
+
+async function getBrowserSubscription(): Promise<PushSubscription | null> {
+  const serviceWorker = navigator.serviceWorker;
+  if (!serviceWorker) return null;
+  const reg = await serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+export async function registerPush(conn: Connection, workflowId: string): Promise<boolean> {
+  const vapidRes = await getVapidPublicKey(conn);
   if (!vapidRes?.publicKey) return false;
 
   if (!("Notification" in window)) return false;
@@ -27,10 +40,16 @@ export async function registerPush(api: PushApi): Promise<boolean> {
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return false;
 
+  const applicationServerKey = urlBase64ToUint8Array(vapidRes.publicKey);
   const reg = await navigator.serviceWorker.ready;
-  const subscription = await reg.pushManager.subscribe({
+  let subscription = await reg.pushManager.getSubscription();
+  if (subscription && !matchesApplicationServerKey(subscription, applicationServerKey)) {
+    await subscription.unsubscribe();
+    subscription = null;
+  }
+  subscription ??= await reg.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidRes.publicKey).buffer as ArrayBuffer,
+    applicationServerKey: applicationServerKey.buffer as ArrayBuffer,
   });
 
   const json = subscription.toJSON();
@@ -39,21 +58,29 @@ export async function registerPush(api: PushApi): Promise<boolean> {
     throw new Error("Incomplete push subscription");
   }
 
-  await api.post("/api/push-subscribe", {
-    endpoint: json.endpoint,
-    keys: { p256dh: keys.p256dh, auth: keys.auth },
-    userAgent: navigator.userAgent,
+  await subscribePush(conn, {
+    workflowId,
+    subscription: {
+      endpoint: json.endpoint,
+      keys: { p256dh: keys.p256dh, auth: keys.auth },
+    },
   });
 
   return true;
 }
 
-export async function unregisterPush(api: PushApi): Promise<void> {
-  const reg = await navigator.serviceWorker.ready;
-  const subscription = await reg.pushManager.getSubscription();
+export async function isPushRegisteredForWorkflow(conn: Connection, workflowId: string): Promise<boolean> {
+  const subscription = await getBrowserSubscription();
+  if (!subscription) return false;
+
+  const { subscriptions } = await listPushSubscriptions(conn, workflowId);
+  return subscriptions.some((candidate) => candidate.endpoint === subscription.endpoint);
+}
+
+export async function unregisterPush(conn: Connection, workflowId: string): Promise<void> {
+  const subscription = await getBrowserSubscription();
   if (subscription) {
-    await api.del("/api/push-subscribe", { endpoint: subscription.endpoint });
-    await subscription.unsubscribe();
+    await unsubscribePush(conn, subscription.endpoint, workflowId);
   }
 }
 

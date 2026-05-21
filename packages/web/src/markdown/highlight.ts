@@ -45,6 +45,21 @@ const ALIASES: Record<string, string> = {
   rs: "rust",
 };
 
+const LANGUAGE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,49}$/;
+
+export function normalizeLanguageIdentifier(lang: string | undefined): string | undefined {
+  if (!lang) return undefined;
+  const [raw] = lang.trim().toLowerCase().split(/\s+/, 1);
+  if (!raw) return undefined;
+  const normalized = ALIASES[raw] ?? raw;
+  if (!LANGUAGE_ID_RE.test(normalized)) return undefined;
+  return normalized;
+}
+
+export function languageClassName(lang: string | undefined): string {
+  return normalizeLanguageIdentifier(lang) ?? "plaintext";
+}
+
 export function languageForExtension(ext: string): string | undefined {
   const lower = ext.toLowerCase();
   if (ALIASES[lower]) return ALIASES[lower];
@@ -70,7 +85,8 @@ function escapeHtml(s: string): string {
 
 export function highlight(code: string, lang?: string): string {
   try {
-    const normalized = lang ? (ALIASES[lang.toLowerCase()] ?? lang.toLowerCase()) : undefined;
+    const normalized = normalizeLanguageIdentifier(lang);
+    if (normalized === "plaintext") return escapeHtml(code);
     if (normalized && hljs.getLanguage(normalized)) {
       return hljs.highlight(code, { language: normalized, ignoreIllegals: true }).value;
     }

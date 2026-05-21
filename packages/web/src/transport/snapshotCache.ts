@@ -58,7 +58,7 @@ function applyWorkflowEvent(workflow: Workflow, event: WorkflowEvent): Workflow 
     }
 
     case "graph-operation-changed": {
-      const op = workflow.operations[event.payload.operationId];
+      const op = workflow.operations[event.payload.operationId] ?? event.payload.operation;
       if (!op) return workflow;
       return {
         ...workflow,

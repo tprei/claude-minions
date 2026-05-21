@@ -29,6 +29,7 @@ describe("MarkdownView", () => {
     expect(container.querySelectorAll("li").length).toBe(2);
     const a = container.querySelector("a");
     expect(a?.getAttribute("href")).toBe("https://example.com");
+    expect(a?.getAttribute("rel")).toBe("noopener noreferrer nofollow");
   });
 
   it("highlights fenced ts code block with language class and tokens", () => {
@@ -39,7 +40,7 @@ describe("MarkdownView", () => {
     const code = container.querySelector("pre code");
     expect(code).not.toBeNull();
     expect(code?.className).toContain("hljs");
-    expect(code?.className).toContain("language-ts");
+    expect(code?.className).toContain("language-typescript");
     expect(container.querySelectorAll("pre code .hljs-keyword").length).toBeGreaterThan(0);
   });
 
@@ -73,5 +74,45 @@ describe("MarkdownView", () => {
     });
     expect(container.querySelector("script")).toBeNull();
     expect(container.innerHTML).not.toContain("alert(");
+  });
+
+  it("forbids phishing and style surfaces in raw html", () => {
+    const text = `
+<style>body{display:none}</style>
+<form><input name="password"><button>submit</button></form>
+<dialog open>locked</dialog>
+<p style="position:fixed">visible</p>
+`;
+    act(() => {
+      root.render(createElement(MarkdownView, { text }));
+    });
+    expect(container.querySelector("style")).toBeNull();
+    expect(container.querySelector("form")).toBeNull();
+    expect(container.querySelector("input")).toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector("dialog")).toBeNull();
+    expect(container.querySelector("p")?.getAttribute("style")).toBeNull();
+  });
+
+  it("sanitizes fenced language classes before rendering html attributes", () => {
+    const text = "```ts\" style=\"position:fixed\nconst x = 1;\n```";
+    act(() => {
+      root.render(createElement(MarkdownView, { text }));
+    });
+    const code = container.querySelector("pre code");
+    expect(code).not.toBeNull();
+    expect(code?.className).toContain("language-plaintext");
+    expect(code?.getAttribute("style")).toBeNull();
+  });
+
+  it("removes unsafe href schemes", () => {
+    const text = "[bad](javascript:alert(1)) [data](data:text/html,hi) [ok](/sessions)";
+    act(() => {
+      root.render(createElement(MarkdownView, { text }));
+    });
+    const links = Array.from(container.querySelectorAll("a"));
+    expect(links[0]?.hasAttribute("href")).toBe(false);
+    expect(links[1]?.hasAttribute("href")).toBe(false);
+    expect(links[2]?.getAttribute("href")).toBe("/sessions");
   });
 });

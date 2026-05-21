@@ -11,6 +11,7 @@ export class TokenBucket {
   private tokens: number;
   private lastRefill: number;
   private readonly waiters: Array<() => void> = [];
+  private drainScheduled = false;
 
   constructor(opts: TokenBucketOpts) {
     this.capacity = opts.capacity;
@@ -45,8 +46,11 @@ export class TokenBucket {
 
   private scheduleWaiterDrain(): void {
     if (this.waiters.length === 0) return;
+    if (this.drainScheduled) return;
+    this.drainScheduled = true;
     const msPerToken = 1000 / this.refillPerSec;
     setTimeout(() => {
+      this.drainScheduled = false;
       this.drainWaiters();
     }, msPerToken);
   }

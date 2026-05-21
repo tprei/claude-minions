@@ -1,15 +1,13 @@
 import { useState } from "react";
 import { registerPush, usePushPermission } from "./push.js";
+import type { Connection } from "../connections/store.js";
 
 interface Props {
-  api: {
-    get: (path: string) => Promise<unknown>;
-    post: (path: string, body: unknown) => Promise<unknown>;
-    del: (path: string, body?: unknown) => Promise<unknown>;
-  };
+  conn: Connection;
+  workflowId: string;
 }
 
-export function PushOptIn({ api }: Props) {
+export function PushOptIn({ conn, workflowId }: Props) {
   const permission = usePushPermission();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +18,7 @@ export function PushOptIn({ api }: Props) {
     setLoading(true);
     setError(null);
     try {
-      await registerPush(api);
+      await registerPush(conn, workflowId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to enable notifications");
     } finally {

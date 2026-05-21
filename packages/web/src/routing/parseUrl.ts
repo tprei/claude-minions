@@ -13,13 +13,17 @@ function isViewKind(v: string): v is ViewKind {
   return VALID_VIEWS.has(v as ViewKind);
 }
 
+function decodePathSegment(value: string): string {
+  return decodeURIComponent(value);
+}
+
 export function parseUrl(): ParsedUrl {
   const { pathname, search } = globalThis.location;
   const params = new URLSearchParams(search);
   const query: Record<string, string> = {};
   params.forEach((v, k) => { query[k] = v; });
 
-  const segments = pathname.replace(/^\//, "").split("/").filter(Boolean);
+  const segments = pathname.replace(/^\//, "").split("/").filter(Boolean).map(decodePathSegment);
 
   if (segments[0] === "c" && segments[1]) {
     const connectionId = segments[1];

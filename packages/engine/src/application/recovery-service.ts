@@ -38,26 +38,66 @@ type ActionRule<A extends RecoveryAction> = (workflow: Workflow, action: A) => D
 const TASK_TRANSITION_BY_ACTION: { [K in TaskRecoveryAction["kind"]]?: TransitionKind } = {
   "recover-task": "recover-task",
   "interrupt-task": "mark-interrupted",
-  "stop-runtime": "cancel-task",
 };
 
 const taskActionRule: ActionRule<TaskRecoveryAction> = (workflow, action) => {
-  const transitionKind = TASK_TRANSITION_BY_ACTION[action.kind];
-  if (transitionKind === undefined) return null;
-
   const task = workflow.graph[action.taskId];
   if (!task) return null;
 
-  const planKey = `recovery:${workflow.id}:${action.taskId}:${action.kind}:${task.runs.length}`;
+  const planKey = taskRecoveryKey(workflow.id, task, action);
+
+  if (action.kind === "stop-runtime") {
+    return {
+      key: planKey,
+      run: async (deps) => {
+        deps.log.info("recovery action", { kind: "recovery-action", action: action.kind, workflowId: workflow.id, taskId: action.taskId, planKey });
+        if (task.executionStatus !== "cancelled") {
+          await applyCommand(deps.repo, {
+            kind: "transition-task",
+            workflowId: workflow.id,
+            transition: {
+              kind: "cancel-task",
+              taskId: action.taskId,
+              now: deps.now(),
+              ...(action.sessionId ? { expectedSessionId: action.sessionId } : {}),
+            },
+          });
+        }
+
+        if (action.sessionId) {
+          await deps.runtime.stop(action.sessionId);
+        }
+
+        return applyCommand(
+          deps.repo,
+          {
+            kind: "transition-task",
+            workflowId: workflow.id,
+            transition: {
+              kind: "clear-session",
+              taskId: action.taskId,
+              now: deps.now(),
+              ...(action.sessionId ? { expectedSessionId: action.sessionId } : {}),
+            },
+          },
+          {
+            recoveryIdempotency: {
+              key: planKey,
+              resultRef: `recovery:${action.kind}:${action.taskId}`,
+            },
+          },
+        );
+      },
+    };
+  }
+
+  const transitionKind = TASK_TRANSITION_BY_ACTION[action.kind];
+  if (transitionKind === undefined) return null;
 
   return {
     key: planKey,
     run: async (deps) => {
       deps.log.info("recovery action", { kind: "recovery-action", action: action.kind, workflowId: workflow.id, taskId: action.taskId, planKey });
-      if (action.kind === "stop-runtime" && action.sessionId) {
-        await deps.runtime.stop(action.sessionId);
-      }
-
       const recoveryRecord: IdempotencyRecord = {
         key: planKey,
         resultRef: `recovery:${action.kind}:${action.taskId}`,
@@ -145,7 +185,7 @@ const probeGateRule: ActionRule<TaskRecoveryAction> = (workflow, action) => {
   const task = workflow.graph[action.taskId];
   if (!task) return null;
 
-  const planKey = `recovery:${workflow.id}:${action.taskId}:probe-gate:${task.runs.length}`;
+  const planKey = `recovery:${workflow.id}:${action.taskId}:probe-gate:version:${task.version}`;
 
   return {
     key: planKey,
@@ -245,11 +285,15 @@ export function createRecoveryService(
       const results: CommandResult[] = [];
 
       for (const action of planRecovery(workflow, options)) {
+        const current = await repo.get(workflowId);
+        if (!current) {
+          throw new DomainError("not_found", "workflow not found", { workflowId });
+        }
         try {
-          const result = await dispatchAction(deps, workflow, action);
+          const result = await dispatchAction(deps, current, action);
           if (result !== null) results.push(result);
         } catch (err) {
-          if (err instanceof DomainError && err.code === "session_mismatch") continue;
+          if (isStaleRecoveryRace(err)) continue;
           throw err;
         }
       }
@@ -272,4 +316,16 @@ async function dispatchAction(
   if (existing !== undefined) return null;
 
   return plan.run(deps);
+}
+
+function taskRecoveryKey(workflowId: string, task: Workflow["graph"][string], action: TaskRecoveryAction): string {
+  const discriminator = action.sessionId !== undefined
+    ? `session:${action.sessionId}`
+    : `version:${task.version}`;
+  return `recovery:${workflowId}:${action.taskId}:${action.kind}:${discriminator}`;
+}
+
+function isStaleRecoveryRace(err: unknown): boolean {
+  return err instanceof DomainError &&
+    (err.code === "session_mismatch" || err.code === "invalid_transition");
 }

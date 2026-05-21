@@ -140,7 +140,7 @@ describe("SQLiteWorkflowRepository", () => {
     expect(recoverable).toHaveLength(0);
   });
 
-  it("NodeRun round-trip: runtimeSessionId, providerSessionRef, outputOffset, terminalReason persist", async () => {
+  it("NodeRun round-trip: runtimeSessionId, providerSessionRef, outputOffset, terminalReason, exitMetadata persist", async () => {
     const wf = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
     const closedRun: NodeRun = {
       id: "run-wf-1:task-1",
@@ -154,6 +154,10 @@ describe("SQLiteWorkflowRepository", () => {
       startedAt: now,
       endedAt: now,
       terminalReason: "interrupted",
+      exitMetadata: {
+        recoverySource: "stream_idle_timeout",
+        streamIdleAutoRecoveryAttempt: 2,
+      },
     };
     const task = wf.graph["wf-1:task"]!;
     const wfWithRun = {
@@ -171,6 +175,10 @@ describe("SQLiteWorkflowRepository", () => {
       expect(loadedRun?.providerSessionRef).toBe("psr-xyz");
       expect(loadedRun?.outputOffset).toBe(1024);
       expect(loadedRun?.terminalReason).toBe("interrupted");
+      expect(loadedRun?.exitMetadata).toEqual({
+        recoverySource: "stream_idle_timeout",
+        streamIdleAutoRecoveryAttempt: 2,
+      });
     } finally {
       reopened.close();
     }
@@ -236,7 +244,7 @@ describe("SQLiteWorkflowRepository", () => {
     await iter.return?.();
   });
 
-  it("publishTransient: DB events row count unchanged after call", async () => {
+  it("publishTransient: DB events row count increases and cursor advances", async () => {
     const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
     await repo.save(workflow, [makeEvent("wf-1")]);
 
@@ -253,7 +261,9 @@ describe("SQLiteWorkflowRepository", () => {
     repo.publishTransient("wf-1", transient);
 
     const after = await repo.eventsSince("wf-1", 0);
-    expect(after).toHaveLength(1);
+    expect(after).toHaveLength(2);
+    expect(after[1]?.kind).toBe("provider-event");
+    expect(after[1]?.cursor).toBe(2);
   });
 
   it("subscribe: fromCursor filters replay events", async () => {
@@ -358,6 +368,18 @@ describe("SQLiteWorkflowRepository", () => {
 
       const entries = await repo.listTranscript("wf-1", "run-A");
       expect(entries[0]?.providerEvent).toEqual(event);
+    });
+
+    it("delete removes transcripts for the workflow", async () => {
+      const workflow = createSingleTaskWorkflow("wf-1", { title: "T", prompt: "P" }, () => now);
+      await repo.save(workflow, []);
+      await repo.appendTranscript("wf-1", "run-A", now, { kind: "assistant_text", text: "secret" });
+
+      await repo.delete("wf-1");
+
+      expect(await repo.listTranscript("wf-1", "run-A")).toEqual([]);
+      const row = repo.getDatabase().prepare("SELECT COUNT(*) AS count FROM transcripts WHERE workflow_id = ?").get("wf-1") as { count: number };
+      expect(row.count).toBe(0);
     });
   });
 });

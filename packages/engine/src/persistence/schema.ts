@@ -54,6 +54,7 @@ export const SQL_LIST_ALL_ORDERED =
 export const SQL_DELETE_WORKFLOW = "DELETE FROM workflows WHERE id = ?";
 export const SQL_DELETE_WORKFLOW_EVENTS = "DELETE FROM events WHERE workflow_id = ?";
 export const SQL_DELETE_WORKFLOW_IDEMPOTENCY = "DELETE FROM idempotency WHERE workflow_id = ?";
+export const SQL_DELETE_WORKFLOW_TRANSCRIPTS = "DELETE FROM transcripts WHERE workflow_id = ?";
 
 export const PUSH_SUBSCRIPTIONS_DDL = `
 CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -72,6 +73,7 @@ export const SQL_UPSERT_SUBSCRIPTION =
   "ON CONFLICT(endpoint, workflow_id) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth";
 
 export const SQL_DELETE_SUBSCRIPTION = "DELETE FROM push_subscriptions WHERE endpoint = ? AND workflow_id = ?";
+export const SQL_DELETE_SUBSCRIPTIONS_BY_WORKFLOW = "DELETE FROM push_subscriptions WHERE workflow_id = ?";
 
 export const SQL_LIST_SUBS_BY_WORKFLOW =
   "SELECT endpoint, workflow_id, p256dh, auth FROM push_subscriptions WHERE workflow_id = ?";

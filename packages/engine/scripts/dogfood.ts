@@ -32,7 +32,7 @@ interface DogfoodReport {
     taskId: string;
     fromExecutionStatus: string;
     toExecutionStatus: string;
-    transitionKind: string;
+    transitionKind: string | undefined;
     cursor: number;
   }>;
   alertCounts: Record<string, number>;
@@ -52,7 +52,10 @@ function envInt(name: string, fallback: number): number {
 }
 
 async function run(command: string, args: string[], cwd?: string): Promise<string> {
-  const { stdout } = await execFile(command, args, cwd ? { cwd } : undefined);
+  const opts = cwd === undefined
+    ? { encoding: "utf8" as const }
+    : { cwd, encoding: "utf8" as const };
+  const { stdout } = await execFile(command, args, opts);
   return stdout.trim();
 }
 
@@ -249,7 +252,7 @@ async function main(): Promise<void> {
     engine = await createEngine({
       dbPath: join(root, "engine.db"),
       dataDir: join(root, "sessions"),
-      repoPath,
+      repos: [{ id: "fixture-repo", label: "Dogfood fixture", localPath: repoPath, defaultBranch: "main" }],
       workspaceRoot: join(root, "worktrees"),
       runtime: new TmuxRuntimeBackend({ dataDir: join(root, "sessions") }),
       providerFactory: () => new ClaudeCodeProvider(),
@@ -293,7 +296,8 @@ async function main(): Promise<void> {
     if (doctorRes.status !== 200 && doctorRes.status !== 503) {
       throw new Error(`GET /doctor: unexpected HTTP ${doctorRes.status}`);
     }
-    report.doctorStatus = (doctorRes.data as { status?: string }).status;
+    const doctorStatus = (doctorRes.data as { status?: string }).status;
+    if (doctorStatus !== undefined) report.doctorStatus = doctorStatus;
     if (report.doctorStatus === "error") throw new Error("doctor reported error status");
 
     const metricsRes = await bound.client.get("/metrics");

@@ -110,6 +110,7 @@ export function deriveEvents(
           kind: nextOp.kind,
           fromStatus: prevStatus ?? null,
           toStatus: nextOp.status,
+          operation: nextOp,
         },
       });
     }

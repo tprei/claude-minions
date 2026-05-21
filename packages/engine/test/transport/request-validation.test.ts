@@ -47,7 +47,7 @@ describe("request shape validation", () => {
     const body = await res.json() as { code: string; message: string; details: { field: string; expected: string } };
     expect(body.code).toBe("invalid_request");
     expect(body.details.field).toBe("transition.taskId");
-    expect(body.details.expected).toBe("string");
+    expect(body.details.expected).toBe("safe non-empty id");
   });
 
   it("request-restack missing input.idempotencyKey returns 400 invalid_request", async () => {
@@ -63,7 +63,7 @@ describe("request shape validation", () => {
     const body = await res.json() as { code: string; details: { field: string; expected: string } };
     expect(body.code).toBe("invalid_request");
     expect(body.details.field).toBe("input.idempotencyKey");
-    expect(body.details.expected).toBe("string");
+    expect(body.details.expected).toBe("non-empty string");
   });
 
   it("start-restack missing now returns 400 invalid_request", async () => {
@@ -96,7 +96,7 @@ describe("request shape validation", () => {
     const body = await res.json() as { code: string; details: { field: string; expected: string } };
     expect(body.code).toBe("invalid_request");
     expect(body.details.field).toBe("error");
-    expect(body.details.expected).toBe("string");
+    expect(body.details.expected).toBe("non-empty string");
   });
 
   it("complete-restack missing input.operationId returns 400 invalid_request", async () => {
@@ -112,7 +112,7 @@ describe("request shape validation", () => {
     const body = await res.json() as { code: string; details: { field: string; expected: string } };
     expect(body.code).toBe("invalid_request");
     expect(body.details.field).toBe("input.operationId");
-    expect(body.details.expected).toBe("string");
+    expect(body.details.expected).toBe("safe non-empty id");
   });
 
   it("POST /workflows missing tasks returns 400 invalid_request with field tasks", async () => {
@@ -159,14 +159,87 @@ describe("request shape validation", () => {
     expect(body.details.field).toBe("repoId");
   });
 
-  it("POST /workflows with empty tasks array passes validator and fails with invalid_workflow from domain", async () => {
+  it("POST /workflows with empty tasks array returns 400 invalid_request", async () => {
     const { app } = makeApp();
 
     const res = await postWorkflow(app, { id: "wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [] });
 
     expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string; expected: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("tasks");
+    expect(body.details.expected).toBe("non-empty array");
+  });
+
+  it("POST /workflows with invalid dependsOn returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task",
+      repoId: "fixture-repo",
+      tasks: [{ id: "t1", title: "T", prompt: "P", dependsOn: "t0" }],
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("tasks[0].dependsOn");
+  });
+
+  it("POST /workflows rejects mergeTarget values that are not valid git branch names", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task",
+      repoId: "fixture-repo",
+      tasks: [{ id: "t1", title: "T", prompt: "P", mergeTarget: "--upload-pack=sh" }],
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string; expected: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("tasks[0].mergeTarget");
+    expect(body.details.expected).toBe("valid git branch name or undefined");
+  });
+
+  it("POST /workflows accepts valid mergeTarget values", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task",
+      repoId: "fixture-repo",
+      tasks: [{ id: "t1", title: "T", prompt: "P", mergeTarget: "release/2026.05" }],
+    });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("transition-task with unknown transition kind returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postCommand(app, {
+      kind: "transition-task",
+      workflowId: "wf-1",
+      transition: { kind: "cancel", taskId: "task-1", now },
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("transition.kind");
+  });
+
+  it("POST /commands null body returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postCommand(app, null);
+
+    expect(res.status).toBe(400);
     const body = await res.json() as { code: string };
-    expect(body.code).toBe("invalid_workflow");
+    expect(body.code).toBe("invalid_request");
   });
 
   it("retry-task with missing prompt returns 400 invalid_request", async () => {
@@ -288,6 +361,22 @@ describe("request shape validation", () => {
     const body = await res.json() as { code: string; details: { field: string } };
     expect(body.code).toBe("invalid_request");
     expect(body.details.field).toBe("policy.autoMergeOnGreen");
+  });
+
+  it("POST /workflows rejects non-positive maxConcurrent", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      policy: { maxConcurrent: 0 },
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string; expected: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("policy.maxConcurrent");
+    expect(body.details.expected).toBe("positive safe integer or undefined");
   });
 
   it("POST /workflows with policy:{} accepted (all defaults)", async () => {

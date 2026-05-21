@@ -52,9 +52,10 @@ function makeOrchestrator(
   shouldThrow?: Error,
   publish?: (event: ProviderEvent) => void,
   persistTranscript?: (occurredAt: string, event: ProviderEvent) => Promise<void>,
+  runtimeOverride?: RuntimeBackend,
 ) {
   const provider = new StubProviderPlugin({ frames: providerFrames });
-  const runtime = makeRuntime(chunks, shouldThrow);
+  const runtime = runtimeOverride ?? makeRuntime(chunks, shouldThrow);
 
   return new RunOrchestrator({
     workflowId: "wf-1",
@@ -74,7 +75,7 @@ function makeOrchestrator(
 }
 
 describe("RunOrchestrator", () => {
-  it("happy path: offset from earlier chunk + final with sessionRef → update-run then complete-runtime in order", async () => {
+  it("happy path: offset from earlier chunk + final with sessionRef → update-run then complete-runtime then clear-session in order", async () => {
     const calls: string[] = [];
     const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
       if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
@@ -88,7 +89,7 @@ describe("RunOrchestrator", () => {
     const orchestrator = makeOrchestrator([[assistantEvent], [finalEvent]], chunks, applyCommand);
     await orchestrator.run();
 
-    expect(calls).toEqual(["update-run", "complete-runtime"]);
+    expect(calls).toEqual(["update-run", "complete-runtime", "clear-session"]);
 
     const updateCall = applyCommand.mock.calls.find(
       ([cmd]) => cmd.kind === "transition-task" && cmd.transition.kind === "update-run",
@@ -98,6 +99,57 @@ describe("RunOrchestrator", () => {
     expect(t.providerSessionRef).toBe("abc-ref");
     // outputOffset must NOT be written on the success path — prevents offset-after-final race
     expect(t.outputOffset).toBeUndefined();
+  });
+
+  it("happy path stops the runtime session after complete-runtime", async () => {
+    const applyCommand = vi.fn(async (_cmd: Command): Promise<CommandResult> => makeCommandResult());
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "abc-ref" };
+    const runtime = makeRuntime(makeChunks(["line-1"], 0));
+
+    const orchestrator = makeOrchestrator([[finalEvent]], makeChunks(["line-1"], 0), applyCommand, undefined, undefined, undefined, runtime);
+    await orchestrator.run();
+
+    expect(runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.stop).toHaveBeenCalledWith("session-1");
+  });
+
+  it("happy path clears the durable session only after runtime.stop succeeds", async () => {
+    const calls: string[] = [];
+    const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
+      if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
+      return makeCommandResult();
+    });
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "abc-ref" };
+    const runtime = makeRuntime(makeChunks(["line-1"], 0));
+
+    const orchestrator = makeOrchestrator([[finalEvent]], makeChunks(["line-1"], 0), applyCommand, undefined, undefined, undefined, runtime);
+    await orchestrator.run();
+
+    const stopOrder = (runtime.stop as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const clearOrder = applyCommand.mock.calls.findIndex(
+      ([cmd]) => cmd.kind === "transition-task" && cmd.transition.kind === "clear-session",
+    );
+
+    expect(stopOrder).toBeGreaterThan(0);
+    expect(clearOrder).toBeGreaterThan(-1);
+    expect((applyCommand.mock.calls[clearOrder]?.[0] as Extract<Command, { kind: "transition-task" }>).transition.expectedSessionId).toBe("session-1");
+  });
+
+  it("happy path leaves the durable session in place when runtime.stop fails", async () => {
+    const calls: string[] = [];
+    const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
+      if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
+      return makeCommandResult();
+    });
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "abc-ref" };
+    const runtime = makeRuntime(makeChunks(["line-1"], 0));
+    (runtime.stop as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("stop failed"));
+
+    const orchestrator = makeOrchestrator([[finalEvent]], makeChunks(["line-1"], 0), applyCommand, undefined, undefined, undefined, runtime);
+    await orchestrator.run();
+
+    expect(calls).toEqual(["update-run", "complete-runtime"]);
+    expect(runtime.stop).toHaveBeenCalledOnce();
   });
 
   it("stream throws mid-iteration → best-effort update-run with offset then mark-interrupted", async () => {
@@ -120,7 +172,18 @@ describe("RunOrchestrator", () => {
     expect(typeof t.outputOffset).toBe("number");
   });
 
-  it("empty final.sessionRef with no prior sessionRef → no update-run dispatched, complete-runtime fires", async () => {
+  it("mark-interrupted path stops the runtime session", async () => {
+    const applyCommand = vi.fn(async (_cmd: Command): Promise<CommandResult> => makeCommandResult());
+    const runtime = makeRuntime(makeChunks(["line-1"], 0), new Error("stream exploded"));
+
+    const orchestrator = makeOrchestrator([], makeChunks(["line-1"], 0), applyCommand, new Error("stream exploded"), undefined, undefined, runtime);
+    await orchestrator.run();
+
+    expect(runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.stop).toHaveBeenCalledWith("session-1");
+  });
+
+  it("empty final.sessionRef with no prior sessionRef → no update-run dispatched, complete-runtime then clear-session fire", async () => {
     const calls: string[] = [];
     const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
       if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
@@ -134,7 +197,7 @@ describe("RunOrchestrator", () => {
     const orchestrator = makeOrchestrator([[assistantEvent], [finalEvent]], chunks, applyCommand);
     await orchestrator.run();
 
-    expect(calls).toEqual(["complete-runtime"]);
+    expect(calls).toEqual(["complete-runtime", "clear-session"]);
   });
 
   it("stream completes without final and without offset → mark-interrupted only, no update-run", async () => {
@@ -169,7 +232,7 @@ describe("RunOrchestrator", () => {
     const orchestrator = makeOrchestrator([[assistantEvent], [finalEvent]], chunks, applyCommand);
     await orchestrator.run();
 
-    expect(calls).toEqual(["update-run", "complete-runtime"]);
+    expect(calls).toEqual(["update-run", "complete-runtime", "clear-session"]);
   });
 
   it("stale session: session_mismatch on complete-runtime → exits silently without rethrowing", async () => {
@@ -211,10 +274,24 @@ describe("RunOrchestrator", () => {
     expect(calls).not.toContain("complete-runtime");
   });
 
+  it("provider error{recoverable:false} then final stops the runtime session", async () => {
+    const applyCommand = vi.fn(async (_cmd: Command): Promise<CommandResult> => makeCommandResult());
+    const errorEvent: ProviderEvent = { kind: "error", recoverable: false, message: "turn failed" };
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "ref-x" };
+    const runtime = makeRuntime(makeChunks(["line-1", "line-2"], 0));
+
+    const orchestrator = makeOrchestrator([[errorEvent], [finalEvent]], makeChunks(["line-1", "line-2"], 0), applyCommand, undefined, undefined, undefined, runtime);
+    await orchestrator.run();
+
+    expect(runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.stop).toHaveBeenCalledWith("session-1");
+  });
+
   it("stream idle timeout error then final → update-run then recover-task for scheduler resume", async () => {
     const calls: string[] = [];
     const workspace = new StubWorkspaceBackend();
     const cleanupSpy = vi.spyOn(workspace, "cleanup");
+    const runtime = makeRuntime(makeChunks(["line-1", "line-2"], 0));
     const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
       if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
       return makeCommandResult();
@@ -228,7 +305,6 @@ describe("RunOrchestrator", () => {
     };
     const finalEvent: ProviderEvent = { kind: "final", sessionRef: "ref-idle" };
     const provider = new StubProviderPlugin({ frames: [[errorEvent], [finalEvent]] });
-    const runtime = makeRuntime(makeChunks(["line-1", "line-2"], 0));
     const orchestrator = new RunOrchestrator({
       workflowId: "wf-1",
       taskId: "task-1",
@@ -247,9 +323,89 @@ describe("RunOrchestrator", () => {
     await orchestrator.run();
 
     expect(calls).toEqual(["update-run", "recover-task"]);
+    expect(applyCommand).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "transition-task",
+      transition: expect.objectContaining({ kind: "recover-task", reason: "stream_idle_timeout" }),
+    }));
     expect(calls).not.toContain("complete-runtime");
     expect(calls).not.toContain("mark-interrupted");
     expect(cleanupSpy).not.toHaveBeenCalled();
+    expect(runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.stop).toHaveBeenCalledWith("session-1");
+  });
+
+  it("stream idle timeout without final → update-run then recover-task instead of mark-interrupted", async () => {
+    const calls: string[] = [];
+    const workspace = new StubWorkspaceBackend();
+    const cleanupSpy = vi.spyOn(workspace, "cleanup");
+    const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
+      if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
+      return makeCommandResult();
+    });
+
+    const errorEvent: ProviderEvent = {
+      kind: "error",
+      recoverable: true,
+      source: "stream_idle_timeout",
+      message: "Anthropic API Error: Stream idle timeout - partial response received",
+    };
+    const provider = new StubProviderPlugin({ frames: [[errorEvent]] });
+    const runtime = makeRuntime(makeChunks(["line-1"], 0));
+    const orchestrator = new RunOrchestrator({
+      workflowId: "wf-1",
+      taskId: "task-1",
+      runId: "run-1",
+      runtimeSessionId: "session-1",
+      provider,
+      runtime,
+      workspace,
+      workspaceId: "stub-wf1_task1",
+      applyCommand,
+      publish: () => {},
+      now: () => now,
+      log: silentLogger(),
+    });
+
+    await orchestrator.run();
+
+    expect(calls).toEqual(["update-run", "recover-task"]);
+    expect(applyCommand).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "transition-task",
+      transition: expect.objectContaining({ kind: "recover-task", reason: "stream_idle_timeout" }),
+    }));
+    expect(calls).not.toContain("mark-interrupted");
+    expect(cleanupSpy).not.toHaveBeenCalled();
+  });
+
+  it("stream idle recovery stops the old runtime session after recover-task", async () => {
+    const applyCommand = vi.fn(async (_cmd: Command): Promise<CommandResult> => makeCommandResult());
+    const errorEvent: ProviderEvent = {
+      kind: "error",
+      recoverable: true,
+      source: "stream_idle_timeout",
+      message: "Anthropic API Error: Stream idle timeout - partial response received",
+    };
+    const runtime = makeRuntime(makeChunks(["line-1"], 0));
+    const provider = new StubProviderPlugin({ frames: [[errorEvent]] });
+    const orchestrator = new RunOrchestrator({
+      workflowId: "wf-1",
+      taskId: "task-1",
+      runId: "run-1",
+      runtimeSessionId: "session-1",
+      provider,
+      runtime,
+      workspace: new StubWorkspaceBackend(),
+      workspaceId: "stub-wf1_task1",
+      applyCommand,
+      publish: () => {},
+      now: () => now,
+      log: silentLogger(),
+    });
+
+    await orchestrator.run();
+
+    expect(runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.stop).toHaveBeenCalledWith("session-1");
   });
 
   it("threads fromOffset from deps to runtime.attach", async () => {

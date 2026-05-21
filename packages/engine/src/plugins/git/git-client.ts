@@ -1,5 +1,56 @@
 import { spawn } from "node:child_process";
 
+const GIT_HOOKS_PATH = process.platform === "win32" ? "NUL" : "/dev/null";
+const GIT_HOOKS_DISABLED_ARGS = ["-c", `core.hooksPath=${GIT_HOOKS_PATH}`] as const;
+const SAFE_ENV_KEYS = [
+  "HOME",
+  "PATH",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_RUNTIME_DIR",
+  "SystemRoot",
+  "ComSpec",
+  "PATHEXT",
+  "WINDIR",
+  "USERPROFILE",
+  "LOCALAPPDATA",
+  "APPDATA",
+  "PROGRAMDATA",
+  "EMAIL",
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_AUTHOR_DATE",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
+  "GIT_COMMITTER_DATE",
+  "GIT_SSH_COMMAND",
+  "GIT_SSH",
+  "SSH_AUTH_SOCK",
+  "SSH_AGENT_PID",
+  "SSH_ASKPASS",
+  "DOCKER_HOST",
+  "DOCKER_CONTEXT",
+  "DOCKER_CONFIG",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+] as const;
+
+function buildGitSpawnEnv(overrides?: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  if (overrides === undefined) return env;
+  return { ...env, ...overrides };
+}
+
 export interface GitClientConfig {
   gitBin?: string;
   commandPrefix?: readonly string[];
@@ -45,19 +96,16 @@ export class GitClient {
     opts?: { env?: Record<string, string>; timeoutMs?: number },
   ): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
+      const gitArgs = [...GIT_HOOKS_DISABLED_ARGS, ...args];
       const [spawnBin, spawnArgs] =
         this.commandPrefix.length > 0
           ? [
               this.commandPrefix[0]!,
-              [...this.commandPrefix.slice(1), this.bin, ...args],
+              [...this.commandPrefix.slice(1), this.bin, ...gitArgs],
             ]
-          : [this.bin, [...args]];
+          : [this.bin, gitArgs];
 
-      const spawnEnv = opts?.env !== undefined
-        ? { ...process.env, ...opts.env }
-        : undefined;
-
-      const proc = spawn(spawnBin, spawnArgs, { cwd, ...(spawnEnv !== undefined ? { env: spawnEnv } : {}) });
+      const proc = spawn(spawnBin, spawnArgs, { cwd, env: buildGitSpawnEnv(opts?.env) });
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       const timeoutMs = opts?.timeoutMs ?? this.timeoutMs;

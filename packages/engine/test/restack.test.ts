@@ -8,6 +8,7 @@ import {
 } from "../src/application/restack.js";
 import { createWorkflow } from "../src/domain/workflow.js";
 import { completeTask, fixedNow, makeThreeNodeWorkflow } from "../src/testing/builders.js";
+import { transitionTask } from "../src/application/transitions.js";
 
 describe("restack planning", () => {
   it("orders affected descendants topologically", () => {
@@ -18,6 +19,27 @@ describe("restack planning", () => {
     const plan = planRestack(workflow, "backend");
 
     expect(plan.descendants.map((task) => task.id)).toEqual(["tests"]);
+  });
+
+  it("rejects an unknown restack ancestor", () => {
+    const workflow = makeThreeNodeWorkflow();
+
+    expect(() => planRestack(workflow, "missing")).toThrow("restack ancestor task not found");
+  });
+
+  it("treats a restack request with no descendants as a no-op", () => {
+    const workflow = makeThreeNodeWorkflow();
+
+    const result = requestRestack(workflow, {
+      operationId: "restack-leaf",
+      ancestorId: "tests",
+      idempotencyKey: "restack:tests:main-1",
+      now: fixedNow,
+    });
+
+    expect(result.operation.id).toBe("restack-leaf");
+    expect(result.operation.affectedNodeIds).toEqual([]);
+    expect(result.workflow.graph["tests"]?.stackStatus).toBe("clean");
   });
 
   it("propagates through transitive descendants", () => {
@@ -93,6 +115,21 @@ describe("restack planning", () => {
 
     expect(Object.keys(w2.operations)).toEqual(["restack-1"]);
     expect(operation.id).toBe("restack-1");
+  });
+
+  it("rejects restack requests while a descendant task is still active", () => {
+    let workflow = makeThreeNodeWorkflow();
+    workflow = completeTask(workflow, "backend", "feature/backend");
+    workflow = completeTask(workflow, "frontend", "feature/frontend");
+    workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "tests", now: fixedNow });
+    workflow = transitionTask(workflow, { kind: "mark-running", taskId: "tests", sessionId: "tests-session", now: fixedNow });
+
+    expect(() => requestRestack(workflow, {
+      operationId: "restack-1",
+      ancestorId: "backend",
+      idempotencyKey: "restack:backend:main-1",
+      now: fixedNow,
+    })).toThrow("restack requires descendant tasks to be idle");
   });
 
   it("keeps execution success separate from restack conflict state", () => {

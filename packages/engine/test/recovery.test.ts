@@ -24,6 +24,31 @@ describe("recovery planning", () => {
     ]);
   });
 
+  it("treats malformed updatedAt values as stale instead of wedging recovery", () => {
+    let workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => started);
+    workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "task-1:task", now: started });
+    workflow = {
+      ...workflow,
+      graph: {
+        ...workflow.graph,
+        "task-1:task": {
+          ...workflow.graph["task-1:task"]!,
+          updatedAt: "not-a-date",
+        },
+      },
+    };
+
+    const actions = planRecovery(workflow, {
+      nowMs: later,
+      staleReadyMs: 60_000,
+      staleGateMs: 300_000,
+    });
+
+    expect(actions).toEqual([
+      { kind: "recover-task", taskId: "task-1:task", reason: "stale ready task" },
+    ]);
+  });
+
   it("emits recover-task for a running task whose probe is dead", () => {
     let workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => started);
     workflow = transitionTask(workflow, { kind: "mark-ready", taskId: "task-1:task", now: started });

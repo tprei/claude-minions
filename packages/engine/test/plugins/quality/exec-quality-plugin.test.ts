@@ -30,6 +30,10 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+function commandString(opts: CommandRunOptions): string {
+  return opts.argv.join(" ");
+}
+
 describe("ExecQualityPlugin — loadConfig", () => {
   it("returns [] when file is absent", async () => {
     vi.mocked(fsp.readFile).mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
@@ -81,6 +85,22 @@ describe("ExecQualityPlugin — loadConfig", () => {
     expect(result).toEqual([]);
     expect(records.some((r) => r.lvl === "warn")).toBe(true);
   });
+
+  it("rejects shell metacharacters in command strings", async () => {
+    vi.mocked(fsp.readFile).mockResolvedValue(
+      JSON.stringify([{ name: "lint", command: "pnpm lint; touch /tmp/pwned" }]),
+    );
+    const plugin = new ExecQualityPlugin(makeRunner());
+    await expect(plugin.loadConfig("/workspace")).rejects.toThrow(/unsupported shell metacharacter/);
+  });
+
+  it("rejects cwdRel values that escape the workspace", async () => {
+    vi.mocked(fsp.readFile).mockResolvedValue(
+      JSON.stringify([{ name: "lint", command: "pnpm lint", cwdRel: "../outside" }]),
+    );
+    const plugin = new ExecQualityPlugin(makeRunner());
+    await expect(plugin.loadConfig("/workspace")).rejects.toThrow(/escapes workspace/);
+  });
 });
 
 describe("ExecQualityPlugin — run", () => {
@@ -99,7 +119,7 @@ describe("ExecQualityPlugin — run", () => {
 
   it("required failure: status=failed", async () => {
     const runner = makeRunner(async (opts) => {
-      if (opts.command === "npm run lint") {
+      if (commandString(opts) === "npm run lint") {
         return { exitCode: 1, stdout: "", stderr: "lint error", timedOut: false };
       }
       return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
@@ -118,7 +138,7 @@ describe("ExecQualityPlugin — run", () => {
 
   it("non-required failure only: status=partial", async () => {
     const runner = makeRunner(async (opts) => {
-      if (opts.command === "npm run lint") {
+      if (commandString(opts) === "npm run lint") {
         return { exitCode: 1, stdout: "", stderr: "", timedOut: false };
       }
       return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
@@ -192,5 +212,33 @@ describe("ExecQualityPlugin — run", () => {
     const runPromise = plugin.run(configs, "/workspace", { signal: ctrl.signal });
     ctrl.abort();
     await expect(runPromise).rejects.toThrow("aborted");
+  });
+
+  it("parses quoted command strings into argv without a shell", async () => {
+    const runner = makeRunner();
+    const plugin = new ExecQualityPlugin(runner);
+    await plugin.run([{ name: "smoke", command: "node -e \"process.exit(0)\"" }], "/workspace", {});
+    expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: "/workspace",
+      argv: ["node", "-e", "process.exit(0)"],
+    }));
+  });
+
+  it("rejects shell metacharacters before invoking the runner", async () => {
+    const runner = makeRunner();
+    const plugin = new ExecQualityPlugin(runner);
+    await expect(
+      plugin.run([{ name: "smoke", command: "node -e \"process.exit(0)\"; touch /tmp/pwned" }], "/workspace", {}),
+    ).rejects.toThrow(/unsupported shell metacharacter/);
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it("rejects cwdRel values that resolve outside the workspace", async () => {
+    const runner = makeRunner();
+    const plugin = new ExecQualityPlugin(runner);
+    await expect(
+      plugin.run([{ name: "smoke", command: "pnpm test", cwdRel: "../outside" }], "/workspace", {}),
+    ).rejects.toThrow(/escapes workspace/);
+    expect(runner.run).not.toHaveBeenCalled();
   });
 });

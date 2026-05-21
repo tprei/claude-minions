@@ -22,6 +22,8 @@ function eventFor(kind: TranscriptEventKind): TranscriptEvent {
       return { ...BASE, kind, text: "hello" };
     case "thinking":
       return { ...BASE, kind, text: "thinking" };
+    case "usage":
+      return { ...BASE, kind, inputTokens: 10, outputTokens: 5 };
     case "tool_call":
       return { ...BASE, kind, toolCallId: "tc1", toolName: "read", toolKind: "read", summary: "read", input: {} };
     case "tool_result":
@@ -45,6 +47,7 @@ describe("transcript event renderer exhaustiveness", () => {
       "turn_completed",
       "assistant_text",
       "thinking",
+      "usage",
       "tool_call",
       "tool_result",
       "status",
