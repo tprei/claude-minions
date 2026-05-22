@@ -19,6 +19,7 @@ export const STATUS_DOT: Record<TaskExecutionStatus, string> = {
   "quality-pending": "bg-amber-400 animate-pulse",
   "ci-pending": "bg-amber-400",
   "pr-open": "bg-indigo-400",
+  "resolving-conflict": "bg-amber-400 animate-pulse",
   merged: "bg-purple-400",
   "needs-review": "bg-amber-400 animate-pulse",
   completed: "bg-blue-400",
@@ -34,6 +35,7 @@ export const STATUS_LABEL: Record<TaskExecutionStatus, string> = {
   "quality-pending": "quality check",
   "ci-pending": "CI pending",
   "pr-open": "PR open",
+  "resolving-conflict": "resolving conflict",
   merged: "merged",
   "needs-review": "needs review",
   completed: "completed",
@@ -77,6 +79,7 @@ export function isRunning(status: TaskExecutionStatus): boolean {
     case "ready":
     case "running":
     case "finalizing":
+    case "resolving-conflict":
       return true;
     case "pending":
     case "completed":
@@ -105,6 +108,7 @@ export function isWaiting(status: TaskExecutionStatus): boolean {
     case "completed":
     case "finalizing":
     case "pr-open":
+    case "resolving-conflict":
     case "merged":
     case "failed":
     case "cancelled":
@@ -128,6 +132,7 @@ export function isTerminal(status: TaskExecutionStatus): boolean {
     case "finalizing":
     case "quality-pending":
     case "ci-pending":
+    case "resolving-conflict":
     case "needs-review":
       return false;
     default:
@@ -147,6 +152,7 @@ export function isCompleted(status: TaskExecutionStatus): boolean {
     case "finalizing":
     case "quality-pending":
     case "ci-pending":
+    case "resolving-conflict":
     case "failed":
     case "cancelled":
     case "needs-review":
@@ -168,6 +174,7 @@ export function isFailed(status: TaskExecutionStatus): boolean {
     case "quality-pending":
     case "ci-pending":
     case "pr-open":
+    case "resolving-conflict":
     case "merged":
     case "cancelled":
     case "needs-review":

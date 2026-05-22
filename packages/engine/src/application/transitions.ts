@@ -18,6 +18,9 @@ export const TRANSITION_KINDS = [
   "merge-task",
   "complete-without-pr",
   "merge-conflict",
+  "start-conflict-resolution",
+  "complete-conflict-resolution",
+  "fail-conflict-resolution",
   "cancel-task",
   "recover-task",
   "mark-interrupted",
@@ -175,8 +178,25 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
       },
     }),
   },
+  "start-conflict-resolution": {
+    from: ["pr-open"],
+    apply: () => ({ patch: { executionStatus: "resolving-conflict" } }),
+  },
+  "complete-conflict-resolution": {
+    from: ["resolving-conflict"],
+    apply: () => ({ patch: { executionStatus: "pr-open" } }),
+  },
+  "fail-conflict-resolution": {
+    from: ["resolving-conflict"],
+    apply: (task, command) => ({
+      patch: {
+        executionStatus: "needs-review",
+        artifacts: appendArtifacts(task, command),
+      },
+    }),
+  },
   "cancel-task": {
-    from: ["pending", "ready", "running", "finalizing", "quality-pending", "ci-pending", "needs-review"],
+    from: ["pending", "ready", "running", "finalizing", "quality-pending", "ci-pending", "resolving-conflict", "needs-review"],
     apply: () => ({
       patch: { executionStatus: "cancelled" },
       runEffect: { kind: "close", reason: "cancelled" },

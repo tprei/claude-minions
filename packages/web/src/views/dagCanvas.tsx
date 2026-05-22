@@ -43,6 +43,7 @@ const STATUS_COLOR: Record<TaskExecutionStatus, string> = {
   "quality-pending": "border-amber-400 bg-amber-100 text-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300",
   "ci-pending": "border-amber-400 bg-amber-100 text-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300",
   "pr-open": "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-500 dark:bg-indigo-950 dark:text-indigo-300",
+  "resolving-conflict": "border-amber-400 bg-amber-100 text-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300",
   merged: "border-purple-400 bg-purple-100 text-purple-900 dark:border-purple-700 dark:bg-purple-950 dark:text-purple-200",
   "needs-review": "border-amber-400 bg-amber-100 text-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300",
   completed: "border-teal-400 bg-teal-100 text-teal-800 dark:border-teal-600 dark:bg-teal-950 dark:text-teal-300",
