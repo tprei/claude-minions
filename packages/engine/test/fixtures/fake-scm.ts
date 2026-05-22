@@ -77,6 +77,19 @@ export class FakeSCM implements SCMPlugin {
     }
   }
 
+  async rebaseLeaveConflicts(path: string, onto: string): Promise<MergeResult> {
+    if (this.rebaseBehaviour === "conflict") {
+      return { kind: "conflict", conflictPaths: ["fake-conflict.txt"] };
+    }
+    try {
+      await execFileAsync("git", ["-C", path, "rebase", onto]);
+      return { kind: "clean" };
+    } catch {
+      const { stdout } = await execFileAsync("git", ["-C", path, "diff", "--name-only", "--diff-filter=U"]).catch(() => ({ stdout: "" }));
+      return { kind: "conflict", conflictPaths: stdout.trim().split("\n").filter(Boolean) };
+    }
+  }
+
   async pushBranch(_path: string, _branch: string): Promise<void> {
     // no-op: no remote in integration tests
   }

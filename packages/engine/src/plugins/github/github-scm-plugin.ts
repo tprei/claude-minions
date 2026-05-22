@@ -85,6 +85,18 @@ export class GitHubScmPlugin implements SCMPlugin {
     }
   }
 
+  async rebaseLeaveConflicts(path: string, onto: string): Promise<MergeResult> {
+    try {
+      await this.git.run(path, ["rebase", onto]);
+      return { kind: "clean" };
+    } catch (err) {
+      if (err instanceof GitError && /CONFLICT/i.test(err.stdout + err.stderr)) {
+        return { kind: "conflict", conflictPaths: await this.git.listConflictedFiles(path) };
+      }
+      throw err;
+    }
+  }
+
   async pushBranch(path: string, branch: string): Promise<void> {
     const push = () => this.git.run(path, ["push", "-u", "--force-with-lease", "origin", branch], {
       env: { GIT_ASKPASS: ASKPASS_PATH, GH_TOKEN: this.token },

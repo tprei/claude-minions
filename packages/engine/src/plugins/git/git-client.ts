@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { MergeResult } from "../scm-plugin.js";
 
 export interface GitClientConfig {
   gitBin?: string;
@@ -177,5 +178,55 @@ export class GitClient {
     } catch {
       return false;
     }
+  }
+
+  async listConflictedFiles(path: string): Promise<string[]> {
+    const { stdout } = await this.run(path, ["diff", "--name-only", "--diff-filter=U"]);
+    return stdout.trim().split("\n").filter(Boolean);
+  }
+
+  async hasConflictMarkers(path: string): Promise<boolean> {
+    try {
+      await this.run(path, ["grep", "-lE", "^(<<<<<<<|=======|>>>>>>>)", "--", "."]);
+      return true;
+    } catch (err) {
+      if (err instanceof GitError && err.exitCode === 1) return false;
+      throw err;
+    }
+  }
+
+  async addAll(path: string): Promise<void> {
+    await this.run(path, ["add", "-A"]);
+  }
+
+  async rebaseContinue(path: string): Promise<MergeResult> {
+    try {
+      await this.run(path, ["-c", "core.editor=true", "rebase", "--continue"]);
+      return { kind: "clean" };
+    } catch (err) {
+      if (err instanceof GitError && /CONFLICT/i.test(err.stdout + err.stderr)) {
+        return { kind: "conflict", conflictPaths: await this.listConflictedFiles(path) };
+      }
+      throw err;
+    }
+  }
+
+  async rebaseAbort(path: string): Promise<void> {
+    await this.run(path, ["rebase", "--abort"]).catch(() => {});
+  }
+
+  async isRebaseInProgress(path: string): Promise<boolean> {
+    try {
+      await this.run(path, ["rebase", "--show-current-patch"]);
+      return true;
+    } catch (err) {
+      if (err instanceof GitError && /no rebase in progress/i.test(err.stdout + err.stderr)) return false;
+      throw err;
+    }
+  }
+
+  async statusIsClean(path: string): Promise<boolean> {
+    const { stdout } = await this.run(path, ["status", "--porcelain"]);
+    return stdout.trim().length === 0;
   }
 }

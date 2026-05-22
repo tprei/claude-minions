@@ -71,6 +71,8 @@ export interface SCMPlugin {
   commit(path: string, message: string): Promise<string>;
   squashCommits(path: string, ontoBase: string, message: string): Promise<string>;
   rebase(path: string, onto: string): Promise<MergeResult>;
+  /** Like rebase, but on conflict leaves the conflict markers in the worktree (no --abort) for in-place resolution. */
+  rebaseLeaveConflicts(path: string, onto: string): Promise<MergeResult>;
 
   pushBranch(path: string, branch: string): Promise<void>;
   /** Summarize a branch for PR title/body composition. Reads commits + diff. */

@@ -53,6 +53,11 @@ function makeScm(
       if (overrides.rebaseImpl) return overrides.rebaseImpl(path, onto);
       return { kind: "clean" } satisfies MergeResult;
     }),
+    rebaseLeaveConflicts: vi.fn().mockImplementation(async (path: string, onto: string) => {
+      tracker.rebaseCalls.push(path);
+      if (overrides.rebaseImpl) return overrides.rebaseImpl(path, onto);
+      return { kind: "clean" } satisfies MergeResult;
+    }),
     pushBranch: vi.fn().mockResolvedValue(undefined),
     summarizeBranch: vi.fn().mockResolvedValue({ title: "test", commitBody: "", diffStat: "", commitCount: 1 }),
     openPullRequest: vi.fn(),

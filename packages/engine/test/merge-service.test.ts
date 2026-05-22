@@ -28,6 +28,7 @@ function makeScm(overrides: Partial<SCMPlugin> = {}): SCMPlugin {
     commit: vi.fn().mockResolvedValue("abc123"),
     squashCommits: vi.fn().mockResolvedValue("abc123"),
     rebase: vi.fn().mockResolvedValue({ kind: "clean" } satisfies MergeResult),
+    rebaseLeaveConflicts: vi.fn().mockResolvedValue({ kind: "clean" } satisfies MergeResult),
     pushBranch: vi.fn().mockResolvedValue(undefined),
     summarizeBranch: vi.fn().mockResolvedValue({ title: "test commit", commitBody: "", diffStat: " a.txt | 1 +", commitCount: 1 }),
     openPullRequest: vi.fn().mockResolvedValue({ number: 42, url: "https://github.com/o/r/pull/42", headRef: "branch", baseRef: "main" }),
