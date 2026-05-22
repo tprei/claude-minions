@@ -187,9 +187,10 @@ export class GitClient {
 
   async hasConflictMarkers(path: string): Promise<boolean> {
     try {
-      // Match only the unambiguous start/end markers; a bare "=======" line is a
-      // valid Markdown setext heading underline and must not be treated as a conflict.
-      await this.run(path, ["grep", "-lE", "^(<{7}|>{7})( |$)", "--", "."]);
+      // Match only the unambiguous start/end markers (7+ chars, supporting a
+      // configured conflict-marker-size); a bare "=======" line is a valid
+      // Markdown setext heading underline and must not be treated as a conflict.
+      await this.run(path, ["grep", "-lE", "^(<{7,}|>{7,})( |$)", "--", "."]);
       return true;
     } catch (err) {
       if (err instanceof GitError && err.exitCode === 1) return false;

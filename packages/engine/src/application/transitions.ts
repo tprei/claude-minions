@@ -43,7 +43,7 @@ export interface TransitionCommand {
   passed?: boolean;
   reason?: string;
   workspaceId?: string;
-  restoreStatus?: TaskExecutionStatus;
+  restoreStatus?: "pr-open" | "finalizing";
   now: string;
 }
 
@@ -185,7 +185,7 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
   },
   "complete-conflict-resolution": {
     from: ["resolving-conflict"],
-    apply: (_task, command) => ({ patch: { executionStatus: command.restoreStatus ?? "pr-open" } }),
+    apply: (_task, command) => ({ patch: { executionStatus: command.restoreStatus === "finalizing" ? "finalizing" : "pr-open" } }),
   },
   "fail-conflict-resolution": {
     from: ["resolving-conflict"],
