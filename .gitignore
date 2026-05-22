@@ -28,7 +28,7 @@ packages/web/dev-dist/
 
 /secrets/
 /data/
-.env.deploy
+.env.deploy*
 /packages/web/.e2e-workspace/
 
 # dogfood Playwright screenshots
