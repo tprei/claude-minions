@@ -768,4 +768,88 @@ describe("MergeService", () => {
     );
     expect(mergeConflictCalls).toHaveLength(0);
   });
+
+  async function prOpenTask(repo: InMemoryWorkflowRepository, artifacts: { kind: "pr" | "conflict"; ref: string }[] = [{ kind: "pr", ref: "https://github.com/o/r/pull/42" }]) {
+    let workflow = await repo.get("wf-1");
+    workflow = transitionTask(workflow!, {
+      kind: "open-review",
+      taskId: "wf-1:task",
+      artifacts: artifacts.map((a) => ({ ...a, producedBy: "test", createdAt: now })),
+      now,
+    });
+    await repo.save(workflow, []);
+  }
+
+  it("resolver resolves a rebase conflict → merge proceeds and task ends merged", async () => {
+    const { repo } = await buildWorkflow();
+    await prOpenTask(repo);
+    const scm = makeScm({
+      rebaseLeaveConflicts: vi.fn().mockResolvedValue({ kind: "conflict", conflictPaths: ["f.ts"] } satisfies MergeResult),
+      findPullRequest: vi.fn().mockResolvedValue({ number: 42, url: "https://github.com/o/r/pull/42", headRef: "x", baseRef: "main" }),
+    });
+    const resolver = { resolve: vi.fn().mockResolvedValue({ kind: "resolved" }) };
+
+    const service = new MergeService({
+      repo, applyCommand: (cmd) => applyCommand(repo, cmd), scm, workspace: makeWorkspace(),
+      repoRegistry: TEST_REGISTRY, now: () => now, log: silentLogger(), conflictResolver: resolver,
+    });
+
+    const result = await service.merge({ workflowId: "wf-1", taskId: "wf-1:task" });
+
+    expect(resolver.resolve).toHaveBeenCalledOnce();
+    expect(scm.rebaseLeaveConflicts).toHaveBeenCalledOnce();
+    expect(scm.mergePullRequest).toHaveBeenCalled();
+    expect(result.workflow.graph["wf-1:task"]?.executionStatus).toBe("merged");
+  });
+
+  it("resolver fails → task ends needs-review and PR is not merged", async () => {
+    const { repo } = await buildWorkflow();
+    await prOpenTask(repo);
+    const scm = makeScm({
+      rebaseLeaveConflicts: vi.fn().mockResolvedValue({ kind: "conflict", conflictPaths: ["f.ts"] } satisfies MergeResult),
+    });
+    const resolver = {
+      resolve: vi.fn(async (req: { workflowId: string; taskId: string }) => {
+        await applyCommand(repo, { kind: "transition-task", workflowId: req.workflowId, transition: { kind: "start-conflict-resolution", taskId: req.taskId, now } });
+        const artifact = { kind: "conflict" as const, ref: JSON.stringify({ attempted: true }), producedBy: "conflict-resolution", createdAt: now };
+        await applyCommand(repo, { kind: "transition-task", workflowId: req.workflowId, transition: { kind: "fail-conflict-resolution", taskId: req.taskId, artifacts: [artifact], reason: "x", now } });
+        return { kind: "unresolved" as const, reason: "x", artifact };
+      }),
+    };
+
+    const service = new MergeService({
+      repo, applyCommand: (cmd) => applyCommand(repo, cmd), scm, workspace: makeWorkspace(),
+      repoRegistry: TEST_REGISTRY, now: () => now, log: silentLogger(), conflictResolver: resolver,
+    });
+
+    const result = await service.merge({ workflowId: "wf-1", taskId: "wf-1:task" });
+
+    expect(resolver.resolve).toHaveBeenCalledOnce();
+    expect(scm.mergePullRequest).not.toHaveBeenCalled();
+    expect(result.workflow.graph["wf-1:task"]?.executionStatus).toBe("needs-review");
+  });
+
+  it("loop guard: task with a prior attempted conflict artifact skips the resolver", async () => {
+    const { repo } = await buildWorkflow();
+    await prOpenTask(repo, [
+      { kind: "pr", ref: "https://github.com/o/r/pull/42" },
+      { kind: "conflict", ref: JSON.stringify({ attempted: true }) },
+    ]);
+    const scm = makeScm({
+      rebase: vi.fn().mockResolvedValue({ kind: "conflict", conflictPaths: ["f.ts"] } satisfies MergeResult),
+      rebaseLeaveConflicts: vi.fn().mockResolvedValue({ kind: "conflict", conflictPaths: ["f.ts"] } satisfies MergeResult),
+    });
+    const resolver = { resolve: vi.fn() };
+
+    const service = new MergeService({
+      repo, applyCommand: (cmd) => applyCommand(repo, cmd), scm, workspace: makeWorkspace(),
+      repoRegistry: TEST_REGISTRY, now: () => now, log: silentLogger(), conflictResolver: resolver,
+    });
+
+    const result = await service.merge({ workflowId: "wf-1", taskId: "wf-1:task" });
+
+    expect(resolver.resolve).not.toHaveBeenCalled();
+    expect(scm.rebase).toHaveBeenCalledOnce();
+    expect(result.workflow.graph["wf-1:task"]?.executionStatus).toBe("needs-review");
+  });
 });
