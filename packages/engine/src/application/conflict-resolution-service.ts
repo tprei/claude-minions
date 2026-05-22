@@ -98,7 +98,7 @@ export class ConflictResolutionService implements ConflictResolver {
       await applyCommand({
         kind: "transition-task",
         workflowId,
-        transition: { kind: "complete-conflict-resolution", taskId, now: now() },
+        transition: { kind: "complete-conflict-resolution", taskId, restoreStatus: request.entryStatus, now: now() },
       });
       this.emitPhase(workflowId, taskId, "completed");
       return { kind: "resolved" };

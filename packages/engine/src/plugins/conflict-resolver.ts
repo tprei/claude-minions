@@ -7,6 +7,9 @@ export interface ConflictResolutionRequest {
   branch: string;
   baseBranch: string;
   conflictPaths: string[];
+  // The task's status when the rebase conflict was hit; restored on success so
+  // runUntilOpen continues correctly (merge for pr-open, open-PR for finalizing).
+  entryStatus: "pr-open" | "finalizing";
   signal?: AbortSignal;
 }
 

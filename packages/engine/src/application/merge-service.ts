@@ -269,7 +269,9 @@ export class MergeService {
 
     this.emitPhase(workflowId, taskId, "rebase", "started");
     const resolver = this.deps.conflictResolver;
-    const useResolver = resolver !== undefined && task.executionStatus === "pr-open" && !hasFailedResolution(task);
+    const entryStatus = task.executionStatus;
+    const resolvable = entryStatus === "pr-open" || entryStatus === "finalizing";
+    const useResolver = resolver !== undefined && resolvable && !hasFailedResolution(task);
     const rebaseResult = useResolver
       ? await scm.rebaseLeaveConflicts(workspaceHandle.path, baseBranch)
       : await scm.rebase(workspaceHandle.path, baseBranch);
@@ -288,6 +290,7 @@ export class MergeService {
         branch,
         baseBranch,
         conflictPaths: rebaseResult.conflictPaths,
+        entryStatus: entryStatus as "pr-open" | "finalizing",
         ...(signal !== undefined ? { signal } : {}),
       };
       const outcome = await resolver.resolve(resolveRequest);

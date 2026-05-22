@@ -43,6 +43,7 @@ export interface TransitionCommand {
   passed?: boolean;
   reason?: string;
   workspaceId?: string;
+  restoreStatus?: TaskExecutionStatus;
   now: string;
 }
 
@@ -179,12 +180,12 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
     }),
   },
   "start-conflict-resolution": {
-    from: ["pr-open"],
+    from: ["pr-open", "finalizing"],
     apply: () => ({ patch: { executionStatus: "resolving-conflict" } }),
   },
   "complete-conflict-resolution": {
     from: ["resolving-conflict"],
-    apply: () => ({ patch: { executionStatus: "pr-open" } }),
+    apply: (_task, command) => ({ patch: { executionStatus: command.restoreStatus ?? "pr-open" } }),
   },
   "fail-conflict-resolution": {
     from: ["resolving-conflict"],

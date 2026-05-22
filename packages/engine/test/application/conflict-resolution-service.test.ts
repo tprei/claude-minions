@@ -61,7 +61,7 @@ function makeQuality(status: "passed" | "failed" | "partial"): QualityPlugin {
 }
 
 function request(): ConflictResolutionRequest {
-  return { workflowId: WF, taskId: TASK, workspacePath: "/tmp/ws", branch: "b", baseBranch: "main", conflictPaths: ["f.ts"] };
+  return { workflowId: WF, taskId: TASK, workspacePath: "/tmp/ws", branch: "b", baseBranch: "main", conflictPaths: ["f.ts"], entryStatus: "pr-open" };
 }
 
 const finalFrame: ProviderEvent = { kind: "final", sessionRef: "s" };
@@ -157,6 +157,19 @@ describe("ConflictResolutionService", () => {
 
     expect(outcome.kind).toBe("resolved");
     expect(scmPush).toHaveBeenCalledOnce();
+  });
+
+  it("resolved with finalizing entry → task restored to finalizing", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const wf = createSingleTaskWorkflow(WF, { title: "T", prompt: "P" }, () => now);
+    const task = wf.graph[TASK]!;
+    await repo.save({ ...wf, graph: { [TASK]: { ...task, executionStatus: "finalizing" } } }, []);
+    const { service } = makeService(repo, { quality: makeQuality("passed") });
+
+    const outcome = await service.resolve({ ...request(), entryStatus: "finalizing" });
+
+    expect(outcome.kind).toBe("resolved");
+    expect((await repo.get(WF))!.graph[TASK]!.executionStatus).toBe("finalizing");
   });
 
   it("agent staged but did not continue → rebaseContinue recovers, resolved", async () => {
