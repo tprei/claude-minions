@@ -5,7 +5,8 @@ export type DomainErrorCode =
   | "not_found"
   | "version_conflict"
   | "idempotency_collision"
-  | "invalid_plan";
+  | "invalid_plan"
+  | "unstackable_dependencies";
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;

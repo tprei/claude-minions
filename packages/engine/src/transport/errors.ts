@@ -17,6 +17,7 @@ export function domainErrorToHttp(error: DomainError): HttpErrorResponse {
     case "idempotency_collision":
       return { status: 409, body: { code: error.code, message: error.message, details: error.details } };
     case "invalid_plan":
+    case "unstackable_dependencies":
       return { status: 422, body: { code: error.code, message: error.message, details: error.details } };
   }
 }

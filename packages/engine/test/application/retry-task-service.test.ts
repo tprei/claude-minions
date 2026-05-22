@@ -5,6 +5,7 @@ import type { CommandResult } from "../../src/application/commands.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
 import { DomainError } from "../../src/domain/errors.js";
 import { createSingleTaskWorkflow, createWorkflow } from "../../src/domain/workflow.js";
+import { deriveBranch } from "../../src/application/stacking.js";
 import { getOpenRun } from "../../src/domain/runs.js";
 import { StubProviderPlugin } from "../../src/plugins/providers/stub.js";
 import { StubRuntimeBackend } from "../../src/plugins/stub-runtime.js";
@@ -567,6 +568,78 @@ describe("RetryTaskService", () => {
 
     expect(createSpy).toHaveBeenCalledOnce();
     expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({ resetBranch: true }));
+  });
+
+  it("workspace.create bases a dependent task on its dependency's branch (stacking)", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const runtime = new StubRuntimeBackend();
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "new-session" };
+    const provider = new StubProviderPlugin({ frames: [[finalEvent]] });
+
+    const wf = createWorkflow({
+      id: "wf-stack",
+      kind: "single-task",
+      repoId: "fixture-repo",
+      tasks: [
+        { id: "wf-stack:parent", title: "Parent", prompt: "do parent" },
+        { id: "wf-stack:child", title: "Child", prompt: "do child", dependsOn: ["wf-stack:parent"] },
+      ],
+      policy: { maxConcurrent: 2 },
+    }, () => now);
+    await repo.save(wf, []);
+    for (const transition of [
+      { kind: "mark-ready" as const, taskId: "wf-stack:child", now },
+      { kind: "mark-running" as const, taskId: "wf-stack:child", sessionId: "s", now },
+      { kind: "mark-interrupted" as const, taskId: "wf-stack:child", now },
+    ]) {
+      await applyCommand(repo, { kind: "transition-task", workflowId: "wf-stack", transition });
+    }
+
+    const workspace = new StubWorkspaceBackend();
+    const createSpy = vi.spyOn(workspace, "create");
+
+    const service = new RetryTaskService({
+      repo,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      providerFactory: () => provider,
+      runtime,
+      now: () => now,
+      workspace,
+      spawnOrchestrator: vi.fn(),
+    });
+
+    await service.run({ workflowId: "wf-stack", taskId: "wf-stack:child", prompt: "retry child" });
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ baseRef: deriveBranch("wf-stack", "wf-stack:parent") }),
+    );
+  });
+
+  it("workspace.create omits baseRef for a root task with no dependencies", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const runtime = new StubRuntimeBackend();
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "new-session" };
+    const provider = new StubProviderPlugin({ frames: [[finalEvent]] });
+
+    await makeNeedsReviewTask(repo);
+
+    const workspace = new StubWorkspaceBackend();
+    const createSpy = vi.spyOn(workspace, "create");
+
+    const service = new RetryTaskService({
+      repo,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      providerFactory: () => provider,
+      runtime,
+      now: () => now,
+      workspace,
+      spawnOrchestrator: vi.fn(),
+    });
+
+    await service.run({ workflowId: "wf-1", taskId: "wf-1:task", prompt: "retry" });
+
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(createSpy.mock.calls[0]?.[0]?.baseRef).toBeUndefined();
   });
 
   it("mark-running failure triggers runtime.stop AND workspace.cleanup", async () => {
