@@ -203,7 +203,7 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
     }),
   },
   "recover-task": {
-    from: ["ready", "running", "quality-pending", "ci-pending"],
+    from: ["ready", "running", "quality-pending", "ci-pending", "resolving-conflict"],
     apply: (task) => ({
       patch: { executionStatus: task.artifacts.length > 0 ? "needs-review" : "pending" },
       clearSession: true,

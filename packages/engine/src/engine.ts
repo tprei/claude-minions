@@ -35,6 +35,8 @@ import { GitHubClient } from "./plugins/github/github-client.js";
 import { GitHubScmPlugin } from "./plugins/github/github-scm-plugin.js";
 import { MergeService } from "./application/merge-service.js";
 import { LandWorkflowService } from "./application/land-workflow-service.js";
+import { ConflictResolutionService } from "./application/conflict-resolution-service.js";
+import type { ConflictResolver } from "./plugins/conflict-resolver.js";
 import { LocalFinalizeService } from "./application/local-finalize-service.js";
 import { CIBabysitterService } from "./application/ci-babysitter-service.js";
 import { QualityGateService } from "./application/quality-gate-service.js";
@@ -92,6 +94,7 @@ export interface EngineConfig {
   providerName?: string;
   buildSha?: string;
   startedAt?: string;
+  authToken?: string;
 }
 
 const ENGINE_FEATURES = [
@@ -361,6 +364,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   }
 
   const serverDeps: Parameters<typeof createServer>[0] = { repo, recoveryService, executor };
+  if (config.authToken !== undefined) serverDeps.authToken = config.authToken;
 
   if (vapid && pushService && subscriptions) {
     serverDeps.pushService = pushService;
@@ -441,6 +445,22 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
     const scm: SCMPlugin = scmOverride
       ?? new GitHubScmPlugin({ github: ghClient!, git: gitClient, token: githubToken! });
 
+    let conflictResolver: ConflictResolver | undefined;
+    if (config.providerFactory) {
+      conflictResolver = new ConflictResolutionService({
+        repo,
+        applyCommand: (cmd) => applyCommand(repo, cmd),
+        providerFactory: config.providerFactory,
+        runtime,
+        scm,
+        git: gitClient,
+        ...(config.qualityPlugin !== undefined ? { quality: config.qualityPlugin } : {}),
+        now,
+        log: log.child({ component: "conflict-resolution" }),
+        ...(config.qualityDefaultTimeoutMs !== undefined ? { qualityDefaultTimeoutMs: config.qualityDefaultTimeoutMs } : {}),
+      });
+    }
+
     serverDeps.mergeService = new MergeService({
       repo,
       applyCommand: (cmd) => applyCommand(repo, cmd),
@@ -449,6 +469,7 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
       repoRegistry,
       now,
       log: log.child({ component: "merge" }),
+      ...(conflictResolver !== undefined ? { conflictResolver } : {}),
     });
 
     serverDeps.landWorkflowService = new LandWorkflowService({
