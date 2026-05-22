@@ -1,6 +1,7 @@
 import { DomainError } from "../domain/errors.js";
 import type { WorkflowEvent, MergePhase } from "../domain/events.js";
-import type { Artifact, Workflow } from "../domain/types.js";
+import type { Artifact, TaskNode, Workflow } from "../domain/types.js";
+import type { ConflictResolver, ConflictResolutionRequest } from "../plugins/conflict-resolver.js";
 import type { PullRequestRef, SCMPlugin } from "../plugins/scm-plugin.js";
 import type { WorkspaceBackend } from "../plugins/workspace-backend.js";
 import { slugify } from "../plugins/workspace-backend.js";
@@ -41,6 +42,29 @@ export class MergeAbortedError extends Error {
   }
 }
 
+// Thrown after the conflict resolver has already routed the task to needs-review
+// (via fail-conflict-resolution). Signals merge() to surface the failure without
+// re-applying a terminal transition.
+export class ResolutionFailedError extends Error {
+  readonly conflictPaths: string[];
+  constructor(reason: string, conflictPaths: string[]) {
+    super(reason);
+    this.name = "ResolutionFailedError";
+    this.conflictPaths = conflictPaths;
+  }
+}
+
+function hasFailedResolution(task: TaskNode): boolean {
+  return task.artifacts.some((artifact) => {
+    if (artifact.kind !== "conflict") return false;
+    try {
+      return (JSON.parse(artifact.ref) as { attempted?: boolean }).attempted === true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 export interface MergeServiceDeps {
   repo: WorkflowRepository;
   applyCommand: (cmd: Command) => Promise<CommandResult>;
@@ -49,6 +73,7 @@ export interface MergeServiceDeps {
   repoRegistry: RepoRegistry;
   now: () => string;
   log: Logger;
+  conflictResolver?: ConflictResolver;
 }
 
 export interface MergeInput {
@@ -116,6 +141,12 @@ export class MergeService {
     if (err instanceof MergeServiceError) {
       this.emitPhase(workflowId, taskId, "finalize", "completed", "MERGE_INCONSISTENT");
       throw err;
+    }
+
+    if (err instanceof ResolutionFailedError) {
+      const wf = await repo.get(workflowId);
+      if (!wf) throw err;
+      return { workflow: wf, events: [] };
     }
 
     if (err instanceof MergeConflictError) {
@@ -237,13 +268,35 @@ export class MergeService {
     this.emitPhase(workflowId, taskId, "squash", "completed");
 
     this.emitPhase(workflowId, taskId, "rebase", "started");
-    const rebaseResult = await scm.rebase(workspaceHandle.path, baseBranch);
+    const resolver = this.deps.conflictResolver;
+    const entryStatus = task.executionStatus;
+    const resolvable = entryStatus === "pr-open" || entryStatus === "finalizing";
+    const useResolver = resolver !== undefined && resolvable && !hasFailedResolution(task);
+    const rebaseResult = useResolver
+      ? await scm.rebaseLeaveConflicts(workspaceHandle.path, baseBranch)
+      : await scm.rebase(workspaceHandle.path, baseBranch);
     if (rebaseResult.kind === "conflict") {
-      throw new MergeConflictError(
-        "rebase_conflict",
-        `rebase conflict in ${rebaseResult.conflictPaths.join(", ")}`,
-        rebaseResult.conflictPaths,
-      );
+      if (!useResolver) {
+        throw new MergeConflictError(
+          "rebase_conflict",
+          `rebase conflict in ${rebaseResult.conflictPaths.join(", ")}`,
+          rebaseResult.conflictPaths,
+        );
+      }
+      const resolveRequest: ConflictResolutionRequest = {
+        workflowId,
+        taskId,
+        workspacePath: workspaceHandle.path,
+        branch,
+        baseBranch,
+        conflictPaths: rebaseResult.conflictPaths,
+        entryStatus: entryStatus as "pr-open" | "finalizing",
+        ...(signal !== undefined ? { signal } : {}),
+      };
+      const outcome = await resolver.resolve(resolveRequest);
+      if (outcome.kind === "unresolved") {
+        throw new ResolutionFailedError(outcome.reason, rebaseResult.conflictPaths);
+      }
     }
     await scm.pushBranch(workspaceHandle.path, branch);
     this.emitPhase(workflowId, taskId, "rebase", "completed");

@@ -50,6 +50,33 @@ describe("GitHubScmPlugin", () => {
     expect(run).toHaveBeenCalledTimes(3);
   });
 
+  it("rebase fetches the remote base (authenticated) and rebases onto origin/<base>", async () => {
+    const run = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+    const scm = new GitHubScmPlugin({ github: makeGithub(), git: makeGit(run), token: "tok" });
+
+    const result = await scm.rebase("/repo", "main");
+
+    expect(result).toEqual({ kind: "clean" });
+    expect(run).toHaveBeenNthCalledWith(1, "/repo", ["fetch", "origin", "main"], expect.objectContaining({
+      env: expect.objectContaining({ GH_TOKEN: "tok" }),
+    }));
+    expect(run).toHaveBeenNthCalledWith(2, "/repo", ["rebase", "origin/main"]);
+  });
+
+  it("rebaseLeaveConflicts returns conflict paths without aborting", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "" }) // fetch
+      .mockRejectedValueOnce(new GitError("git exited with code 1", "CONFLICT (content): merge conflict", "", 1)); // rebase
+    const listConflictedFiles = vi.fn().mockResolvedValue(["f.txt"]);
+    const git = { run, listConflictedFiles } as unknown as GitClient;
+    const scm = new GitHubScmPlugin({ github: makeGithub(), git, token: "tok" });
+
+    const result = await scm.rebaseLeaveConflicts("/repo", "main");
+
+    expect(result).toEqual({ kind: "conflict", conflictPaths: ["f.txt"] });
+    expect(run).not.toHaveBeenCalledWith("/repo", ["rebase", "--abort"]);
+  });
+
   it("pushBranch does not fetch for unrelated git failures", async () => {
     const authError = new GitError("git exited with code 128", "", "Authentication failed", 128);
     const run = vi.fn().mockRejectedValue(authError);

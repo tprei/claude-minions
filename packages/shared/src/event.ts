@@ -7,6 +7,7 @@ export const TASK_EXECUTION_STATUSES = [
   "quality-pending",
   "ci-pending",
   "pr-open",
+  "resolving-conflict",
   "merged",
   "failed",
   "cancelled",
@@ -51,6 +52,9 @@ export const TRANSITION_KINDS = [
   "merge-task",
   "complete-without-pr",
   "merge-conflict",
+  "start-conflict-resolution",
+  "complete-conflict-resolution",
+  "fail-conflict-resolution",
   "cancel-task",
   "recover-task",
   "mark-interrupted",
@@ -128,7 +132,7 @@ export interface ProviderEventPayload {
   providerEvent: ProviderEvent;
 }
 
-export type MergePhase = "prepareMerge" | "commit" | "squash" | "rebase" | "applyMerge" | "finalize";
+export type MergePhase = "prepareMerge" | "commit" | "squash" | "rebase" | "applyMerge" | "finalize" | "resolveConflict";
 
 export interface MergePhasePayload {
   taskId: string;

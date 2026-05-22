@@ -146,6 +146,24 @@ const transitionCases: Record<TransitionKind, TransitionCase> = {
     expectedTo: "needs-review",
     expectTaskTransition: true,
   },
+  "start-conflict-resolution": {
+    from: "pr-open",
+    command: { kind: "start-conflict-resolution" },
+    expectedTo: "resolving-conflict",
+    expectTaskTransition: true,
+  },
+  "complete-conflict-resolution": {
+    from: "resolving-conflict",
+    command: { kind: "complete-conflict-resolution" },
+    expectedTo: "pr-open",
+    expectTaskTransition: true,
+  },
+  "fail-conflict-resolution": {
+    from: "resolving-conflict",
+    command: { kind: "fail-conflict-resolution" },
+    expectedTo: "needs-review",
+    expectTaskTransition: true,
+  },
   "cancel-task": {
     from: "running",
     command: { kind: "cancel-task" },

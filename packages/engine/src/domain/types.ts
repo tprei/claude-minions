@@ -27,6 +27,7 @@ export const TASK_EXECUTION_STATUSES = [
   "quality-pending",
   "ci-pending",
   "pr-open",
+  "resolving-conflict",
   "merged",
   "failed",
   "cancelled",
@@ -163,6 +164,7 @@ export const TASK_CLAIM_HOLDING_STATUSES: ReadonlySet<TaskExecutionStatus> = new
   "finalizing",
   "quality-pending",
   "ci-pending",
+  "resolving-conflict",
   "needs-review",
 ]);
 
@@ -172,6 +174,7 @@ export const TASK_AGENT_OCCUPYING_STATUSES: ReadonlySet<TaskExecutionStatus> = n
   "ready",
   "running",
   "finalizing",
+  "resolving-conflict",
 ]);
 
 export const TASK_TERMINAL_EXECUTION_STATUSES: ReadonlySet<TaskExecutionStatus> = new Set([

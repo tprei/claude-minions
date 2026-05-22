@@ -18,6 +18,9 @@ export const TRANSITION_KINDS = [
   "merge-task",
   "complete-without-pr",
   "merge-conflict",
+  "start-conflict-resolution",
+  "complete-conflict-resolution",
+  "fail-conflict-resolution",
   "cancel-task",
   "recover-task",
   "mark-interrupted",
@@ -40,6 +43,7 @@ export interface TransitionCommand {
   passed?: boolean;
   reason?: string;
   workspaceId?: string;
+  restoreStatus?: "pr-open" | "finalizing";
   now: string;
 }
 
@@ -175,15 +179,32 @@ const TRANSITIONS: Record<TransitionKind, TransitionRule> = {
       },
     }),
   },
+  "start-conflict-resolution": {
+    from: ["pr-open", "finalizing"],
+    apply: () => ({ patch: { executionStatus: "resolving-conflict" } }),
+  },
+  "complete-conflict-resolution": {
+    from: ["resolving-conflict"],
+    apply: (_task, command) => ({ patch: { executionStatus: command.restoreStatus === "finalizing" ? "finalizing" : "pr-open" } }),
+  },
+  "fail-conflict-resolution": {
+    from: ["resolving-conflict"],
+    apply: (task, command) => ({
+      patch: {
+        executionStatus: "needs-review",
+        artifacts: appendArtifacts(task, command),
+      },
+    }),
+  },
   "cancel-task": {
-    from: ["pending", "ready", "running", "finalizing", "quality-pending", "ci-pending", "needs-review"],
+    from: ["pending", "ready", "running", "finalizing", "quality-pending", "ci-pending", "resolving-conflict", "needs-review"],
     apply: () => ({
       patch: { executionStatus: "cancelled" },
       runEffect: { kind: "close", reason: "cancelled" },
     }),
   },
   "recover-task": {
-    from: ["ready", "running", "quality-pending", "ci-pending"],
+    from: ["ready", "running", "quality-pending", "ci-pending", "resolving-conflict"],
     apply: (task) => ({
       patch: { executionStatus: task.artifacts.length > 0 ? "needs-review" : "pending" },
       clearSession: true,

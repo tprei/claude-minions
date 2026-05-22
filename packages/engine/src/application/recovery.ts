@@ -72,6 +72,15 @@ const TASK_RULES: TaskRecoveryRule[] = [
     }),
   },
   {
+    name: "resolving-conflict-interrupted",
+    matches: (task) => task.executionStatus === "resolving-conflict",
+    emit: (task) => ({
+      kind: "recover-task",
+      taskId: task.id,
+      reason: "engine restarted during conflict resolution",
+    }),
+  },
+  {
     name: "running-with-dead-probe",
     matches: (task, options) =>
       task.executionStatus === "running" &&
