@@ -21,6 +21,13 @@ function fullJitter(attempt: number): number {
   return Math.random() * ceiling;
 }
 
+function appendToken(url: string, token: string): string {
+  const trimmed = token.trim();
+  if (trimmed.length === 0) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}token=${encodeURIComponent(trimmed)}`;
+}
+
 const WORKFLOW_EVENT_KINDS: WorkflowEventKind[] = [
   "task-transitioned",
   "graph-operation-changed",
@@ -59,7 +66,10 @@ export function connectWorkflowSse(
   function open(): void {
     if (closed) return;
     setStatus(attempt === 0 ? "connecting" : "reconnecting");
-    const url = `${conn.baseUrl.replace(/\/$/, "")}/workflows/${encodeURIComponent(workflowId)}/events`;
+    const url = appendToken(
+      `${conn.baseUrl.replace(/\/$/, "")}/workflows/${encodeURIComponent(workflowId)}/events`,
+      conn.token,
+    );
     es = new EventSource(url);
 
     for (const kind of WORKFLOW_EVENT_KINDS) {

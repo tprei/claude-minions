@@ -75,6 +75,16 @@ describe("rest transport", () => {
       expect(result[0]?.status).toBe("active");
     });
 
+    it("sends the saved connection token as a bearer token", async () => {
+      FETCH_MOCK.mockResolvedValueOnce(jsonResponse([]));
+
+      const { listWorkflows } = await import("../rest.js");
+      await listWorkflows(CONN);
+
+      const [, init] = FETCH_MOCK.mock.calls[0] as [string, RequestInit];
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer tok");
+    });
+
     it("passes include=completed query param when option is set", async () => {
       FETCH_MOCK.mockResolvedValueOnce(jsonResponse([]));
 

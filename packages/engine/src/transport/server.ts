@@ -60,6 +60,7 @@ export interface ServerDeps {
   repo: WorkflowRepository;
   recoveryService: RecoveryService;
   executor: RestackExecutor;
+  authToken?: string;
   continueTaskService?: ContinueTaskService;
   retryTaskService?: RetryTaskService;
   mergeService?: MergeService;
@@ -95,6 +96,27 @@ const VALID_COMMAND_KINDS = new Set<AcceptedCommandKind>([
   "land-workflow",
 ]);
 
+const PROTECTED_API_PREFIXES = [
+  "/alerts",
+  "/audit",
+  "/commands",
+  "/doctor",
+  "/metrics",
+  "/push",
+  "/version",
+  "/workflows",
+] as const;
+
+function isProtectedApiPath(pathname: string): boolean {
+  return PROTECTED_API_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function bearerToken(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+  return match?.[1];
+}
+
 export function createServer(deps: ServerDeps): Hono {
   const app = new Hono();
   const { repo } = deps;
@@ -104,13 +126,13 @@ export function createServer(deps: ServerDeps): Hono {
       return c.newResponse(null, 204, {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Last-Event-ID",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, Last-Event-ID",
       });
     }
     await next();
     c.header("Access-Control-Allow-Origin", "*");
     c.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    c.header("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID");
+    c.header("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID");
   });
 
   if (deps.log) {
@@ -125,6 +147,24 @@ export function createServer(deps: ServerDeps): Hono {
         status: c.res.status,
         durationMs: Date.now() - start,
       });
+    });
+  }
+
+  if (deps.authToken !== undefined) {
+    app.use("*", async (c, next) => {
+      const pathname = new URL(c.req.url).pathname;
+      if (!isProtectedApiPath(pathname)) {
+        await next();
+        return;
+      }
+
+      const headerToken = bearerToken(c.req.header("authorization"));
+      const queryToken = pathname.endsWith("/events") ? c.req.query("token") : undefined;
+      if (headerToken !== deps.authToken && queryToken !== deps.authToken) {
+        return c.json({ code: "unauthorized", message: "missing or invalid bearer token", details: {} }, 401);
+      }
+
+      await next();
     });
   }
 
@@ -610,6 +650,10 @@ export function createServer(deps: ServerDeps): Hono {
     app.use("/", async (c, next) => { await next(); c.header("Cache-Control", "no-cache"); });
     app.use("/sw.js", async (c, next) => { await next(); c.header("Cache-Control", "no-cache"); });
     app.get("/", serveStatic({ root: deps.pwaRoot, path: "index.html" }));
+    app.get("/c/*", serveStatic({ root: deps.pwaRoot, path: "index.html" }));
+    app.get("/list/*", serveStatic({ root: deps.pwaRoot, path: "index.html" }));
+    app.get("/dag/*", serveStatic({ root: deps.pwaRoot, path: "index.html" }));
+    app.get("/new/*", serveStatic({ root: deps.pwaRoot, path: "index.html" }));
     app.get("/manifest.json", serveStatic({ root: deps.pwaRoot, path: "manifest.json" }));
     app.get("/sw.js", serveStatic({ root: deps.pwaRoot, path: "sw.js" }));
     app.get("/icons/*", serveStatic({ root: deps.pwaRoot }));

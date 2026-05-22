@@ -76,7 +76,7 @@ describe("connectWorkflowSse", () => {
 
     expect(FakeEventSource.instances).toHaveLength(1);
     const es = FakeEventSource.instances[0]!;
-    expect(es.url).toBe("http://engine-sse/workflows/wf-1/events");
+    expect(es.url).toBe("http://engine-sse/workflows/wf-1/events?token=tok");
 
     conn.close();
   });

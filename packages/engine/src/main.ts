@@ -74,6 +74,7 @@ async function loadReposJson(path: string): Promise<RepoBindingInput[]> {
 async function main(): Promise<void> {
   const port = Number(process.env["MWF_PORT"] ?? "3000");
   const dbPath = required("MWF_DB_PATH");
+  const authToken = required("MWF_TOKEN");
   const workspaceRoot = optional("MWF_WORKSPACE_ROOT");
   const dataDir = optional("MWF_DATA_DIR");
   const pwaDir = optional("MWF_PWA_DIR");
@@ -103,12 +104,14 @@ async function main(): Promise<void> {
 
   const qualityDisabled = process.env["MWF_QUALITY_DISABLED"] === "1";
   const recoveryScanIntervalRaw = optional("MWF_RECOVERY_SCAN_INTERVAL_MS");
+  const runtimeIdleTimeoutRaw = optional("MWF_RUNTIME_IDLE_TIMEOUT_MS");
   const buildSha = optional("MWF_BUILD_SHA") ?? optional("GITHUB_SHA");
   const config: EngineConfig = {
     dbPath,
     repos,
     providerFactory,
     providerName,
+    authToken,
     qualityPlugin: qualityDisabled ? new StubQualityPlugin() : new ExecQualityPlugin(runner),
     logLevel: parseLevel(process.env["MWF_LOG_LEVEL"]),
   };
@@ -125,6 +128,7 @@ async function main(): Promise<void> {
     const tmuxConfig: ConstructorParameters<typeof TmuxRuntimeBackend>[0] = {
       dataDir: dataDir ?? "/var/lib/minions",
     };
+    if (runtimeIdleTimeoutRaw !== undefined) tmuxConfig.idleTimeoutMs = Number(runtimeIdleTimeoutRaw);
     if (dockerContainer !== undefined) {
       tmuxConfig.workerSessionsDir = process.env["MWF_DOCKER_WORKER_SESSIONS_DIR"] ?? "/sessions";
       tmuxConfig.commandPrefix = ["docker", "exec", dockerContainer];

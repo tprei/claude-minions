@@ -80,6 +80,15 @@ describe("static serving with pwaRoot set", () => {
     const res = await app.request("/assets/app-v1.js");
     expect(res.status).toBe(200);
   });
+
+  it("GET /c/:connection/dag/:task falls back to index.html for PWA refreshes", async () => {
+    const app = makeApp(pwaRoot);
+    const res = await app.request("/c/2s455l0y2n4p/dag/t-mpfo6h9k-ap5o3?dag=wf-mpfo6h9k-x4n67");
+    expect(res.status).toBe(200);
+    const ct = res.headers.get("content-type") ?? "";
+    expect(ct).toMatch(/text\/html/);
+    expect(await res.text()).toContain("TEST FIXTURE — slice 16 pwa-stub");
+  });
 });
 
 describe("static serving without pwaRoot", () => {

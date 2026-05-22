@@ -26,10 +26,12 @@ export async function apiFetch<T>(
   init?: RequestInit,
 ): Promise<T> {
   const url = `${conn.baseUrl.replace(/\/$/, "")}${path}`;
+  const token = conn.token.trim();
   const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(token.length > 0 ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
   });
