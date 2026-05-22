@@ -174,6 +174,7 @@ export const TASK_AGENT_OCCUPYING_STATUSES: ReadonlySet<TaskExecutionStatus> = n
   "ready",
   "running",
   "finalizing",
+  "resolving-conflict",
 ]);
 
 export const TASK_TERMINAL_EXECUTION_STATUSES: ReadonlySet<TaskExecutionStatus> = new Set([

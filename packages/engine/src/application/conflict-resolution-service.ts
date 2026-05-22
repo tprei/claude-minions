@@ -145,8 +145,8 @@ export class ConflictResolutionService implements ConflictResolver {
     if (signal !== undefined) runOpts.signal = signal;
     if (qualityDefaultTimeoutMs !== undefined) runOpts.defaultTimeoutMs = qualityDefaultTimeoutMs;
     const result = await quality.run(configs, workspacePath, runOpts);
-    if (result.status === "failed") {
-      return { ok: false, reason: "build verification failed after conflict resolution" };
+    if (result.status !== "passed") {
+      return { ok: false, reason: `build verification did not pass after conflict resolution (${result.status})` };
     }
     return { ok: true };
   }
