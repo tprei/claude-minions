@@ -5,6 +5,7 @@ import type { PullRequestRef, SCMPlugin } from "../plugins/scm-plugin.js";
 import type { WorkspaceBackend } from "../plugins/workspace-backend.js";
 import { slugify } from "../plugins/workspace-backend.js";
 import type { Command, CommandResult } from "./commands.js";
+import { deriveBranch } from "./stacking.js";
 import type { WorkflowRepository } from "./repository.js";
 import type { Logger } from "../observability/logger.js";
 import type { RepoRegistry, ResolvedRepoBinding } from "./repo-registry.js";
@@ -54,10 +55,6 @@ export interface MergeInput {
   workflowId: string;
   taskId: string;
   signal?: AbortSignal;
-}
-
-function deriveBranch(workflowId: string, taskId: string): string {
-  return `minions/${slugify(workflowId)}_${slugify(taskId)}`;
 }
 
 async function getPRWithMergeable(

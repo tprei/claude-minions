@@ -1,8 +1,8 @@
 import { DomainError } from "../domain/errors.js";
 import type { ProviderPlugin } from "../plugins/provider-plugin.js";
 import type { RuntimeBackend } from "../plugins/runtime-backend.js";
-import type { WorkspaceBackend } from "../plugins/workspace-backend.js";
-import { slugify } from "../plugins/workspace-backend.js";
+import type { WorkspaceBackend, WorkspaceCreateSpec } from "../plugins/workspace-backend.js";
+import { deriveBranch, stackBaseRef } from "./stacking.js";
 import type { Command, CommandResult } from "./commands.js";
 import type { WorkflowRepository } from "./repository.js";
 import type { RunOrchestratorDeps } from "./run-orchestrator.js";
@@ -24,10 +24,6 @@ export interface RetryTaskInput {
   workflowId: string;
   taskId: string;
   prompt: string;
-}
-
-function deriveBranch(workflowId: string, taskId: string): string {
-  return `minions/${slugify(workflowId)}_${slugify(taskId)}`;
 }
 
 export class RetryTaskService {
@@ -73,14 +69,17 @@ export class RetryTaskService {
 
     const depArtifacts = dependencyArtifactsFor(workflow, taskId);
 
-    const handle = await workspace.create({
+    const createSpec: WorkspaceCreateSpec = {
       workflowId,
       taskId,
       repoId: workflow.repoId,
       branch: deriveBranch(workflowId, taskId),
       mode: "worktree",
       resetBranch: true,
-    });
+    };
+    const baseRef = stackBaseRef(workflow, taskId);
+    if (baseRef !== undefined) createSpec.baseRef = baseRef;
+    const handle = await workspace.create(createSpec);
 
     try {
       const provider = providerFactory();
