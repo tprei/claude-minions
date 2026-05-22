@@ -39,7 +39,7 @@ if [ -n "${MWF_TOKEN:-}" ] && command -v jq >/dev/null 2>&1; then
   RUNNING_COUNT=$(
     curl -fsS -m 5 -H "Authorization: Bearer $MWF_TOKEN" \
       "$ENGINE_URL/workflows" 2>/dev/null \
-      | jq -r '.[] | select(.status == "running") | .id' 2>/dev/null \
+      | jq -r '.[] | select(any(.graph[]?; .executionStatus == "running")) | .id' 2>/dev/null \
       | wc -l \
       || echo 0
   )
