@@ -480,6 +480,38 @@ describe("MergeService", () => {
     expect(secondResult.workflow.graph["wf-1:task"]?.executionStatus).toBe("pr-open");
   });
 
+  it("merge on pr-open task whose PR was closed externally → no re-open, task transitions to needs-review", async () => {
+    const { repo } = await buildWorkflow();
+    let workflow = await repo.get("wf-1");
+    workflow = transitionTask(workflow!, {
+      kind: "open-review",
+      taskId: "wf-1:task",
+      artifacts: [{ kind: "pr", ref: "https://github.com/o/r/pull/42", producedBy: "test", createdAt: now }],
+      now,
+    });
+    await repo.save(workflow, []);
+
+    const scm = makeScm({ findPullRequest: vi.fn().mockResolvedValue(null) });
+    const workspace = makeWorkspace();
+
+    const service = new MergeService({
+      repo,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      scm,
+      workspace,
+      repoRegistry: TEST_REGISTRY,
+      now: () => now,
+      log: silentLogger(),
+    });
+
+    const result = await service.merge({ workflowId: "wf-1", taskId: "wf-1:task" });
+
+    expect(result.workflow.graph["wf-1:task"]?.executionStatus).toBe("needs-review");
+    expect(scm.openPullRequest).not.toHaveBeenCalled();
+    expect(scm.mergePullRequest).not.toHaveBeenCalled();
+    expect(workspace.cleanup).toHaveBeenCalledOnce();
+  });
+
   it("merge on pr-open task with prDetail.merged === true → skips mergePullRequest, fires merge-task", async () => {
     const { repo } = await buildWorkflow();
     const scm = makeScm({

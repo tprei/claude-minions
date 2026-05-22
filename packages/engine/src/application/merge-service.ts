@@ -258,6 +258,12 @@ export class MergeService {
     let prRef: PullRequestRef;
 
     if (existingPrRef === null) {
+      if (task.executionStatus !== "finalizing") {
+        throw new MergeConflictError(
+          "pr_closed_externally",
+          `task ${taskId} is ${task.executionStatus} but no open PR exists for ${branch}; the PR was closed or deleted outside the engine`,
+        );
+      }
       const wf = await repo.get(workflowId);
       const t = wf?.graph[taskId];
       let summary: Awaited<ReturnType<typeof scm.summarizeBranch>> | undefined;
