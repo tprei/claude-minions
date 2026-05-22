@@ -3,6 +3,7 @@ import type { ProviderEvent, ProviderPlugin } from "../plugins/provider-plugin.j
 import { runProvider } from "../plugins/providers/run-provider.js";
 import type { RunProviderOptions } from "../plugins/providers/run-provider.js";
 import type { RuntimeBackend } from "../plugins/runtime-backend.js";
+import { RuntimeIdleTimeoutError } from "../plugins/runtime-backend.js";
 import type { WorkspaceBackend } from "../plugins/workspace-backend.js";
 import type { Command, CommandResult } from "./commands.js";
 import type { TransitionCommand } from "./transitions.js";
@@ -15,6 +16,8 @@ const PERSISTENT_TRANSCRIPT_KINDS = new Set<ProviderEvent["kind"]>([
   "tool_result",
   "error",
 ]);
+
+const AUTO_RECOVERABLE_ERROR_SOURCES = new Set(["stream_idle_timeout", "socket_connection_closed"]);
 
 export interface RunOrchestratorDeps {
   workflowId: string;
@@ -112,7 +115,7 @@ export class RunOrchestrator {
           lastNonRecoverableError = event;
           continue;
         }
-        if (event.kind === "error" && event.recoverable && event.source === "stream_idle_timeout") {
+        if (event.kind === "error" && event.recoverable && event.source !== undefined && AUTO_RECOVERABLE_ERROR_SOURCES.has(event.source)) {
           shouldAutoRecover = true;
           continue;
         }
@@ -175,7 +178,7 @@ export class RunOrchestrator {
         }
         return;
       }
-    } catch {
+    } catch (err) {
       // Graceful shutdown: signal was aborted, leave the task running so boot can re-spawn it.
       if (this.deps.signal?.aborted === true) {
         log.info("run-orchestrator exiting due to signal abort, leaving task running");
@@ -194,6 +197,30 @@ export class RunOrchestrator {
             log.error("run-orchestrator best-effort update-run failed", { error: (updateErr as Error).message });
           }
         }
+      }
+
+      if (err instanceof RuntimeIdleTimeoutError) {
+        const idleEvent: ProviderEvent = {
+          kind: "error",
+          recoverable: true,
+          source: "runtime_idle_timeout",
+          message: err.message,
+        };
+        if (this.deps.persistTranscript !== undefined) {
+          await this.deps.persistTranscript(now(), idleEvent);
+        }
+        this.deps.publish(idleEvent);
+
+        try {
+          await this.dispatchWithRetry({ kind: "recover-task", taskId, now: now() });
+        } catch (recoverErr) {
+          if (isStale(recoverErr)) {
+            log.error("run-orchestrator stale session on recover-task after runtime idle timeout, exiting", { error: (recoverErr as DomainError).message });
+            return;
+          }
+          throw recoverErr;
+        }
+        return;
       }
 
       try {

@@ -27,6 +27,10 @@ function isStreamIdleTimeoutResult(json: Record<string, unknown>): boolean {
   return typeof json["result"] === "string" && /^\s*API Error:\s*Stream idle timeout\b/i.test(json["result"]);
 }
 
+function isSocketConnectionClosedResult(json: Record<string, unknown>): boolean {
+  return typeof json["result"] === "string" && /\bAPI Error:\s*The socket connection was closed unexpectedly\b/i.test(json["result"]);
+}
+
 export class ClaudeCodeProvider implements ProviderPlugin {
   readonly name = "claude-code";
 
@@ -191,15 +195,23 @@ USER QUESTION:
         const errored = subtype !== "success" || json["is_error"] === true;
         if (errored) {
           const streamIdleTimeout = isStreamIdleTimeoutResult(json);
+          const socketConnectionClosed = isSocketConnectionClosedResult(json);
+          const transientApiError = streamIdleTimeout || socketConnectionClosed;
           events.push({
             kind: "error",
-            recoverable: streamIdleTimeout,
-            ...(streamIdleTimeout ? { source: "stream_idle_timeout" } : {}),
+            recoverable: transientApiError,
+            ...(streamIdleTimeout
+              ? { source: "stream_idle_timeout" }
+              : socketConnectionClosed
+                ? { source: "socket_connection_closed" }
+                : {}),
             message: subtype !== "success"
               ? `unmapped result subtype: ${String(subtype ?? "unknown")}`
-              : streamIdleTimeout
+              : transientApiError
                 ? String(json["result"])
-                : `result is_error=true with subtype: ${String(subtype ?? "unknown")}`,
+                : `result is_error=true with subtype: ${String(subtype ?? "unknown")}${
+                    typeof json["result"] === "string" && json["result"].trim().length > 0 ? `: ${json["result"]}` : ""
+                  }`,
           });
         }
 

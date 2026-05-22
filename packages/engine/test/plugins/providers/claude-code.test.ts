@@ -120,6 +120,43 @@ describe("ClaudeCodeProvider", () => {
     expect(events[2]).toMatchObject({ kind: "final", sessionRef: "sess-idle" });
   });
 
+  it("socket connection closed result is recoverable so the orchestrator can auto-resume", () => {
+    const line = encode({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: "API Error: The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()",
+      session_id: "sess-socket",
+      usage: { input_tokens: 1, output_tokens: 0 },
+    });
+    const events = provider.parseFrame(line);
+    expect(events).toHaveLength(3);
+    expect(events[0]).toEqual({
+      kind: "error",
+      recoverable: true,
+      source: "socket_connection_closed",
+      message: "API Error: The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()",
+    });
+    expect(events[1]).toMatchObject({ kind: "usage" });
+    expect(events[2]).toMatchObject({ kind: "final", sessionRef: "sess-socket" });
+  });
+
+  it("non-recoverable is_error true result includes the provider result text", () => {
+    const line = encode({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: "API Error: auth failed",
+      session_id: "sess-auth",
+      usage: { input_tokens: 1, output_tokens: 0 },
+    });
+    const events = provider.parseFrame(line);
+    expect(events[0]).toMatchObject({ kind: "error", recoverable: false });
+    expect((events[0] as ProviderEvent & { kind: "error" }).message).toBe(
+      "result is_error=true with subtype: success: API Error: auth failed",
+    );
+  });
+
   it("system api_retry emits recoverable error with source api_retry", () => {
     const line = encode({ type: "system", subtype: "api_retry", message: "retry attempt 1" });
     const events = provider.parseFrame(line);

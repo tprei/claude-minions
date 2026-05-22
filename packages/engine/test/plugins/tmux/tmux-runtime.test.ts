@@ -209,6 +209,36 @@ describe("TmuxRuntimeBackend", () => {
     expect(result.sessionId).toMatch(/^mwf-[a-zA-Z0-9_-]+-[a-f0-9]{8}-[a-f0-9]{6}$/);
   });
 
+  it("attach kills and reports idle timeout when a live pane stops producing output", async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = await makeBackend();
+      const client = await getMockClientInner();
+      const followLog = await getFollowLogMock();
+      followLog.mockImplementation(async function* (_logPath: string, _fromOffset: number, signal: AbortSignal) {
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield* [];
+      });
+
+      const iterator = backend.attach("sess-idle", { idleTimeoutMs: 100 })[Symbol.asyncIterator]();
+      const next = iterator.next();
+      const assertion = expect(next).rejects.toMatchObject({
+        name: "RuntimeIdleTimeoutError",
+        sessionId: "sess-idle",
+        idleTimeoutMs: 100,
+      });
+      await vi.advanceTimersByTimeAsync(250);
+
+      await assertion;
+      expect(client.killSession).toHaveBeenCalledWith("sess-idle");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sanitizes task id: strips colon, keeps valid chars", async () => {
     const backend = await makeBackend();
     const result = await backend.start({ taskId: "wf-1:task", workflowId: "wf-1", command: ["echo"] });
@@ -589,38 +619,49 @@ describe("TmuxRuntimeBackend", () => {
   });
 
   it("attach final-drain proceeds and reads after sentinel cap timeout when .done never appears", async () => {
-    const backend = await makeBackend();
-    const client = await getMockClientInner();
-    const followLog = await getFollowLogMock();
-    const fs = await getFsMock();
+    vi.useFakeTimers();
+    try {
+      const backend = await makeBackend();
+      const client = await getMockClientInner();
+      const followLog = await getFollowLogMock();
+      const fs = await getFsMock();
 
-    followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
-      await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
-      yield* [];
-    });
+      followLog.mockImplementation(async function* (_path: string, _offset: number, signal: AbortSignal) {
+        await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+        yield* [];
+      });
 
-    client.paneDead.mockResolvedValue(true);
+      client.paneDead.mockResolvedValue(true);
 
-    // sentinel never appears
-    fs.access.mockRejectedValue(new Error("ENOENT"));
+      // sentinel never appears
+      fs.access.mockRejectedValue(new Error("ENOENT"));
 
-    const capBytes = Buffer.from("cap-tail");
-    fs.open.mockResolvedValue({
-      stat: vi.fn().mockResolvedValue({ size: capBytes.length }),
-      read: vi.fn().mockImplementation(async (buf: Buffer, _off: number, len: number) => {
-        capBytes.copy(buf, 0, 0, len);
-        return { bytesRead: capBytes.length };
-      }),
-      close: vi.fn().mockResolvedValue(undefined),
-    });
+      const capBytes = Buffer.from("cap-tail");
+      fs.open.mockResolvedValue({
+        stat: vi.fn().mockResolvedValue({ size: capBytes.length }),
+        read: vi.fn().mockImplementation(async (buf: Buffer, _off: number, len: number) => {
+          capBytes.copy(buf, 0, 0, len);
+          return { bytesRead: capBytes.length };
+        }),
+        close: vi.fn().mockResolvedValue(undefined),
+      });
 
-    const chunks: RuntimeOutputChunk[] = [];
-    for await (const chunk of backend.attach("cap-session", { fromOffset: 0 })) {
-      chunks.push(chunk);
+      const chunks: RuntimeOutputChunk[] = [];
+      const collect = (async () => {
+        for await (const chunk of backend.attach("cap-session", { fromOffset: 0, idleTimeoutMs: 0 })) {
+          chunks.push(chunk);
+        }
+      })();
+
+      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(1100);
+      await collect;
+
+      const combined = Buffer.concat(chunks.map((c) => Buffer.from(c.bytes))).toString();
+      expect(combined).toBe("cap-tail");
+    } finally {
+      vi.useRealTimers();
     }
-
-    const combined = Buffer.concat(chunks.map((c) => Buffer.from(c.bytes))).toString();
-    expect(combined).toBe("cap-tail");
   }, 2000);
 
   it("attach final-drain deletes .done sentinel after reading", async () => {

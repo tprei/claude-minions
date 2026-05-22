@@ -8,8 +8,10 @@ import type {
   RuntimeStartResult,
   RuntimeStartSpec,
 } from "../runtime-backend.js";
+import { RuntimeIdleTimeoutError } from "../runtime-backend.js";
 import { buildLauncherScript } from "./launcher-script.js";
 import {
+  DEFAULT_RUNTIME_IDLE_TIMEOUT_MS,
   LOG_READ_CHUNK_SIZE,
   PANE_PROBE_INTERVAL_MS,
   SENTINEL_POLL_INTERVAL_MS,
@@ -25,6 +27,7 @@ export interface TmuxRuntimeConfig {
   shortIdLen?: number;
   commandPrefix?: readonly string[];
   workerSessionsDir?: string;
+  idleTimeoutMs?: number;
 }
 
 const DOCKER_DOWN_RE = /\b(?:is not running|is dead|No such container)\b/i;
@@ -54,6 +57,7 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
       shortIdLen: config.shortIdLen ?? 6,
       commandPrefix: config.commandPrefix ?? [],
       workerSessionsDir: config.workerSessionsDir ?? `${config.dataDir}/sessions`,
+      idleTimeoutMs: config.idleTimeoutMs ?? DEFAULT_RUNTIME_IDLE_TIMEOUT_MS,
     };
     this.client = new TmuxClient({
       socketName: this.config.socketName,
@@ -162,6 +166,9 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
 
     let terminated = false;
     let lastOffset = fromOffset;
+    let idleTimedOut = false;
+    let idleError: RuntimeIdleTimeoutError | undefined;
+    let lastActivityAt = Date.now();
 
     const pollTimer = setInterval(async () => {
       if (terminated || signal.aborted) return;
@@ -185,14 +192,33 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
       }
     }, PANE_PROBE_INTERVAL_MS);
 
+    const idleTimeoutMs = opts.idleTimeoutMs ?? this.config.idleTimeoutMs;
+    const idleTimer = idleTimeoutMs > 0
+      ? setInterval(async () => {
+          if (terminated || signal.aborted) return;
+          if (Date.now() - lastActivityAt < idleTimeoutMs) return;
+          idleTimedOut = true;
+          idleError = new RuntimeIdleTimeoutError(sessionId, idleTimeoutMs);
+          terminated = true;
+          await this.stop(sessionId).catch(() => {});
+          internal.abort();
+        }, Math.min(PANE_PROBE_INTERVAL_MS, Math.max(50, idleTimeoutMs)))
+      : undefined;
+
     try {
       for await (const chunk of followLog(logPath, fromOffset, signal)) {
+        lastActivityAt = Date.now();
         lastOffset = chunk.offset + chunk.bytes.byteLength;
         yield { sessionId, offset: chunk.offset, bytes: chunk.bytes };
       }
     } finally {
       clearInterval(pollTimer);
+      if (idleTimer !== undefined) clearInterval(idleTimer);
       internal.abort();
+    }
+
+    if (idleTimedOut && idleError !== undefined) {
+      throw idleError;
     }
 
     if (!terminated || opts.signal?.aborted) return;

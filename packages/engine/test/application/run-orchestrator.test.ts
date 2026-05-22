@@ -4,6 +4,7 @@ import { silentLogger } from "../test-helpers.js";
 import { DomainError } from "../../src/domain/errors.js";
 import type { Command, CommandResult } from "../../src/application/commands.js";
 import type { RuntimeBackend, RuntimeAttachOptions, RuntimeOutputChunk } from "../../src/plugins/runtime-backend.js";
+import { RuntimeIdleTimeoutError } from "../../src/plugins/runtime-backend.js";
 import { StubProviderPlugin } from "../../src/plugins/providers/stub.js";
 import { StubWorkspaceBackend } from "../../src/plugins/workspace/stub-workspace.js";
 import { createSingleTaskWorkflow } from "../../src/domain/workflow.js";
@@ -120,6 +121,34 @@ describe("RunOrchestrator", () => {
     expect(typeof t.outputOffset).toBe("number");
   });
 
+  it("runtime idle timeout → best-effort update-run then recover-task for scheduler resume", async () => {
+    const calls: string[] = [];
+    const published: ProviderEvent[] = [];
+    const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
+      if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
+      return makeCommandResult();
+    });
+
+    const chunks = makeChunks(["line-1"], 0);
+    const orchestrator = makeOrchestrator(
+      [],
+      chunks,
+      applyCommand,
+      new RuntimeIdleTimeoutError("session-1", 100),
+      published.push.bind(published),
+    );
+    await orchestrator.run();
+
+    expect(calls).toEqual(["update-run", "recover-task"]);
+    expect(calls).not.toContain("mark-interrupted");
+    expect(published).toContainEqual({
+      kind: "error",
+      recoverable: true,
+      source: "runtime_idle_timeout",
+      message: "runtime session session-1 produced no output for 100ms",
+    });
+  });
+
   it("empty final.sessionRef with no prior sessionRef → no update-run dispatched, complete-runtime fires", async () => {
     const calls: string[] = [];
     const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
@@ -227,6 +256,47 @@ describe("RunOrchestrator", () => {
       message: "API Error: Stream idle timeout - partial response received",
     };
     const finalEvent: ProviderEvent = { kind: "final", sessionRef: "ref-idle" };
+    const provider = new StubProviderPlugin({ frames: [[errorEvent], [finalEvent]] });
+    const runtime = makeRuntime(makeChunks(["line-1", "line-2"], 0));
+    const orchestrator = new RunOrchestrator({
+      workflowId: "wf-1",
+      taskId: "task-1",
+      runId: "run-1",
+      runtimeSessionId: "session-1",
+      provider,
+      runtime,
+      workspace,
+      workspaceId: "stub-wf1_task1",
+      applyCommand,
+      publish: () => {},
+      now: () => now,
+      log: silentLogger(),
+    });
+
+    await orchestrator.run();
+
+    expect(calls).toEqual(["update-run", "recover-task"]);
+    expect(calls).not.toContain("complete-runtime");
+    expect(calls).not.toContain("mark-interrupted");
+    expect(cleanupSpy).not.toHaveBeenCalled();
+  });
+
+  it("socket connection closed error then final → update-run then recover-task for scheduler resume", async () => {
+    const calls: string[] = [];
+    const workspace = new StubWorkspaceBackend();
+    const cleanupSpy = vi.spyOn(workspace, "cleanup");
+    const applyCommand = vi.fn(async (cmd: Command): Promise<CommandResult> => {
+      if (cmd.kind === "transition-task") calls.push(cmd.transition.kind);
+      return makeCommandResult();
+    });
+
+    const errorEvent: ProviderEvent = {
+      kind: "error",
+      recoverable: true,
+      source: "socket_connection_closed",
+      message: "API Error: The socket connection was closed unexpectedly",
+    };
+    const finalEvent: ProviderEvent = { kind: "final", sessionRef: "ref-socket" };
     const provider = new StubProviderPlugin({ frames: [[errorEvent], [finalEvent]] });
     const runtime = makeRuntime(makeChunks(["line-1", "line-2"], 0));
     const orchestrator = new RunOrchestrator({
