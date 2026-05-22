@@ -64,15 +64,15 @@ export class GitHubScmPlugin implements SCMPlugin {
   }
 
   async rebase(path: string, onto: string): Promise<MergeResult> {
+    const target = await this.fetchBaseTarget(path, onto);
     try {
-      await this.git.run(path, ["rebase", onto]);
+      await this.git.run(path, ["rebase", target]);
       return { kind: "clean" };
     } catch (err) {
       if (err instanceof GitError && /CONFLICT/i.test(err.stdout + err.stderr)) {
         let conflictPaths: string[] = [];
         try {
-          const { stdout } = await this.git.run(path, ["diff", "--name-only", "--diff-filter=U"]);
-          conflictPaths = stdout.trim().split("\n").filter(Boolean);
+          conflictPaths = await this.git.listConflictedFiles(path);
         } catch {
         }
         try {
@@ -86,8 +86,9 @@ export class GitHubScmPlugin implements SCMPlugin {
   }
 
   async rebaseLeaveConflicts(path: string, onto: string): Promise<MergeResult> {
+    const target = await this.fetchBaseTarget(path, onto);
     try {
-      await this.git.run(path, ["rebase", onto]);
+      await this.git.run(path, ["rebase", target]);
       return { kind: "clean" };
     } catch (err) {
       if (err instanceof GitError && /CONFLICT/i.test(err.stdout + err.stderr)) {
@@ -95,6 +96,16 @@ export class GitHubScmPlugin implements SCMPlugin {
       }
       throw err;
     }
+  }
+
+  // Rebase onto the freshly-fetched remote base so conflicts with already-merged
+  // PRs surface locally (where the conflict resolver can act) instead of only at
+  // GitHub's mergeability check.
+  private async fetchBaseTarget(path: string, onto: string): Promise<string> {
+    await this.git.run(path, ["fetch", "origin", onto], {
+      env: { GIT_ASKPASS: ASKPASS_PATH, GH_TOKEN: this.token },
+    });
+    return `origin/${onto}`;
   }
 
   async pushBranch(path: string, branch: string): Promise<void> {
