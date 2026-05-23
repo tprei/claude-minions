@@ -834,7 +834,7 @@ async function buildMetrics(input: {
 }): Promise<string> {
   const workflows = await input.repo.list({ includeCompleted: true });
   const recoverable = await input.repo.listRecoverable();
-  const schedulerStats = input.schedulerService?.getStats() ?? { attachedWorkflows: 0, inFlight: 0 };
+  const schedulerStats = input.schedulerService?.getStats() ?? { attachedWorkflows: 0, inFlight: 0, failures: 0 };
   let subscriberTotal = 0;
   if (hasSubscriberCount(input.repo)) {
     const subscriberRepo = input.repo;

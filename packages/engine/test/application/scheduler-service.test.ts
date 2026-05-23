@@ -14,9 +14,20 @@ import type { ProviderEvent } from "../../src/plugins/provider-plugin.js";
 import { RunOrchestrator } from "../../src/application/run-orchestrator.js";
 import { applyCommand } from "../../src/application/commands.js";
 import type { NodeRun } from "../../src/domain/runs.js";
+import type { Workflow } from "../../src/domain/types.js";
+import type { WorkflowRepository } from "../../src/application/repository.js";
 
 const NOW = "2026-05-10T00:00:00.000Z";
 const now = () => NOW;
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise<void>((r) => setTimeout(r, 5));
+  }
+  throw new Error("waitFor timed out");
+}
 
 function makeFinalChunk(frameIndex: number): RuntimeOutputChunk {
   // Each "line" triggers a parseFrame call. The line content doesn't matter — stub uses a counter.
@@ -371,6 +382,316 @@ describe("SchedulerService", () => {
 
       // spawnCount should be exactly 1
       expect(spawnCount).toBe(1);
+    } finally {
+      controller.abort();
+    }
+  });
+});
+
+interface ControlledRepoHooks {
+  onGet?: (callIndex: number, workflowId: string) => Promise<Workflow | undefined> | undefined;
+}
+
+function wrapRepo(repo: InMemoryWorkflowRepository, hooks: ControlledRepoHooks): WorkflowRepository {
+  const realGet = repo.get.bind(repo);
+  let getCalls = 0;
+  return {
+    get: async (workflowId: string): Promise<Workflow | undefined> => {
+      const callIndex = getCalls++;
+      const override = hooks.onGet?.(callIndex, workflowId);
+      if (override !== undefined) return override;
+      return realGet(workflowId);
+    },
+    save: repo.save.bind(repo),
+    delete: repo.delete.bind(repo),
+    eventsSince: repo.eventsSince.bind(repo),
+    latestCursor: repo.latestCursor.bind(repo),
+    subscribe: repo.subscribe.bind(repo),
+    publishTransient: repo.publishTransient.bind(repo),
+    lookupIdempotency: repo.lookupIdempotency.bind(repo),
+    listRecoverable: repo.listRecoverable.bind(repo),
+    list: repo.list.bind(repo),
+    appendTranscript: repo.appendTranscript.bind(repo),
+    listTranscript: repo.listTranscript.bind(repo),
+  };
+}
+
+function callDispatchPending(svc: SchedulerService, workflowId: string): Promise<void> {
+  return (svc as unknown as { dispatchPending(id: string): Promise<void> }).dispatchPending(workflowId);
+}
+
+describe("SchedulerService — dispatch-race guard (Fix #3)", () => {
+  it("two concurrent dispatchPending calls for the same pending task dispatch it only once", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const controller = new AbortController();
+
+    try {
+      const wf = createWorkflow({
+        id: "wf-race",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "t-race", title: "T", prompt: "P" }],
+      }, now);
+      await repo.save(wf, []);
+
+      // Both dispatchPending invocations must reach the candidate loop concurrently.
+      // The repo.get always resolves the same live (pending) snapshot — there is NO
+      // gating that serializes the two calls. Each get is a real async hop, so the
+      // two invocations interleave: A's initial get resolves, A enters the loop and
+      // synchronously claims the key (has-check + add, no await between them), then A
+      // awaits the freshness get; meanwhile B's initial get resolves and B enters the
+      // loop, but now sees inFlight.has(key) === true and skips. Without the
+      // synchronous claim, both would pass the has-check and dispatch twice.
+      const controlledRepo = wrapRepo(repo, {});
+
+      const dispatchCount = { value: 0 };
+      const runSpy = vi.fn().mockImplementation(async () => {
+        dispatchCount.value++;
+        // Never resolve the dispatch promise — keeps the key in inFlight so the
+        // second invocation cannot reclaim it via the .finally cleanup.
+        await new Promise<void>(() => {});
+      });
+      const retryService = { run: runSpy } as unknown as RetryTaskService;
+
+      const svc = new SchedulerService({
+        repo: controlledRepo,
+        retry: retryService,
+        log: silentLogger(),
+        signal: controller.signal,
+      });
+
+      const p1 = callDispatchPending(svc, "wf-race");
+      const p2 = callDispatchPending(svc, "wf-race");
+
+      await Promise.all([p1, p2]);
+
+      expect(dispatchCount.value).toBe(1);
+      expect(svc.getStats().inFlight).toBe(1);
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it("inFlight key is not leaked after a stale (not-pending) freshness validation", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const controller = new AbortController();
+
+    try {
+      const wf = createWorkflow({
+        id: "wf-stale",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "t-stale", title: "T", prompt: "P" }],
+      }, now);
+      await repo.save(wf, []);
+      // Transition the task to running so the live snapshot is no longer pending.
+      await applyCommand(repo, {
+        kind: "transition-task",
+        workflowId: "wf-stale",
+        transition: { kind: "mark-ready", taskId: "t-stale", now: NOW },
+      });
+      await applyCommand(repo, {
+        kind: "transition-task",
+        workflowId: "wf-stale",
+        transition: { kind: "mark-running", taskId: "t-stale", sessionId: "s-stale", now: NOW },
+      });
+
+      // First get (planDispatch) returns a stale pending snapshot so a candidate is
+      // produced; the freshness re-read returns the live (running) snapshot so
+      // validation fails and the key must be released.
+      const stalePending = createWorkflow({
+        id: "wf-stale",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "t-stale", title: "T", prompt: "P" }],
+      }, now);
+
+      const controlledRepo = wrapRepo(repo, {
+        onGet: (callIndex) => (callIndex === 0 ? Promise.resolve(stalePending) : undefined),
+      });
+
+      const runSpy = vi.fn().mockResolvedValue(undefined);
+      const retryService = { run: runSpy } as unknown as RetryTaskService;
+
+      const svc = new SchedulerService({
+        repo: controlledRepo,
+        retry: retryService,
+        log: silentLogger(),
+        signal: controller.signal,
+      });
+
+      await callDispatchPending(svc, "wf-stale");
+
+      expect(svc.getStats().inFlight).toBe(0);
+      expect(runSpy).not.toHaveBeenCalled();
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it("inFlight key is not leaked when the freshness re-read THROWS, and the task can be dispatched on a later call", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const controller = new AbortController();
+
+    try {
+      const wf = createWorkflow({
+        id: "wf-throw",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "t-throw", title: "T", prompt: "P" }],
+      }, now);
+      await repo.save(wf, []);
+
+      // get call #0 = planDispatch (live pending), #1 = freshness re-read (THROWS),
+      // subsequent calls fall through to the real live snapshot.
+      const controlledRepo = wrapRepo(repo, {
+        onGet: (callIndex) =>
+          callIndex === 1 ? Promise.reject(new Error("SQLITE_BUSY")) : undefined,
+      });
+
+      const runSpy = vi.fn().mockImplementation(async () => {});
+      const retryService = { run: runSpy } as unknown as RetryTaskService;
+
+      const svc = new SchedulerService({
+        repo: controlledRepo,
+        retry: retryService,
+        log: silentLogger(),
+        signal: controller.signal,
+      });
+
+      // First call: freshness read throws → key must be released, no dispatch.
+      await callDispatchPending(svc, "wf-throw");
+      expect(svc.getStats().inFlight).toBe(0);
+      expect(runSpy).not.toHaveBeenCalled();
+
+      // Second call: reads succeed → the task is still pending and dispatches.
+      await callDispatchPending(svc, "wf-throw");
+      expect(runSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.abort();
+    }
+  });
+});
+
+describe("SchedulerService — failures Map pruning (Fix #2)", () => {
+  it("records backoff on transient dispatch failure and does NOT prune it on a re-evaluation while the workflow is still active", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const controller = new AbortController();
+
+    try {
+      const wf = createWorkflow({
+        id: "wf-keep-backoff",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "t-keep", title: "T", prompt: "P" }],
+      }, now);
+      await repo.save(wf, []);
+
+      const runSpy = vi.fn().mockRejectedValue(new Error("transient failure"));
+      const retryService = { run: runSpy } as unknown as RetryTaskService;
+
+      const svc = new SchedulerService({
+        repo,
+        retry: retryService,
+        log: silentLogger(),
+        signal: controller.signal,
+        dispatchBackoffMs: 60_000,
+      });
+
+      // Dispatch twice so the same failure signature accrues a backoff window.
+      await callDispatchPending(svc, "wf-keep-backoff");
+      await waitFor(() => svc.getStats().inFlight === 0 && runSpy.mock.calls.length === 1);
+      await callDispatchPending(svc, "wf-keep-backoff");
+      await waitFor(() => svc.getStats().inFlight === 0 && runSpy.mock.calls.length === 2);
+
+      // Backoff is now recorded; a failure entry exists.
+      expect(svc.getStats().failures).toBe(1);
+
+      // Re-evaluate while the workflow is still active — the entry must survive.
+      await callDispatchPending(svc, "wf-keep-backoff");
+      expect(svc.getStats().failures).toBe(1);
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it("prunes a workflow's failure entries when the workflow is gone (deleted)", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const controller = new AbortController();
+
+    try {
+      const wf = createWorkflow({
+        id: "wf-gone",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "t-gone", title: "T", prompt: "P" }],
+      }, now);
+      await repo.save(wf, []);
+
+      const runSpy = vi.fn().mockRejectedValue(new Error("transient failure"));
+      const retryService = { run: runSpy } as unknown as RetryTaskService;
+
+      const svc = new SchedulerService({
+        repo,
+        retry: retryService,
+        log: silentLogger(),
+        signal: controller.signal,
+        dispatchBackoffMs: 60_000,
+      });
+
+      await callDispatchPending(svc, "wf-gone");
+      await waitFor(() => svc.getStats().inFlight === 0 && runSpy.mock.calls.length === 1);
+      expect(svc.getStats().failures).toBe(1);
+
+      // Delete the workflow, then re-evaluate — the gone workflow triggers pruning.
+      await repo.delete("wf-gone");
+      await callDispatchPending(svc, "wf-gone");
+
+      expect(svc.getStats().failures).toBe(0);
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it("prunes a workflow's failure entries when the workflow reaches a terminal status", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const controller = new AbortController();
+
+    try {
+      const wf = createWorkflow({
+        id: "wf-terminal",
+        kind: "single-task",
+        repoId: "fixture-repo",
+        tasks: [{ id: "t-term", title: "T", prompt: "P" }],
+      }, now);
+      await repo.save(wf, []);
+
+      const runSpy = vi.fn().mockRejectedValue(new Error("transient failure"));
+      const retryService = { run: runSpy } as unknown as RetryTaskService;
+
+      const svc = new SchedulerService({
+        repo,
+        retry: retryService,
+        log: silentLogger(),
+        signal: controller.signal,
+        dispatchBackoffMs: 60_000,
+      });
+
+      await callDispatchPending(svc, "wf-terminal");
+      await waitFor(() => svc.getStats().inFlight === 0 && runSpy.mock.calls.length === 1);
+      expect(svc.getStats().failures).toBe(1);
+
+      // Drive the workflow to a terminal (cancelled) status, then re-evaluate.
+      await applyCommand(repo, {
+        kind: "transition-task",
+        workflowId: "wf-terminal",
+        transition: { kind: "cancel-task", taskId: "t-term", now: NOW },
+      });
+      const terminal = await repo.get("wf-terminal");
+      expect(terminal?.status).not.toBe("active");
+
+      await callDispatchPending(svc, "wf-terminal");
+      expect(svc.getStats().failures).toBe(0);
     } finally {
       controller.abort();
     }

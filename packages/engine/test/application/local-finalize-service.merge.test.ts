@@ -324,3 +324,121 @@ describe("LocalFinalizeService — real merge path", () => {
     ctrl.abort();
   });
 });
+
+function makeGatedMergeGitClient(opts: {
+  counter: { value: number };
+  mergeGate: Promise<void>;
+}): GitClient {
+  return {
+    revParse: vi.fn().mockImplementation(async (_cwd: string, ref: string) => {
+      if (ref === BASE_BRANCH) return "basesha";
+      return "somesha";
+    }),
+    run: vi.fn().mockImplementation(async (_cwd: string, args: string[]) => {
+      if (args.includes("rev-list") && args.includes("--count")) {
+        return { stdout: "1", stderr: "" };
+      }
+      if (args.includes("merge") && args.includes("--ff-only")) {
+        opts.counter.value++;
+        await opts.mergeGate;
+        return { stdout: "", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    }),
+    worktreeAdd: vi.fn(),
+    worktreeRemove: vi.fn(),
+    worktreePrune: vi.fn(),
+    worktreeList: vi.fn(),
+    branchExists: vi.fn(),
+  } as unknown as GitClient;
+}
+
+function spawnFinalize(svc: LocalFinalizeService, workflowId: string, taskId: string): void {
+  (svc as unknown as { spawnFinalizeForTask(w: string, t: string): void }).spawnFinalizeForTask(workflowId, taskId);
+}
+
+describe("LocalFinalizeService — per-task idempotency guard", () => {
+  it("two concurrent finalize triggers for the same task result in exactly one git merge attempt", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await makeWorkflowInFinalizing(repo, true);
+
+    const counter = { value: 0 };
+    let resolveMerge!: () => void;
+    const mergeGate = new Promise<void>((r) => { resolveMerge = r; });
+    const gitClient = makeGatedMergeGitClient({ counter, mergeGate });
+    const workspace = makeWorkspace(makeHandle());
+
+    const ctrl = new AbortController();
+    const svc = new LocalFinalizeService({
+      workflowRepo: repo,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      signal: ctrl.signal,
+      now,
+      log: silentLogger(),
+      workspace,
+      gitClient,
+      repoRegistry: REPO_REGISTRY,
+    });
+
+    // Fire the two real concurrent triggers the service can produce for the same
+    // task: the attach-time scan of existing finalizing tasks and the event-consumer
+    // path. Both call spawnFinalizeForTask synchronously while the first merge is
+    // still blocked on mergeGate. Without the taskControllers guard, both would reach
+    // git merge → corruption on the shared worktree.
+    spawnFinalize(svc, WORKFLOW_ID, TASK_ID);
+    spawnFinalize(svc, WORKFLOW_ID, TASK_ID);
+
+    // Let the first finalize advance to the (blocked) merge call.
+    await new Promise<void>((r) => setTimeout(r, 20));
+    expect(counter.value).toBe(1);
+
+    // Unblock; the single merge completes and the task transitions to merged.
+    resolveMerge();
+    await new Promise<void>((r) => setTimeout(r, 30));
+
+    expect(counter.value).toBe(1);
+    const wf = await repo.get(WORKFLOW_ID);
+    expect(wf?.graph[TASK_ID]?.executionStatus).toBe("merged");
+    ctrl.abort();
+  });
+
+  it("a second trigger after the first finished re-runs finalize (guard only blocks while in-flight)", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await makeWorkflowInFinalizing(repo, true);
+
+    const counter = { value: 0 };
+    const gitClient = makeGatedMergeGitClient({ counter, mergeGate: Promise.resolve() });
+    const workspace = makeWorkspace(makeHandle());
+
+    const ctrl = new AbortController();
+    const svc = new LocalFinalizeService({
+      workflowRepo: repo,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      signal: ctrl.signal,
+      now,
+      log: silentLogger(),
+      workspace,
+      gitClient,
+      repoRegistry: REPO_REGISTRY,
+    });
+
+    // First trigger runs to completion (merge resolves immediately) and clears the
+    // controller in its .finally, so the key is free again.
+    spawnFinalize(svc, WORKFLOW_ID, TASK_ID);
+    await new Promise<void>((r) => setTimeout(r, 30));
+
+    const wf = await repo.get(WORKFLOW_ID);
+    expect(wf?.graph[TASK_ID]?.executionStatus).toBe("merged");
+    expect(counter.value).toBe(1);
+
+    // The task is no longer finalizing, but the merge path runs again because the
+    // guard only suppresses concurrent in-flight triggers, not sequential ones.
+    // tryMerge will still attempt the (now ff-only no-op) merge, proving the
+    // controller was released after the first finalize completed.
+    spawnFinalize(svc, WORKFLOW_ID, TASK_ID);
+    await new Promise<void>((r) => setTimeout(r, 30));
+    expect(counter.value).toBe(2);
+
+    ctrl.abort();
+  });
+});
