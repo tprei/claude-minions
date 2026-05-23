@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS transcripts (
   occurred_at TEXT NOT NULL,
   kind TEXT NOT NULL,
   payload TEXT NOT NULL,
-  PRIMARY KEY (run_id, seq)
+  PRIMARY KEY (workflow_id, run_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_transcripts_workflow ON transcripts(workflow_id);
 `;

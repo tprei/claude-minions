@@ -4,6 +4,14 @@
 // in the buffer; the cursor <= lastYielded dedup guard handles the overlap.
 import type { WorkflowEvent } from "../domain/events.js";
 
+const BUFFER_CAP = 10_000;
+
+type TransientKind = "provider-event" | "merge-phase" | "ci-poll-result";
+
+function isTransient(event: WorkflowEvent): boolean {
+  return event.kind === "provider-event" || event.kind === "merge-phase" || event.kind === "ci-poll-result";
+}
+
 interface Subscriber {
   buffer: WorkflowEvent[];
   resolve: (() => void) | undefined;
@@ -106,6 +114,24 @@ export class SubscriberHub {
     };
   }
 
+  private enforceBufferCap(sub: Subscriber): void {
+    if (sub.buffer.length <= BUFFER_CAP) return;
+    const excess = sub.buffer.length - BUFFER_CAP;
+    let dropped = 0;
+    let i = 0;
+    while (dropped < excess && i < sub.buffer.length) {
+      if (isTransient(sub.buffer[i]!)) {
+        sub.buffer.splice(i, 1);
+        dropped++;
+      } else {
+        i++;
+      }
+    }
+    if (sub.buffer.length > BUFFER_CAP) {
+      sub.abort();
+    }
+  }
+
   notify(workflowId: string, events: WorkflowEvent[]): void {
     const subs = this.subscribers.get(workflowId);
     if (!subs || events.length === 0) return;
@@ -113,7 +139,8 @@ export class SubscriberHub {
       for (const event of events) {
         sub.buffer.push(event);
       }
-      if (sub.resolve) {
+      this.enforceBufferCap(sub);
+      if (!sub.aborted && sub.resolve) {
         const resolve = sub.resolve;
         sub.resolve = undefined;
         resolve();
@@ -121,12 +148,13 @@ export class SubscriberHub {
     }
   }
 
-  notifyTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: "provider-event" | "merge-phase" | "ci-poll-result" }>): void {
+  notifyTransient(workflowId: string, event: Extract<WorkflowEvent, { kind: TransientKind }>): void {
     const subs = this.subscribers.get(workflowId);
     if (!subs) return;
     for (const sub of Array.from(subs)) {
       sub.buffer.push(event);
-      if (sub.resolve) {
+      this.enforceBufferCap(sub);
+      if (!sub.aborted && sub.resolve) {
         const resolve = sub.resolve;
         sub.resolve = undefined;
         resolve();

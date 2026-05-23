@@ -1,8 +1,10 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SQLiteWorkflowRepository } from "../../src/persistence/sqlite-repo.js";
+import type { TranscriptEntry } from "../../src/application/repository.js";
 import type { WorkflowEvent } from "../../src/domain/events.js";
 import type { NodeRun } from "../../src/domain/runs.js";
 import { createSingleTaskWorkflow } from "../../src/domain/workflow.js";
@@ -358,6 +360,55 @@ describe("SQLiteWorkflowRepository", () => {
 
       const entries = await repo.listTranscript("wf-1", "run-A");
       expect(entries[0]?.providerEvent).toEqual(event);
+    });
+
+    it("two workflows sharing the same runId never collide and each reads only its own rows in order", async () => {
+      const sharedRunId = "run-task-1";
+
+      const textOf = (entry: TranscriptEntry): string =>
+        entry.providerEvent.kind === "assistant_text" || entry.providerEvent.kind === "thinking"
+          ? entry.providerEvent.text
+          : "";
+
+      await expect(repo.appendTranscript("wf-A", sharedRunId, now, { kind: "assistant_text", text: "A1" })).resolves.toBeUndefined();
+      await expect(repo.appendTranscript("wf-B", sharedRunId, now, { kind: "thinking", text: "B1" })).resolves.toBeUndefined();
+      await expect(repo.appendTranscript("wf-A", sharedRunId, now, { kind: "assistant_text", text: "A2" })).resolves.toBeUndefined();
+      await expect(repo.appendTranscript("wf-A", sharedRunId, now, { kind: "assistant_text", text: "A3" })).resolves.toBeUndefined();
+      await expect(repo.appendTranscript("wf-B", sharedRunId, now, { kind: "thinking", text: "B2" })).resolves.toBeUndefined();
+
+      const entriesA = await repo.listTranscript("wf-A", sharedRunId);
+      const entriesB = await repo.listTranscript("wf-B", sharedRunId);
+
+      expect(entriesA.map(textOf)).toEqual(["A1", "A2", "A3"]);
+      expect(entriesB.map(textOf)).toEqual(["B1", "B2"]);
+      expect(entriesA.map((e) => e.seq)).toEqual([...entriesA.map((e) => e.seq)].sort((a, b) => a - b));
+      expect(entriesB.map((e) => e.seq)).toEqual([...entriesB.map((e) => e.seq)].sort((a, b) => a - b));
+    });
+
+    it("legacy DB with old (run_id, seq) PK: shared runId across workflows does not collide", async () => {
+      repo.close();
+      const legacyPath = makeTempPath();
+      const seed = new Database(legacyPath);
+      seed.exec(
+        "CREATE TABLE transcripts (" +
+          "workflow_id TEXT NOT NULL, run_id TEXT NOT NULL, seq INTEGER NOT NULL, " +
+          "occurred_at TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL, " +
+          "PRIMARY KEY (run_id, seq))",
+      );
+      seed.close();
+
+      const legacyRepo = new SQLiteWorkflowRepository(legacyPath);
+      try {
+        const sharedRunId = "run-task-1";
+        await expect(legacyRepo.appendTranscript("wf-A", sharedRunId, now, { kind: "assistant_text", text: "A1" })).resolves.toBeUndefined();
+        await expect(legacyRepo.appendTranscript("wf-B", sharedRunId, now, { kind: "thinking", text: "B1" })).resolves.toBeUndefined();
+        await expect(legacyRepo.appendTranscript("wf-A", sharedRunId, now, { kind: "assistant_text", text: "A2" })).resolves.toBeUndefined();
+
+        expect(await legacyRepo.listTranscript("wf-A", sharedRunId)).toHaveLength(2);
+        expect(await legacyRepo.listTranscript("wf-B", sharedRunId)).toHaveLength(1);
+      } finally {
+        legacyRepo.close();
+      }
     });
   });
 });
