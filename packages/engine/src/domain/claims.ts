@@ -29,6 +29,9 @@ export function claimScopesOverlap(left: string, right: string): boolean {
   if (leftPrefix && right.startsWith(leftPrefix)) return true;
   if (rightPrefix && left.startsWith(rightPrefix)) return true;
 
+  if (isBareDirectoryOf(left, right)) return true;
+  if (isBareDirectoryOf(right, left)) return true;
+
   return false;
 }
 
@@ -36,4 +39,9 @@ function directoryPrefix(scope: string): string | null {
   if (scope.endsWith("/**")) return scope.slice(0, -2);
   if (scope.endsWith("/*")) return scope.slice(0, -1);
   return null;
+}
+
+function isBareDirectoryOf(dir: string, path: string): boolean {
+  if (dir.endsWith("/") || dir.endsWith("/*") || dir.endsWith("/**")) return false;
+  return path.startsWith(dir + "/");
 }

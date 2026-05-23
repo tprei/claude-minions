@@ -230,6 +230,9 @@ export function transitionTask(workflow: Workflow, command: TransitionCommand): 
   }
 
   const rule = TRANSITIONS[command.kind];
+  if (!rule) {
+    throw new DomainError("invalid_transition", "unknown transition kind", { kind: command.kind });
+  }
   if (!rule.from.includes(task.executionStatus)) {
     throw new DomainError("invalid_transition", "task status does not allow transition", {
       taskId: task.id,

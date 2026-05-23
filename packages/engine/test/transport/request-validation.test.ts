@@ -301,4 +301,95 @@ describe("request shape validation", () => {
 
     expect(res.status).toBe(201);
   });
+
+  it("transition-task with bogus transition.kind returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postCommand(app, {
+      kind: "transition-task",
+      workflowId: "wf-1",
+      transition: { kind: "not-a-real-kind", taskId: "t1", now },
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("transition.kind");
+  });
+
+  it("transition-task with missing transition.kind returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postCommand(app, {
+      kind: "transition-task",
+      workflowId: "wf-1",
+      transition: { taskId: "t1", now },
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("transition.kind");
+  });
+
+  it("POST /workflows with policy.maxConcurrent 0 returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      policy: { maxConcurrent: 0 },
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string; expected: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("policy.maxConcurrent");
+  });
+
+  it("POST /workflows with policy.maxConcurrent -1 returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      policy: { maxConcurrent: -1 },
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("policy.maxConcurrent");
+  });
+
+  it("POST /workflows with policy.maxConcurrent NaN returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t1", title: "T", prompt: "P" }],
+      policy: { maxConcurrent: NaN },
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("policy.maxConcurrent");
+  });
+
+  it("POST /workflows with empty task id returns 400 invalid_request", async () => {
+    const { app } = makeApp();
+
+    const res = await postWorkflow(app, {
+      id: "wf-1",
+      kind: "single-task", repoId: "fixture-repo",
+      tasks: [{ id: "", title: "T", prompt: "P" }],
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { code: string; details: { field: string; expected: string } };
+    expect(body.code).toBe("invalid_request");
+    expect(body.details.field).toBe("tasks[0].id");
+    expect(body.details.expected).toBe("non-empty string");
+  });
 });
