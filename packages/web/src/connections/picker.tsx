@@ -6,6 +6,7 @@ import { Modal } from "../components/Modal.js";
 import { Button } from "../components/Button.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { QrImportModal } from "../pwa/QrImportModal.js";
+import { validateBaseUrl } from "../pwa/validateBaseUrl.js";
 import { parseUrl } from "../routing/parseUrl.js";
 import { setUrlState } from "../routing/urlState.js";
 import { cx } from "../util/classnames.js";
@@ -114,7 +115,7 @@ function ConnectionRow({
   );
 }
 
-function QrConfirmDialog({
+export function QrConfirmDialog({
   candidate,
   onAdded,
   onClose,
@@ -127,11 +128,21 @@ function QrConfirmDialog({
   const [label, setLabel] = useState(candidate.label);
   const [baseUrl, setBaseUrl] = useState(candidate.baseUrl);
   const [color, setColor] = useState(candidate.color || PRESET_COLORS[0]!);
+  const [error, setError] = useState<string | null>(null);
 
   function handleSubmit(e: FormEvent): void {
     e.preventDefault();
+    setError(null);
     const trimmedUrl = baseUrl.trim().replace(/\/$/, "");
     const trimmedLabel = label.trim() || trimmedUrl;
+
+    try {
+      validateBaseUrl(trimmedUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid base URL");
+      return;
+    }
+
     const conn = add({ label: trimmedLabel, baseUrl: trimmedUrl, token: candidate.token, color });
     onAdded(conn.id);
   }
@@ -163,6 +174,10 @@ function QrConfirmDialog({
             onChange={e => setBaseUrl(e.target.value)}
           />
         </div>
+
+        {error && (
+          <p className="text-xs text-err">{error}</p>
+        )}
 
         <div className="flex flex-col gap-1">
           <label className="text-xs text-fg-muted">Color</label>

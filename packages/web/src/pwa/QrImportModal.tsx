@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import QrScanner from "qr-scanner";
 import type { VersionInfo } from "@minions/shared";
+import { validateBaseUrl } from "./validateBaseUrl.js";
 
 interface ConnectionPayload {
   label: string;
@@ -51,6 +52,8 @@ export function QrImportModal({ onImport, onClose }: Props) {
       if (!isConnectionPayload(parsed)) {
         throw new Error("QR payload missing required fields: label, baseUrl, token");
       }
+
+      validateBaseUrl(parsed.baseUrl);
 
       const url = `${parsed.baseUrl.replace(/\/$/, "")}/version`;
       const res = await fetch(url, {

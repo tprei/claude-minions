@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useConnectionStore, type Connection } from "./store.js";
-import { ConnectionPicker } from "./picker.js";
+import { ConnectionPicker, QrConfirmDialog } from "./picker.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -63,6 +63,15 @@ function buttonByText(text: string): HTMLButtonElement {
   return button;
 }
 
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 describe("ConnectionPicker", () => {
   it("removes an active connection and moves selection to the next connection", async () => {
     act(() => {
@@ -85,5 +94,41 @@ describe("ConnectionPicker", () => {
     expect(state.connections.map((conn) => conn.id)).toEqual(["stale"]);
     expect(state.activeId).toBe("stale");
     expect(window.location.pathname).toBe("/c/stale/list");
+  });
+});
+
+describe("QrConfirmDialog", () => {
+  it("blocks submit and shows an error when the edited baseUrl is not http(s)", () => {
+    const addSpy = vi.spyOn(useConnectionStore.getState(), "add");
+    const onAdded = vi.fn();
+
+    act(() => {
+      root.render(createElement(QrConfirmDialog, {
+        candidate: {
+          label: "Scanned",
+          baseUrl: "http://localhost:3000",
+          token: "secret",
+          color: "#7c5cff",
+        },
+        onAdded,
+        onClose: vi.fn(),
+      }));
+    });
+
+    const baseUrlInput = document.querySelector<HTMLInputElement>("[data-testid=qr-confirm-base-url]");
+    if (!baseUrlInput) throw new Error("base url input not found");
+
+    act(() => {
+      setInputValue(baseUrlInput, "ftp://evil.example");
+    });
+
+    act(() => {
+      document.querySelector<HTMLFormElement>("[data-testid=qr-confirm-form]")
+        ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(addSpy).not.toHaveBeenCalled();
+    expect(onAdded).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("baseUrl must use http or https");
   });
 });

@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactElement } from "react";
 import { Modal } from "../components/Modal.js";
 import { Button } from "../components/Button.js";
 import { useConnectionStore } from "./store.js";
+import { validateBaseUrl } from "../pwa/validateBaseUrl.js";
 import { listWorkflows } from "../transport/rest.js";
 
 const PRESET_COLORS = ["#7c5cff", "#34d399", "#f59e0b", "#f87171", "#60a5fa", "#e879f9"];
@@ -29,6 +30,14 @@ export function AddDialog({ onClose, onAdded }: AddDialogProps): ReactElement {
     const trimmedUrl = baseUrl.trim().replace(/\/$/, "");
     const trimmedToken = token.trim();
     const trimmedLabel = label.trim() || trimmedUrl;
+
+    try {
+      validateBaseUrl(trimmedUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid base URL");
+      setValidating(false);
+      return;
+    }
 
     try {
       const conn = { id: "tmp", label: trimmedLabel, baseUrl: trimmedUrl, token: trimmedToken, color };
