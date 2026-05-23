@@ -50,10 +50,11 @@ export class SchedulerService {
     void this.attachAsync(workflowId);
   }
 
-  getStats(): { attachedWorkflows: number; inFlight: number } {
+  getStats(): { attachedWorkflows: number; inFlight: number; failures: number } {
     return {
       attachedWorkflows: this.activeIterators.size,
       inFlight: this.inFlight.size,
+      failures: this.failures.size,
     };
   }
 
@@ -91,7 +92,6 @@ export class SchedulerService {
       });
     } finally {
       this.activeIterators.delete(workflowId);
-      this.pruneFailuresForWorkflow(workflowId);
     }
   }
 
@@ -105,7 +105,13 @@ export class SchedulerService {
   private async dispatchPending(workflowId: string): Promise<void> {
     if (this.deps.signal.aborted) return;
     const workflow = await this.deps.repo.get(workflowId);
-    if (!workflow) return;
+    // Prune failure entries only when the workflow is actually gone (deleted) or
+    // terminal — not on transient consume errors, which would wipe legitimate
+    // backoff state and cause a re-dispatch storm.
+    if (!workflow || workflow.status !== "active") {
+      this.pruneFailuresForWorkflow(workflowId);
+      return;
+    }
 
     const candidates = planDispatch(workflow);
     for (const { task } of candidates) {
@@ -115,8 +121,24 @@ export class SchedulerService {
 
       this.inFlight.add(key);
 
-      const fresh = await this.deps.repo.get(workflowId);
-      const freshTask = fresh?.graph[task.id];
+      // The freshness re-read can throw (SQLITE_BUSY/disk/closed). Keep the inFlight
+      // claim alive only for a successful dispatch: on any thrown error OR a
+      // stale/not-pending result, release the key and move to the next candidate so
+      // one bad read neither aborts the whole loop nor leaks the key forever.
+      let freshTask: TaskNode | undefined;
+      try {
+        const fresh = await this.deps.repo.get(workflowId);
+        freshTask = fresh?.graph[task.id];
+      } catch (err) {
+        this.inFlight.delete(key);
+        this.deps.log.warn("scheduler-service: freshness read failed", {
+          workflowId,
+          taskId: task.id,
+          error: (err as Error).message,
+        });
+        continue;
+      }
+
       if (!freshTask || freshTask.executionStatus !== "pending") {
         this.inFlight.delete(key);
         continue;
