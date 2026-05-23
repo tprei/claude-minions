@@ -127,7 +127,7 @@ export interface CIBabysitterServiceDeps {
 
 export class CIBabysitterService {
   private readonly deps: CIBabysitterServiceDeps;
-  private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent>>();
+  private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent> | null>();
   private readonly taskControllers = new Map<string, AbortController>();
   private readonly cadence: PollCadence;
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -152,7 +152,7 @@ export class CIBabysitterService {
 
   attach(workflowId: string): void {
     if (this.activeIterators.has(workflowId)) return;
-    this.activeIterators.set(workflowId, null as unknown as AsyncIterator<WorkflowEvent>);
+    this.activeIterators.set(workflowId, null);
     void this.attachAsync(workflowId);
   }
 

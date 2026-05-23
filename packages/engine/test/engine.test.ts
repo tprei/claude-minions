@@ -50,6 +50,21 @@ describe("createEngine", () => {
     expect(body.providers).toContain("codex");
   });
 
+  it("enforces bearer auth on protected routes when authToken is configured", async () => {
+    engine = await createEngine({ dbPath, authToken: "secret-token", repos: [{ id: "fixture-repo", label: "fixture-repo", localPath: "/tmp/fake-repo" }], log: silentLogger() });
+
+    const unauthorized = await engine.server.fetch(new Request("http://localhost/version"));
+    expect(unauthorized.status).toBe(401);
+
+    const authorized = await engine.server.fetch(new Request("http://localhost/version", {
+      headers: { Authorization: "Bearer secret-token" },
+    }));
+    expect(authorized.status).toBe(200);
+
+    const health = await engine.server.fetch(new Request("http://localhost/health"));
+    expect(health.status).toBe(200);
+  });
+
   it("rebuild sees workflows saved in a prior instance", async () => {
     const now = "2026-05-04T11:19:00.000Z";
     const spec = {

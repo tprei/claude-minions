@@ -45,13 +45,13 @@ export interface PushServiceDeps {
 
 export class PushService {
   private readonly deps: PushServiceDeps;
-  private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent>>();
+  private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent> | null>();
 
   constructor(deps: PushServiceDeps) {
     this.deps = deps;
     deps.signal.addEventListener("abort", () => {
       for (const iter of this.activeIterators.values()) {
-        void iter.return?.();
+        if (iter !== null) void iter.return?.();
       }
     });
   }
@@ -59,7 +59,7 @@ export class PushService {
   attach(workflowId: string): void {
     if (this.activeIterators.has(workflowId)) return;
     // Set a placeholder so idempotent check passes before async consumer starts
-    this.activeIterators.set(workflowId, null as unknown as AsyncIterator<WorkflowEvent>);
+    this.activeIterators.set(workflowId, null);
     void this.consume(workflowId);
   }
 

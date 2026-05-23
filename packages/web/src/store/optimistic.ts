@@ -20,8 +20,8 @@ export interface IntentSnapshot {
 interface IntentEntry {
   snapshot: IntentSnapshot;
   rollback: () => void;
-  rollbackTimer: ReturnType<typeof setTimeout>;
-  pillTimer: ReturnType<typeof setTimeout>;
+  rollbackTimer: ReturnType<typeof setTimeout> | undefined;
+  pillTimer: ReturnType<typeof setTimeout> | undefined;
   resolved: boolean;
 }
 
@@ -117,8 +117,8 @@ export function registerIntent(spec: IntentSpec, opts: RegisterOptions = {}): In
       showPill: false,
     },
     rollback: spec.rollback,
-    rollbackTimer: undefined as unknown as ReturnType<typeof setTimeout>,
-    pillTimer: undefined as unknown as ReturnType<typeof setTimeout>,
+    rollbackTimer: undefined,
+    pillTimer: undefined,
     resolved: false,
   };
 
