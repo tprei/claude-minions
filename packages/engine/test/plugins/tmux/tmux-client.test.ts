@@ -12,6 +12,7 @@ vi.mock("node:child_process");
 interface MockProc extends EventEmitter {
   stdout: EventEmitter;
   stderr: EventEmitter;
+  kill: Mock;
 }
 
 function makeMockProc(
@@ -22,6 +23,7 @@ function makeMockProc(
   const proc = new EventEmitter() as MockProc;
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
+  proc.kill = vi.fn();
 
   setImmediate(() => {
     proc.stdout.emit("data", Buffer.from(stdoutData));
@@ -29,6 +31,19 @@ function makeMockProc(
     proc.emit("close", exitCode);
   });
 
+  return proc;
+}
+
+function makeHangingProc(): MockProc {
+  const proc = new EventEmitter() as MockProc;
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = vi.fn((signal: string) => {
+    if (signal === "SIGTERM") {
+      proc.emit("close", null);
+    }
+    return true;
+  });
   return proc;
 }
 
@@ -216,6 +231,41 @@ describe("TmuxClient", () => {
         "docker",
         ["exec", "minions-worker", "/usr/local/bin/tmux", "-L", "minions", "wait-for", "-S", "tok"],
       );
+    });
+  });
+
+  describe("timeout", () => {
+    it("rejects with TmuxError and kills the child when the command never exits", async () => {
+      vi.useFakeTimers();
+      try {
+        const client = new TmuxClient({ socketName: "minions", timeoutMs: 50 });
+        const proc = makeHangingProc();
+        spawnMock.mockReturnValue(proc);
+
+        const promise = client.sessionExists("slow-session");
+        const assertion = expect(promise).rejects.toMatchObject({ exitCode: 124 });
+        await vi.advanceTimersByTimeAsync(50);
+
+        await assertion;
+        expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not time out when child exits before the deadline", async () => {
+      vi.useFakeTimers();
+      try {
+        const client = new TmuxClient({ socketName: "minions", timeoutMs: 1_000 });
+        spawnMock.mockReturnValue(makeMockProc("", "", 0));
+
+        const promise = client.sessionExists("fast-session");
+        await vi.advanceTimersByTimeAsync(0);
+
+        await expect(promise).resolves.toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

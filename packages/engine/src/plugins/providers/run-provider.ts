@@ -29,7 +29,14 @@ export async function* runProvider(
     yield { kind: "offset", offset };
     const lines = buffer.push(chunk.bytes);
     for (const line of lines) {
-      const events = provider.parseFrame(line);
+      let events: ProviderEvent[];
+      try {
+        events = provider.parseFrame(line);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        yield { kind: "provider", event: { kind: "error", recoverable: true, message, source: "parseFrame" } };
+        continue;
+      }
       for (const event of events) {
         yield { kind: "provider", event };
       }
@@ -38,7 +45,14 @@ export async function* runProvider(
 
   const tail = buffer.flush();
   for (const line of tail) {
-    const events = provider.parseFrame(line);
+    let events: ProviderEvent[];
+    try {
+      events = provider.parseFrame(line);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      yield { kind: "provider", event: { kind: "error", recoverable: true, message, source: "parseFrame" } };
+      continue;
+    }
     for (const event of events) {
       yield { kind: "provider", event };
     }
