@@ -362,6 +362,29 @@ describe("GitWorktreeWorkspaceBackend", () => {
         { force: true },
       );
     });
+
+    it("worktreeRemove throws non-notfound: handle and dir still cleaned up, error rethrown", async () => {
+      const gitClient = makeGitClient();
+      const { GitError } = await import("../../../src/plugins/git/git-client.js");
+      const hardError = new GitError("git worktree remove failed", "", "some unexpected git error", 1);
+      (gitClient.worktreeRemove as ReturnType<typeof vi.fn>).mockRejectedValue(hardError);
+
+      const backend = await makeBackend(gitClient);
+      const fsp = vi.mocked(await import("node:fs/promises"));
+
+      const handle = await backend.create({ workflowId: "wf1", taskId: "task1", repoId: "fixture-repo", branch: "b", mode: "worktree" });
+
+      await expect(backend.cleanup(handle.workspaceId)).rejects.toBe(hardError);
+
+      // removeRecursive (fsp.rm) must have been called despite the error
+      expect(fsp.rm).toHaveBeenCalledWith(handle.path, { recursive: true, force: true });
+
+      // Handle must be evicted from the cache — a subsequent get() must return undefined
+      const fspA = vi.mocked(await import("node:fs/promises"));
+      fspA.access.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+      const got = await backend.get(handle.workspaceId);
+      expect(got).toBeUndefined();
+    });
   });
 
   describe("resetBranch", () => {

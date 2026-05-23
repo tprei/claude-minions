@@ -4,11 +4,13 @@ import { slugify } from "../workspace-backend.js";
 export class StubWorkspaceBackend implements WorkspaceBackend {
   private readonly handles = new Map<string, WorkspaceHandle>();
 
+  resolveId(spec: Pick<WorkspaceCreateSpec, "repoId" | "workflowId" | "taskId">): string {
+    return `stub-${slugify(spec.workflowId)}_${slugify(spec.taskId)}`;
+  }
+
   async create(spec: WorkspaceCreateSpec): Promise<WorkspaceHandle> {
-    const wfSlug = slugify(spec.workflowId);
-    const taskSlug = slugify(spec.taskId);
     const handle: WorkspaceHandle = {
-      workspaceId: `stub-${wfSlug}_${taskSlug}`,
+      workspaceId: this.resolveId(spec),
       repoId: spec.repoId,
       mode: "existing",
       path: "/stub-workspace",

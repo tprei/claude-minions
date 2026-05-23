@@ -43,6 +43,10 @@ export class CountingWorkspaceBackend implements WorkspaceBackend {
 
   constructor(private readonly inner: WorkspaceBackend) {}
 
+  resolveId(spec: Pick<WorkspaceCreateSpec, "repoId" | "workflowId" | "taskId">): string {
+    return this.inner.resolveId(spec);
+  }
+
   async create(spec: WorkspaceCreateSpec): Promise<WorkspaceHandle> {
     const handle = await this.inner.create(spec);
     const k = handle.workspaceId;

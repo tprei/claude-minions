@@ -220,7 +220,7 @@ export class MergeService {
       );
     }
     const branch = deriveBranch(workflowId, taskId);
-    const workspaceId = `ws-${slugify(workflowId)}_${slugify(taskId)}`;
+    const workspaceId = workspace.resolveId({ repoId: workflow.repoId, workflowId, taskId });
     let workspaceHandle = await workspace.get(workspaceId);
     if (!workspaceHandle) {
       workspaceHandle = await workspace.create({ workflowId, taskId, repoId: workflow.repoId, branch, mode: "worktree", resetBranch: false });

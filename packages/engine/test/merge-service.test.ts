@@ -7,7 +7,8 @@ import { createSingleTaskWorkflow } from "../src/domain/workflow.js";
 import { transitionTask } from "../src/application/transitions.js";
 import type { Command } from "../src/application/commands.js";
 import type { SCMPlugin, MergeResult, MergeOutcome } from "../src/plugins/scm-plugin.js";
-import type { WorkspaceBackend, WorkspaceHandle } from "../src/plugins/workspace-backend.js";
+import type { WorkspaceBackend, WorkspaceCreateSpec, WorkspaceHandle } from "../src/plugins/workspace-backend.js";
+import { buildWorkspaceId } from "../src/plugins/workspace-backend.js";
 import type { WorkflowEvent } from "../src/domain/events.js";
 import { buildRepoRegistry } from "../src/application/repo-registry.js";
 
@@ -43,6 +44,8 @@ function makeWorkspace(getHandle?: WorkspaceHandle): WorkspaceBackend {
     create: vi.fn().mockResolvedValue(makeHandle()),
     get: vi.fn().mockResolvedValue(getHandle),
     cleanup: vi.fn().mockResolvedValue(undefined),
+    resolveId: vi.fn().mockImplementation((spec: Pick<WorkspaceCreateSpec, "repoId" | "workflowId" | "taskId">) =>
+      buildWorkspaceId({ repoId: spec.repoId, workflowId: spec.workflowId, taskId: spec.taskId, multiRepo: true })),
   };
 }
 
@@ -734,5 +737,42 @@ describe("MergeService", () => {
       },
     );
     expect(mergeConflictCalls).toHaveLength(0);
+  });
+
+  it("multi-repo: merge workspace.get uses the id that workspace.resolveId produces", async () => {
+    const workflowId = "wf-1";
+    const taskId = "wf-1:task";
+    const repoId = "fixture-repo";
+
+    const expectedId = buildWorkspaceId({ repoId, workflowId, taskId, multiRepo: true });
+
+    const { repo } = await buildWorkflow(taskId);
+    const capturedGetIds: string[] = [];
+    const workspace: WorkspaceBackend = {
+      resolveId: vi.fn().mockImplementation((spec: Pick<WorkspaceCreateSpec, "repoId" | "workflowId" | "taskId">) =>
+        buildWorkspaceId({ repoId: spec.repoId, workflowId: spec.workflowId, taskId: spec.taskId, multiRepo: true })),
+      get: vi.fn().mockImplementation(async (id: string) => {
+        capturedGetIds.push(id);
+        return undefined;
+      }),
+      create: vi.fn().mockResolvedValue(makeHandle()),
+      cleanup: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new MergeService({
+      repo,
+      applyCommand: (cmd) => applyCommand(repo, cmd),
+      scm: makeScm(),
+      workspace,
+      repoRegistry: TEST_REGISTRY,
+      now: () => now,
+      log: silentLogger(),
+    });
+
+    await service.merge({ workflowId, taskId });
+
+    expect(capturedGetIds).toHaveLength(1);
+    expect(capturedGetIds[0]).toBe(expectedId);
+    expect(expectedId).toMatch(/^ws-fixture-repo-[0-9a-f]{6}--/);
   });
 });

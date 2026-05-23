@@ -24,6 +24,7 @@ function makeHandle(branch: string): WorkspaceHandle {
 
 function makeWorkspace(): WorkspaceBackend {
   return {
+    resolveId: vi.fn().mockReturnValue("stub-ws-id"),
     create: vi.fn().mockImplementation((spec: { branch: string }) =>
       Promise.resolve(makeHandle(spec.branch)),
     ),
