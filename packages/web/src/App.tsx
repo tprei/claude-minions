@@ -115,17 +115,17 @@ export function App(): ReactElement {
     });
   }, [urlState]);
 
-  if (!hydrated) {
-    return <LoadingScreen />;
-  }
-
-  const api = activeConn ? makeApi(activeConn) : null;
-
   useEffect(() => {
     try { initInstallPrompt(); } catch (err) { console.error("initInstallPrompt failed", err); }
     try { initOfflineDetection(); } catch (err) { console.error("initOfflineDetection failed", err); }
     try { registerServiceWorker(); } catch (err) { console.error("registerServiceWorker failed", err); }
   }, []);
+
+  if (!hydrated) {
+    return <LoadingScreen />;
+  }
+
+  const api = activeConn ? makeApi(activeConn) : null;
 
   return (
     <>

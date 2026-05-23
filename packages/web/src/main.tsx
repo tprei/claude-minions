@@ -4,7 +4,6 @@ import { registerSW } from "virtual:pwa-register";
 import "./index.css";
 import { App } from "./App.js";
 import { useConnectionStore } from "./connections/store.js";
-import { useRootStore } from "./store/root.js";
 
 registerSW({ immediate: true });
 
@@ -21,9 +20,4 @@ void useConnectionStore.getState().hydrate().then(() => {
       <App />
     </StrictMode>
   );
-});
-
-window.addEventListener("focus", () => {
-  const conn = useRootStore.getState().getActiveConnection();
-  if (!conn) return;
 });
