@@ -77,6 +77,54 @@ describe("GET /health", () => {
     expect(body.checks[0]?.name).toBe("sqlite-wal");
   });
 
+  it("GET /health/deep returns only {status} without detailed checks", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const executor = new NoopRestackExecutor();
+    const runtime = new StubRuntimeBackend();
+    const recoveryService = createRecoveryService(repo, executor, runtime, () => "2026-05-10T00:00:00.000Z", silentLogger());
+    const app = createServer({
+      repo,
+      recoveryService,
+      executor,
+      doctor: async () => ({
+        status: "degraded",
+        checkedAt: "2026-05-10T00:00:00.000Z",
+        checks: [{ name: "sqlite-wal", status: "degraded", detail: "/secret/path", checkedAt: "2026-05-10T00:00:00.000Z" }],
+      }),
+    });
+
+    const res = await app.request("/health/deep");
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body["status"]).toBe("degraded");
+    expect(body).not.toHaveProperty("checks");
+    expect(body).not.toHaveProperty("checkedAt");
+  });
+
+  it("GET /health/deep returns 503 when status is error, still without checks", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const executor = new NoopRestackExecutor();
+    const runtime = new StubRuntimeBackend();
+    const recoveryService = createRecoveryService(repo, executor, runtime, () => "2026-05-10T00:00:00.000Z", silentLogger());
+    const app = createServer({
+      repo,
+      recoveryService,
+      executor,
+      doctor: async () => ({
+        status: "error",
+        checkedAt: "2026-05-10T00:00:00.000Z",
+        checks: [{ name: "disk-free", status: "error", detail: "1024", checkedAt: "2026-05-10T00:00:00.000Z" }],
+      }),
+    });
+
+    const res = await app.request("/health/deep");
+    expect(res.status).toBe(503);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body["status"]).toBe("error");
+    expect(body).not.toHaveProperty("checks");
+    expect(body).not.toHaveProperty("checkedAt");
+  });
+
   it("returns Prometheus metrics text", async () => {
     const repo = new InMemoryWorkflowRepository();
     const executor = new NoopRestackExecutor();

@@ -159,7 +159,7 @@ export function createServer(deps: ServerDeps): Hono {
       }
 
       const headerToken = bearerToken(c.req.header("authorization"));
-      const queryToken = pathname.endsWith("/events") ? c.req.query("token") : undefined;
+      const queryToken = /^\/workflows\/[^/]+\/events$/.test(pathname) ? c.req.query("token") : undefined;
       if (headerToken !== deps.authToken && queryToken !== deps.authToken) {
         return c.json({ code: "unauthorized", message: "missing or invalid bearer token", details: {} }, 401);
       }
@@ -171,7 +171,7 @@ export function createServer(deps: ServerDeps): Hono {
   app.onError((err, c) => {
     if (err instanceof DomainError) {
       const mapped = domainErrorToHttp(err);
-      return c.json(mapped.body, mapped.status as 400 | 404 | 409);
+      return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 422 | 500);
     }
     // Validators are the front line for client errors. Anything reaching here
     // is an unexpected server failure — surface as 500 without leaking details.
@@ -185,11 +185,11 @@ export function createServer(deps: ServerDeps): Hono {
 
   app.get("/health/deep", async (c) => {
     if (!deps.doctor) {
-      return c.json({ status: "ok", checks: [], checkedAt: new Date().toISOString() });
+      return c.json({ status: "ok" });
     }
     const report = await deps.doctor();
     const status = report.status === "error" ? 503 : 200;
-    return c.json(report, status);
+    return c.json({ status: report.status }, status);
   });
 
   app.get("/version", (c) => {

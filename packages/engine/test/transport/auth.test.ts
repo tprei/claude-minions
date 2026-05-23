@@ -55,4 +55,18 @@ describe("bearer auth", () => {
     const res = await app.request("/workflows?token=secret-token");
     expect(res.status).toBe(401);
   });
+
+  it("rejects token query parameter on /audit/events (not the SSE route)", async () => {
+    const app = makeApp();
+
+    const res = await app.request("/audit/events?token=secret-token");
+    expect(res.status).toBe(401);
+  });
+
+  it("accepts token query parameter only on the /workflows/:id/events SSE route", async () => {
+    const app = makeApp();
+
+    const res = await app.request("/workflows/missing-wf/events?token=secret-token");
+    expect(res.status).toBe(404);
+  });
 });

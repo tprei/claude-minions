@@ -18,5 +18,9 @@ export function domainErrorToHttp(error: DomainError): HttpErrorResponse {
       return { status: 409, body: { code: error.code, message: error.message, details: error.details } };
     case "invalid_plan":
       return { status: 422, body: { code: error.code, message: error.message, details: error.details } };
+    default: {
+      const _exhaustive: never = error.code;
+      return { status: 500, body: { code: _exhaustive, message: error.message, details: {} } };
+    }
   }
 }
