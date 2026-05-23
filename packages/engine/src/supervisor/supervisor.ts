@@ -62,23 +62,33 @@ export function createSupervisor(config: SupervisorConfig): SupervisorWithRepos 
   let log: Logger | undefined;
 
   const fireAlert = (partial: Omit<Alert, "id" | "timestamp">): void => {
-    const dedupeKey = `${partial.kind}:${partial.workflowId ?? ""}:${partial.taskId ?? ""}`;
+    const dedupeKey = `${partial.kind}\0${partial.workflowId ?? ""}\0${partial.taskId ?? ""}`;
     const lastFired = state.recentAlerts.get(dedupeKey);
     if (lastFired !== undefined && now() - lastFired < dedupeCooldownMs) return;
-    state.recentAlerts.set(dedupeKey, now());
     const alert: Alert = {
       id: randomUUID(),
       timestamp: nowIso(),
       ...partial,
     };
-    notifier.fire(alert).catch((err: unknown) => {
-      log?.error("supervisor: notifier.fire failed, alert may be lost", {
+    try {
+      notifier.persist(alert);
+    } catch (err: unknown) {
+      log?.error("supervisor: alert persist failed", {
         kind: "supervisor-error",
         alertKind: alert.kind,
         alertId: alert.id,
         error: (err as Error).message,
       });
-      state.recentAlerts.delete(dedupeKey);
+      return;
+    }
+    state.recentAlerts.set(dedupeKey, now());
+    notifier.notify(alert).catch((err: unknown) => {
+      log?.error("supervisor: alert notify failed", {
+        kind: "supervisor-error",
+        alertKind: alert.kind,
+        alertId: alert.id,
+        error: (err as Error).message,
+      });
     });
   };
 

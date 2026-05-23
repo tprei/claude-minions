@@ -16,7 +16,7 @@ export class AlertNotifier {
     this.log = log;
   }
 
-  async fire(alert: Alert): Promise<void> {
+  persist(alert: Alert): void {
     this.alertRepo.insert(alert);
     this.log?.warn(alert.message, {
       kind: "alert",
@@ -27,6 +27,9 @@ export class AlertNotifier {
       taskId: alert.taskId,
       ...alert.detail,
     });
+  }
+
+  async notify(alert: Alert): Promise<void> {
     if (this.sender === undefined) return;
     const subs = this.subRepo.list();
     if (subs.length === 0) return;
