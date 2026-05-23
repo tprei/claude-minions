@@ -91,6 +91,14 @@ export class SchedulerService {
       });
     } finally {
       this.activeIterators.delete(workflowId);
+      this.pruneFailuresForWorkflow(workflowId);
+    }
+  }
+
+  private pruneFailuresForWorkflow(workflowId: string): void {
+    const prefix = `${workflowId}:`;
+    for (const key of this.failures.keys()) {
+      if (key.startsWith(prefix)) this.failures.delete(key);
     }
   }
 
@@ -105,11 +113,15 @@ export class SchedulerService {
       if (this.inFlight.has(key)) continue;
       if (this.isBackedOff(key)) continue;
 
+      this.inFlight.add(key);
+
       const fresh = await this.deps.repo.get(workflowId);
       const freshTask = fresh?.graph[task.id];
-      if (!freshTask || freshTask.executionStatus !== "pending") continue;
+      if (!freshTask || freshTask.executionStatus !== "pending") {
+        this.inFlight.delete(key);
+        continue;
+      }
 
-      this.inFlight.add(key);
       // Prefer continue (--resume) over retry (fresh) when the prior run captured a
       // providerSessionRef. Lets a task survive a tmux/container restart without losing
       // the agent's conversation memory.

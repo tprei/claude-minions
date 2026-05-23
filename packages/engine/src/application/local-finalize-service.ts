@@ -21,6 +21,7 @@ export interface LocalFinalizeServiceDeps {
 export class LocalFinalizeService {
   private readonly deps: LocalFinalizeServiceDeps;
   private readonly activeIterators = new Map<string, AsyncIterator<WorkflowEvent> | null>();
+  private readonly taskControllers = new Map<string, AbortController>();
 
   constructor(deps: LocalFinalizeServiceDeps) {
     this.deps = deps;
@@ -29,6 +30,8 @@ export class LocalFinalizeService {
         if (iter !== null) void iter.return?.();
       }
       this.activeIterators.clear();
+      for (const ctrl of this.taskControllers.values()) ctrl.abort();
+      this.taskControllers.clear();
     });
   }
 
@@ -42,6 +45,24 @@ export class LocalFinalizeService {
     const iter = this.activeIterators.get(workflowId);
     if (iter) void iter.return?.();
     this.activeIterators.delete(workflowId);
+    for (const key of this.taskControllers.keys()) {
+      if (key.startsWith(`${workflowId}:`)) {
+        this.taskControllers.get(key)?.abort();
+        this.taskControllers.delete(key);
+      }
+    }
+  }
+
+  private spawnFinalizeForTask(workflowId: string, taskId: string): void {
+    const key = `${workflowId}:${taskId}`;
+    if (this.taskControllers.has(key)) return;
+    const ctrl = new AbortController();
+    this.taskControllers.set(key, ctrl);
+    void this.finalizeTask(workflowId, taskId, ctrl.signal)
+      .catch((err) => this.deps.log.error(`local-finalize-service: finalizeTask error for ${key}`, { error: (err as Error).message }))
+      .finally(() => {
+        if (this.taskControllers.get(key) === ctrl) this.taskControllers.delete(key);
+      });
   }
 
   private async attachAsync(workflowId: string): Promise<void> {
@@ -53,7 +74,7 @@ export class LocalFinalizeService {
     }
     for (const [taskId, task] of Object.entries(workflow.graph)) {
       if (task.executionStatus === "finalizing") {
-        void this.finalizeTask(workflowId, taskId);
+        this.spawnFinalizeForTask(workflowId, taskId);
       }
     }
     void this.consume(workflowId, cursor);
@@ -75,7 +96,7 @@ export class LocalFinalizeService {
 
         const { taskId, toExecutionStatus: to } = event.payload;
         if (to === "finalizing") {
-          void this.finalizeTask(workflowId, taskId);
+          this.spawnFinalizeForTask(workflowId, taskId);
         }
       }
     } catch (err) {
@@ -87,8 +108,8 @@ export class LocalFinalizeService {
     }
   }
 
-  private async finalizeTask(workflowId: string, taskId: string): Promise<void> {
-    if (this.deps.signal.aborted) return;
+  private async finalizeTask(workflowId: string, taskId: string, taskSignal: AbortSignal): Promise<void> {
+    if (this.deps.signal.aborted || taskSignal.aborted) return;
 
     const mergeResult = await this.tryMerge(workflowId, taskId);
 
