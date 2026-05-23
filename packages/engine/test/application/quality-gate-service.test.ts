@@ -25,6 +25,7 @@ function makeHandle(workspaceId = WORKSPACE_ID): WorkspaceHandle {
 
 function makeWorkspace(handle?: WorkspaceHandle): WorkspaceBackend {
   return {
+    resolveId: vi.fn().mockReturnValue("stub-ws-id"),
     create: vi.fn().mockResolvedValue(makeHandle()),
     get: vi.fn().mockResolvedValue(handle),
     cleanup: vi.fn().mockResolvedValue(undefined),

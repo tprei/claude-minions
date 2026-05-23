@@ -3,7 +3,7 @@ import { realpath, mkdir, symlink, access, readdir } from "node:fs/promises";
 import type { GitClient } from "../git/git-client.js";
 import { GitError } from "../git/git-client.js";
 import type { WorkspaceBackend, WorkspaceCreateSpec, WorkspaceHandle } from "../workspace-backend.js";
-import { WorkspaceError, slugify } from "../workspace-backend.js";
+import { WorkspaceError, slugify, buildWorkspaceId } from "../workspace-backend.js";
 import type { WorkspaceFs } from "./workspace-fs.js";
 import { HostFs, DockerFs } from "./workspace-fs.js";
 import type { RepoRegistry } from "../../application/repo-registry.js";
@@ -272,6 +272,10 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     return handle;
   }
 
+  resolveId(spec: Pick<WorkspaceCreateSpec, "repoId" | "workflowId" | "taskId">): string {
+    return buildWorkspaceId({ repoId: spec.repoId, workflowId: spec.workflowId, taskId: spec.taskId, multiRepo: this.registry !== undefined });
+  }
+
   async create(spec: WorkspaceCreateSpec): Promise<WorkspaceHandle> {
     const mode = spec.mode ?? "worktree";
     const wfSlug = slugify(spec.workflowId);
@@ -309,9 +313,7 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       : join(this.workspaceRoot, `${wfSlug}_${taskSlug}`);
     await this.validateContainment(worktreePath);
 
-    const workspaceId = this.registry
-      ? `ws-${repoSlug}--${wfSlug}_${taskSlug}`
-      : `ws-${wfSlug}_${taskSlug}`;
+    const workspaceId = buildWorkspaceId({ repoId: spec.repoId, workflowId: spec.workflowId, taskId: spec.taskId, multiRepo: this.registry !== undefined });
 
     return this.withLock(repoPath, async () => {
       const existingWorktree = await this.probeWorktree(worktreePath);
@@ -434,17 +436,22 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
       return;
     }
 
+    let removeError: unknown;
     await this.withLock(repoPath, async () => {
       try {
         await this.gitClient.worktreeRemove(repoPath, worktreePath, { force: true });
       } catch (err) {
-        if (!isNotFoundError(err)) throw err;
+        if (!isNotFoundError(err)) {
+          removeError = err;
+        }
       }
 
-      try {
-        await this.gitClient.worktreePrune(repoPath);
-      } catch {
-        // prune failure is non-fatal; reclaimable via future sweep
+      if (removeError === undefined) {
+        try {
+          await this.gitClient.worktreePrune(repoPath);
+        } catch {
+          // prune failure is non-fatal; reclaimable via future sweep
+        }
       }
 
       try {
@@ -455,5 +462,9 @@ export class GitWorktreeWorkspaceBackend implements WorkspaceBackend {
     });
 
     this.handles.delete(workspaceId);
+
+    if (removeError !== undefined) {
+      throw removeError;
+    }
   }
 }
