@@ -10,25 +10,15 @@ export const ciExhaustedRule: AnomalyRule = {
     const wfId = typeof record["workflowId"] === "string" ? record["workflowId"] : undefined;
     const taskId = typeof record["taskId"] === "string" ? record["taskId"] : undefined;
     if (!wfId || !taskId) return;
-    const key = `${wfId}:${taskId}`;
+    const key = `${wfId}\0${taskId}`;
     if (!ctx.state.pendingCiExhaustion.has(key)) {
-      ctx.state.pendingCiExhaustion.set(key, { since: ctx.now(), alerted: false });
+      ctx.state.pendingCiExhaustion.set(key, { wfId, taskId, since: ctx.now(), alerted: false });
     }
   },
   async onScan(ctx: AnomalyRuleContext): Promise<void> {
     for (const [key, entry] of ctx.state.pendingCiExhaustion) {
       if (entry.alerted) continue;
-      const colonIdx = key.indexOf(":");
-      if (colonIdx === -1) {
-        ctx.state.pendingCiExhaustion.delete(key);
-        continue;
-      }
-      const wfId = key.slice(0, colonIdx);
-      const taskId = key.slice(colonIdx + 1);
-      if (!wfId || !taskId) {
-        ctx.state.pendingCiExhaustion.delete(key);
-        continue;
-      }
+      const { wfId, taskId } = entry;
       const wf = await ctx.workflowRepo.get(wfId);
       if (!wf) {
         ctx.state.pendingCiExhaustion.delete(key);

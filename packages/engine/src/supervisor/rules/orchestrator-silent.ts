@@ -22,18 +22,22 @@ export const orchestratorSilentRule: AnomalyRule = {
     if (record["kind"] !== "task-transitioned" && record["kind"] !== "run-started") return;
     const workflowId = record["workflowId"];
     const existing = ctx.state.activity.get(workflowId) ?? {
-      hasRunningTask: false,
+      runningTasks: new Set<string>(),
       lastEventAt: 0,
       lastAlertAt: 0,
     };
     existing.lastEventAt = ctx.now();
     if (record["kind"] === "run-started") {
-      existing.hasRunningTask = true;
+      const taskId = typeof record["taskId"] === "string" ? record["taskId"] : undefined;
+      if (taskId !== undefined) {
+        existing.runningTasks.add(taskId);
+      }
     }
     if (record["kind"] === "task-transitioned") {
       const to = record["toExecutionStatus"];
-      if (typeof to === "string" && TERMINAL_EXECUTION_STATUSES.has(to)) {
-        existing.hasRunningTask = false;
+      const taskId = typeof record["taskId"] === "string" ? record["taskId"] : undefined;
+      if (typeof to === "string" && TERMINAL_EXECUTION_STATUSES.has(to) && taskId !== undefined) {
+        existing.runningTasks.delete(taskId);
       }
     }
     ctx.state.activity.set(workflowId, existing);
@@ -41,7 +45,7 @@ export const orchestratorSilentRule: AnomalyRule = {
   async onScan(ctx: AnomalyRuleContext): Promise<void> {
     const now = ctx.now();
     for (const [workflowId, activity] of ctx.state.activity) {
-      if (!activity.hasRunningTask) continue;
+      if (activity.runningTasks.size === 0) continue;
       if (now - activity.lastEventAt < SILENCE_MS) continue;
       if (now - activity.lastAlertAt < SILENCE_MS) continue;
       activity.lastAlertAt = now;

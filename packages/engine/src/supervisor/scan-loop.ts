@@ -4,6 +4,7 @@ export class ScanLoop {
   private timer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> = Promise.resolve();
   private stopped = false;
+  private started = false;
 
   constructor(
     private readonly handler: ScanHandler,
@@ -11,6 +12,8 @@ export class ScanLoop {
   ) {}
 
   start(): void {
+    if (this.started) return;
+    this.started = true;
     this.schedule();
   }
 

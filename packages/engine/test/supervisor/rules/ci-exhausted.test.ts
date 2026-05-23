@@ -138,4 +138,23 @@ describe("ciExhaustedRule", () => {
     ciExhaustedRule.onLogRecord!(makeCapRecord("t-1"), ctx);
     expect(ctx.state.pendingCiExhaustion.size).toBe(0);
   });
+
+  it("fires alert for workflowId containing colons (team:wf-1)", async () => {
+    const fireAlert = vi.fn();
+    const ctx = makeCtx(fireAlert);
+    const repo = ctx.workflowRepo as InMemoryWorkflowRepository;
+
+    const wf = createWorkflow({ id: "team:wf-1", kind: "single-task", repoId: "fixture-repo", tasks: [{ id: "t-1", title: "task", prompt: "do thing" }] });
+    const taskNode = wf.graph["t-1"]!;
+    const updatedWf = { ...wf, graph: { ...wf.graph, "t-1": { ...taskNode, executionStatus: "pr-open" as const } } };
+    await repo.save(updatedWf, []);
+
+    ciExhaustedRule.onLogRecord!(makeCapRecord("t-1", "team:wf-1"), ctx);
+    await ciExhaustedRule.onScan!(ctx);
+
+    expect(fireAlert).toHaveBeenCalledOnce();
+    const alert = fireAlert.mock.calls[0]![0];
+    expect(alert.workflowId).toBe("team:wf-1");
+    expect(alert.taskId).toBe("t-1");
+  });
 });

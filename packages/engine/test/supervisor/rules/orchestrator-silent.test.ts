@@ -21,37 +21,37 @@ function makeRecord(kind: string, workflowId: string, extra?: Record<string, unk
 }
 
 describe("orchestratorSilentRule.onLogRecord", () => {
-  it("run-started populates activity with hasRunningTask=true and updates lastEventAt", () => {
+  it("run-started populates activity with runningTasks containing taskId and updates lastEventAt", () => {
     const nowMs = 100_000_000;
     const ctx = makeCtx(vi.fn(), nowMs);
-    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1"), ctx);
+    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1", { taskId: "t-1" }), ctx);
     const activity = ctx.state.activity.get("wf-1");
     expect(activity).toBeDefined();
-    expect(activity!.hasRunningTask).toBe(true);
+    expect(activity!.runningTasks.has("t-1")).toBe(true);
     expect(activity!.lastEventAt).toBe(nowMs);
   });
 
-  it("task-transitioned with terminal status flips hasRunningTask to false", () => {
+  it("task-transitioned with terminal status removes taskId from runningTasks", () => {
     const nowMs = 100_000_000;
     const ctx = makeCtx(vi.fn(), nowMs);
-    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1"), ctx);
+    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1", { taskId: "t-1" }), ctx);
     orchestratorSilentRule.onLogRecord!(
-      makeRecord("task-transitioned", "wf-1", { toExecutionStatus: "completed" }),
+      makeRecord("task-transitioned", "wf-1", { toExecutionStatus: "completed", taskId: "t-1" }),
       ctx,
     );
     const activity = ctx.state.activity.get("wf-1");
-    expect(activity!.hasRunningTask).toBe(false);
+    expect(activity!.runningTasks.size).toBe(0);
   });
 
-  it("task-transitioned with non-terminal status does not flip hasRunningTask", () => {
+  it("task-transitioned with non-terminal status does not remove taskId from runningTasks", () => {
     const nowMs = 100_000_000;
     const ctx = makeCtx(vi.fn(), nowMs);
-    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1"), ctx);
+    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1", { taskId: "t-1" }), ctx);
     orchestratorSilentRule.onLogRecord!(
-      makeRecord("task-transitioned", "wf-1", { toExecutionStatus: "running" }),
+      makeRecord("task-transitioned", "wf-1", { toExecutionStatus: "running", taskId: "t-1" }),
       ctx,
     );
-    expect(ctx.state.activity.get("wf-1")!.hasRunningTask).toBe(true);
+    expect(ctx.state.activity.get("wf-1")!.runningTasks.has("t-1")).toBe(true);
   });
 
   it("ignores records with no workflowId", () => {
@@ -66,6 +66,20 @@ describe("orchestratorSilentRule.onLogRecord", () => {
     orchestratorSilentRule.onLogRecord!(makeRecord("push-send-failed", "wf-1"), ctx);
     expect(ctx.state.activity.size).toBe(0);
   });
+
+  it("two-task workflow: one task completing does not remove other task from running set", () => {
+    const nowMs = 100_000_000;
+    const ctx = makeCtx(vi.fn(), nowMs);
+    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1", { taskId: "t-1" }), ctx);
+    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1", { taskId: "t-2" }), ctx);
+    orchestratorSilentRule.onLogRecord!(
+      makeRecord("task-transitioned", "wf-1", { toExecutionStatus: "completed", taskId: "t-1" }),
+      ctx,
+    );
+    const activity = ctx.state.activity.get("wf-1")!;
+    expect(activity.runningTasks.has("t-1")).toBe(false);
+    expect(activity.runningTasks.has("t-2")).toBe(true);
+  });
 });
 
 describe("orchestratorSilentRule.onScan", () => {
@@ -74,7 +88,7 @@ describe("orchestratorSilentRule.onScan", () => {
     const nowMs = 100_000_000;
     const ctx = makeCtx(fireAlert, nowMs);
     ctx.state.activity.set("wf-1", {
-      hasRunningTask: true,
+      runningTasks: new Set(["t-1"]),
       lastEventAt: nowMs - SILENCE_MS - 1,
       lastAlertAt: 0,
     });
@@ -86,12 +100,12 @@ describe("orchestratorSilentRule.onScan", () => {
     expect(alert.workflowId).toBe("wf-1");
   });
 
-  it("does not fire when workflow has no running task", async () => {
+  it("does not fire when workflow has no running tasks", async () => {
     const fireAlert = vi.fn();
     const nowMs = 100_000_000;
     const ctx = makeCtx(fireAlert, nowMs);
     ctx.state.activity.set("wf-1", {
-      hasRunningTask: false,
+      runningTasks: new Set(),
       lastEventAt: nowMs - SILENCE_MS - 1,
       lastAlertAt: 0,
     });
@@ -104,7 +118,7 @@ describe("orchestratorSilentRule.onScan", () => {
     const nowMs = 100_000_000;
     const ctx = makeCtx(fireAlert, nowMs);
     ctx.state.activity.set("wf-1", {
-      hasRunningTask: true,
+      runningTasks: new Set(["t-1"]),
       lastEventAt: nowMs - SILENCE_MS + 60_000,
       lastAlertAt: 0,
     });
@@ -117,7 +131,7 @@ describe("orchestratorSilentRule.onScan", () => {
     const nowMs = 100_000_000;
     const ctx = makeCtx(fireAlert, nowMs);
     ctx.state.activity.set("wf-1", {
-      hasRunningTask: true,
+      runningTasks: new Set(["t-1"]),
       lastEventAt: nowMs - SILENCE_MS - 1,
       lastAlertAt: nowMs - SILENCE_MS + 60_000,
     });
@@ -129,23 +143,44 @@ describe("orchestratorSilentRule.onScan", () => {
     const fireAlert = vi.fn();
     const nowMs = 100_000_000;
     const ctx = makeCtx(fireAlert, nowMs);
-    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1"), ctx);
+    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1", { taskId: "t-1" }), ctx);
     ctx.state.activity.get("wf-1")!.lastEventAt = nowMs - SILENCE_MS - 1;
     await orchestratorSilentRule.onScan!(ctx);
     expect(fireAlert).toHaveBeenCalledOnce();
     expect(fireAlert.mock.calls[0]![0].workflowId).toBe("wf-1");
   });
 
-  it("sabotage: activity map must have hasRunningTask=true for alert to fire", async () => {
+  it("sabotage: activity map must have non-empty runningTasks for alert to fire", async () => {
     const fireAlert = vi.fn();
     const nowMs = 100_000_000;
     const ctx = makeCtx(fireAlert, nowMs);
     ctx.state.activity.set("wf-1", {
-      hasRunningTask: false,
+      runningTasks: new Set(),
       lastEventAt: nowMs - SILENCE_MS - 1,
       lastAlertAt: 0,
     });
     await orchestratorSilentRule.onScan!(ctx);
     expect(fireAlert).not.toHaveBeenCalled();
+  });
+
+  it("two-task workflow: fires exactly one alert when one task completes and other is silent past threshold", async () => {
+    const fireAlert = vi.fn();
+    const nowMs = 100_000_000;
+    const ctx = makeCtx(fireAlert, nowMs);
+
+    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1", { taskId: "t-1" }), ctx);
+    orchestratorSilentRule.onLogRecord!(makeRecord("run-started", "wf-1", { taskId: "t-2" }), ctx);
+    orchestratorSilentRule.onLogRecord!(
+      makeRecord("task-transitioned", "wf-1", { toExecutionStatus: "completed", taskId: "t-1" }),
+      ctx,
+    );
+
+    ctx.state.activity.get("wf-1")!.lastEventAt = nowMs - SILENCE_MS - 1;
+
+    await orchestratorSilentRule.onScan!(ctx);
+
+    expect(fireAlert).toHaveBeenCalledOnce();
+    expect(fireAlert.mock.calls[0]![0].kind).toBe("orchestrator-silent");
+    expect(fireAlert.mock.calls[0]![0].workflowId).toBe("wf-1");
   });
 });
