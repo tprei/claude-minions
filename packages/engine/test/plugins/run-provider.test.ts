@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runProvider } from "../../src/plugins/providers/run-provider.js";
 import type { RunProviderItem } from "../../src/plugins/providers/run-provider.js";
 import { StubProviderPlugin } from "../../src/plugins/providers/stub.js";
-import type { ProviderEvent } from "../../src/plugins/provider-plugin.js";
+import type { ProviderEvent, ProviderPlugin } from "../../src/plugins/provider-plugin.js";
 import type { RuntimeAttachOptions, RuntimeBackend, RuntimeOutputChunk } from "../../src/plugins/runtime-backend.js";
 import type { RuntimeProbeState } from "../../src/application/recovery.js";
 
@@ -119,5 +119,78 @@ describe("runProvider", () => {
     for await (const _ of runProvider(runtime, "s1", provider, { fromOffset: 7 })) { /* drain */ }
 
     expect(capturedOpts?.fromOffset).toBe(7);
+  });
+
+  describe("parseFrame isolation", () => {
+    function makeThrowingProvider(throwOnLine: number, goodEvent: ProviderEvent): ProviderPlugin {
+      let callCount = 0;
+      return {
+        name: "throwing-stub",
+        capabilities: {
+          resume: false,
+          mcp: false,
+          structuredOutput: false,
+          oauthLogin: false,
+          streamJson: false,
+          sessionRefFormat: "opaque",
+        },
+        prepare: () => Promise.reject(new Error("not used")),
+        resume: () => Promise.reject(new Error("not used")),
+        loginStatus: () => Promise.resolve({ loggedIn: true }),
+        parseFrame(_line: string): ProviderEvent[] {
+          const n = callCount++;
+          if (n === throwOnLine) throw new Error("duplicate session frame");
+          return [goodEvent];
+        },
+      };
+    }
+
+    it("a parseFrame throw on one line does not abort the stream", async () => {
+      const goodEvent: ProviderEvent = { kind: "assistant_text", text: "ok" };
+      const provider = makeThrowingProvider(0, goodEvent);
+
+      const chunks = [
+        encodeChunk("s1", 0, "bad-line\n"),
+        encodeChunk("s1", 9, "good-line\n"),
+      ];
+      const runtime = makeRuntime(chunks);
+
+      const items: RunProviderItem[] = [];
+      for await (const item of runProvider(runtime, "s1", provider)) {
+        items.push(item);
+      }
+
+      const providerItems = items.filter((i): i is Extract<RunProviderItem, { kind: "provider" }> => i.kind === "provider");
+      const errorEvents = providerItems.filter((i) => i.event.kind === "error");
+      const goodEvents = providerItems.filter((i) => i.event.kind === "assistant_text");
+
+      expect(errorEvents).toHaveLength(1);
+      expect(errorEvents[0]?.event).toMatchObject({ kind: "error", recoverable: true, source: "parseFrame" });
+      expect(goodEvents).toHaveLength(1);
+      expect(goodEvents[0]?.event).toEqual(goodEvent);
+    });
+
+    it("flush still runs after a parseFrame throw in the attach loop", async () => {
+      const goodEvent: ProviderEvent = { kind: "final", sessionRef: "sess-1" };
+      const provider = makeThrowingProvider(0, goodEvent);
+
+      const chunks = [
+        encodeChunk("s1", 0, "bad-line\n"),
+        encodeChunk("s1", 9, "no-newline"),
+      ];
+      const runtime = makeRuntime(chunks);
+
+      const items: RunProviderItem[] = [];
+      for await (const item of runProvider(runtime, "s1", provider)) {
+        items.push(item);
+      }
+
+      const providerItems = items.filter((i): i is Extract<RunProviderItem, { kind: "provider" }> => i.kind === "provider");
+      const errorEvents = providerItems.filter((i) => i.event.kind === "error");
+      const finalEvents = providerItems.filter((i) => i.event.kind === "final");
+
+      expect(errorEvents).toHaveLength(1);
+      expect(finalEvents).toHaveLength(1);
+    });
   });
 });

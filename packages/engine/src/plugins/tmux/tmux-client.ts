@@ -4,6 +4,7 @@ export interface TmuxClientConfig {
   socketName: string;
   tmuxBin?: string;
   commandPrefix?: readonly string[];
+  timeoutMs?: number;
 }
 
 export class TmuxError extends Error {
@@ -45,14 +46,18 @@ function shellQuotePath(p: string): string {
 }
 
 export class TmuxClient {
+  private static readonly DEFAULT_TIMEOUT_MS = 30_000;
+
   private readonly bin: string;
   private readonly socketName: string;
   private readonly commandPrefix: readonly string[];
+  private readonly timeoutMs: number;
 
   constructor(config: TmuxClientConfig) {
     this.bin = config.tmuxBin ?? "tmux";
     this.socketName = config.socketName;
     this.commandPrefix = config.commandPrefix ?? [];
+    this.timeoutMs = config.timeoutMs ?? TmuxClient.DEFAULT_TIMEOUT_MS;
   }
 
   private run(args: string[]): Promise<{ stdout: string; stderr: string }> {
@@ -64,13 +69,30 @@ export class TmuxClient {
       const proc = spawn(spawnBin, spawnArgs);
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      let timedOut = false;
+      let killTimer: NodeJS.Timeout | undefined;
+      let sigkillTimer: NodeJS.Timeout | undefined;
 
       proc.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
       proc.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
+      if (this.timeoutMs > 0) {
+        killTimer = setTimeout(() => {
+          timedOut = true;
+          proc.kill("SIGTERM");
+          sigkillTimer = setTimeout(() => proc.kill("SIGKILL"), 1_000);
+        }, this.timeoutMs);
+      }
+
       proc.on("close", (code) => {
+        if (killTimer !== undefined) clearTimeout(killTimer);
+        if (sigkillTimer !== undefined) clearTimeout(sigkillTimer);
         const stdout = Buffer.concat(stdoutChunks).toString("utf8");
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        if (timedOut) {
+          reject(new TmuxError(`tmux timed out after ${this.timeoutMs}ms`, stdout, stderr, 124));
+          return;
+        }
         const exitCode = code ?? 1;
 
         if (exitCode === 0) {
@@ -84,7 +106,11 @@ export class TmuxClient {
         }
       });
 
-      proc.on("error", (err) => reject(err));
+      proc.on("error", (err) => {
+        if (killTimer !== undefined) clearTimeout(killTimer);
+        if (sigkillTimer !== undefined) clearTimeout(sigkillTimer);
+        reject(err);
+      });
     });
   }
 
