@@ -53,6 +53,7 @@ import { buildRepoRegistry, type RepoBindingInput, type RepoRegistry } from "./a
 
 export interface EngineConfig {
   dbPath: string;
+  authToken?: string;
   dataDir?: string;
   runtime?: RuntimeBackend;
   executor?: RestackExecutor;
@@ -269,15 +270,12 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   const repo = repoEarly;
   const recoveryService = createRecoveryService(repo, executor, runtime, now, log.child({ component: "recovery" }));
 
-  type ActiveOrchestratorEntry = { controller: AbortController; promise: Promise<void> };
+  type ActiveOrchestratorEntry = { controller: AbortController; promise?: Promise<void> };
   const activeOrchestrators = new Set<ActiveOrchestratorEntry>();
 
   const spawnTracked = (deps: Omit<RunOrchestratorDeps, "signal" | "log">): void => {
     const controller = new AbortController();
-    const entry: ActiveOrchestratorEntry = {
-      controller,
-      promise: undefined as unknown as Promise<void>,
-    };
+    const entry: ActiveOrchestratorEntry = { controller };
     activeOrchestrators.add(entry);
     const persistTranscript = deps.persistTranscript ?? ((occurredAt, providerEvent) =>
       repo.appendTranscript(deps.workflowId, deps.runId, occurredAt, providerEvent));
@@ -361,6 +359,10 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
   }
 
   const serverDeps: Parameters<typeof createServer>[0] = { repo, recoveryService, executor };
+
+  if (config.authToken !== undefined) {
+    serverDeps.authToken = config.authToken;
+  }
 
   if (vapid && pushService && subscriptions) {
     serverDeps.pushService = pushService;
