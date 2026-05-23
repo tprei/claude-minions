@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DomainError } from "../src/domain/errors.js";
 import { createSingleTaskWorkflow, createWorkflow } from "../src/domain/workflow.js";
 import { transitionTask } from "../src/application/transitions.js";
+import type { TransitionCommand } from "../src/application/transitions.js";
 
 const now = "2026-05-04T11:19:00.000Z";
 
@@ -604,5 +605,28 @@ describe("mark-running workspaceId", () => {
     });
 
     expect(workflow.graph["task-1:task"]?.workspaceId).toBe("ws-wf1_task1");
+  });
+});
+
+describe("unknown transition kind", () => {
+  it("throws DomainError (not TypeError) for an unrecognized kind", () => {
+    const workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => now);
+    const command = { kind: "bogus-kind", taskId: "task-1:task", now } as unknown as TransitionCommand;
+
+    expect(() => transitionTask(workflow, command)).toThrow(DomainError);
+    expect(() => transitionTask(workflow, command)).not.toThrow(TypeError);
+  });
+
+  it("DomainError code is invalid_transition for an unrecognized kind", () => {
+    expect.assertions(2);
+    const workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => now);
+    const command = { kind: "bogus-kind", taskId: "task-1:task", now } as unknown as TransitionCommand;
+
+    try {
+      transitionTask(workflow, command);
+    } catch (err) {
+      expect(err).toBeInstanceOf(DomainError);
+      expect((err as DomainError).code).toBe("invalid_transition");
+    }
   });
 });

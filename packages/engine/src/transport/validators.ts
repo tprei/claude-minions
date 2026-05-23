@@ -1,4 +1,5 @@
 import type { CommandKind } from "../application/commands.js";
+import { TRANSITION_KINDS } from "../application/transitions.js";
 
 type AllCommandKind = CommandKind | "continue-task" | "retry-task" | "land-workflow";
 
@@ -32,6 +33,14 @@ function isString(v: unknown): boolean {
 
 function isNonEmptyString(v: unknown): boolean {
   return typeof v === "string" && v.trim().length > 0;
+}
+
+function isValidTransitionKind(v: unknown): boolean {
+  return typeof v === "string" && (TRANSITION_KINDS as readonly string[]).includes(v);
+}
+
+function isPositiveInteger(v: unknown): boolean {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1;
 }
 
 function isObject(v: unknown): boolean {
@@ -69,7 +78,7 @@ const COMMAND_CHECKS: { [K in AllCommandKind]: FieldCheck[] } = {
   "transition-task": [
     BASE_WORKFLOW_ID,
     { path: "transition", check: isObject, expected: "object" },
-    { path: "transition.kind", check: isString, expected: "string" },
+    { path: "transition.kind", check: isValidTransitionKind, expected: `one of: ${TRANSITION_KINDS.join(", ")}` },
     { path: "transition.taskId", check: isString, expected: "string" },
     { path: "transition.now", check: isString, expected: "string" },
   ],
@@ -115,7 +124,7 @@ const COMMAND_CHECKS: { [K in AllCommandKind]: FieldCheck[] } = {
 };
 
 const TASK_SPEC_CHECKS: FieldCheck[] = [
-  { path: "id", check: isString, expected: "string" },
+  { path: "id", check: isNonEmptyString, expected: "non-empty string" },
   { path: "title", check: isString, expected: "string" },
   { path: "prompt", check: isString, expected: "string" },
 ];
@@ -221,8 +230,8 @@ export function validateWorkflowSpec(body: unknown): ValidationResult {
       return { ok: false, failure: { field: "policy", expected: "object", message: 'field "policy" must be object' } };
     }
     const obj = policy as Record<string, unknown>;
-    if (obj["maxConcurrent"] !== undefined && typeof obj["maxConcurrent"] !== "number") {
-      return { ok: false, failure: { field: "policy.maxConcurrent", expected: "number or undefined", message: 'field "policy.maxConcurrent" must be number or undefined' } };
+    if (obj["maxConcurrent"] !== undefined && !isPositiveInteger(obj["maxConcurrent"])) {
+      return { ok: false, failure: { field: "policy.maxConcurrent", expected: "integer >= 1", message: 'field "policy.maxConcurrent" must be an integer >= 1' } };
     }
     if (obj["autoLand"] !== undefined && typeof obj["autoLand"] !== "boolean") {
       return { ok: false, failure: { field: "policy.autoLand", expected: "boolean or undefined", message: 'field "policy.autoLand" must be boolean or undefined' } };
