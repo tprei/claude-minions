@@ -198,4 +198,58 @@ describe("connectWorkflowSse", () => {
 
     conn.close();
   });
+
+  it("reconnects with since=<lastCursor> after receiving events, not from 0", async () => {
+    const { connectWorkflowSse } = await import("../sse.js");
+    const conn = connectWorkflowSse(CONN, "wf-cursor", {});
+
+    const es0 = FakeEventSource.instances[0]!;
+    expect(es0.url).toBe("http://engine-sse/workflows/wf-cursor/events?token=tok");
+
+    es0.fire("task-transitioned", { ...taskTransitionedEvent("wf-cursor"), cursor: 7 });
+    es0.fire("task-transitioned", { ...taskTransitionedEvent("wf-cursor"), cursor: 12 });
+
+    es0.fire("error");
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    expect(FakeEventSource.instances).toHaveLength(2);
+    const es1 = FakeEventSource.instances[1]!;
+    expect(es1.url).toBe("http://engine-sse/workflows/wf-cursor/events?since=12&token=tok");
+
+    conn.close();
+  });
+
+  it("forceReconnect also uses the last seen cursor", async () => {
+    const { connectWorkflowSse } = await import("../sse.js");
+    const { sseStatusStore } = await import("../sseStatus.js");
+    const connKey = `${CONN.id}:wf-force`;
+    const conn = connectWorkflowSse(CONN, "wf-force", {});
+
+    const es0 = FakeEventSource.instances[0]!;
+    es0.fire("workflow-status-changed", {
+      cursor: 3,
+      workflowId: "wf-force",
+      occurredAt: "2026-01-01T00:00:00Z",
+      kind: "workflow-status-changed",
+      payload: { fromStatus: "active", toStatus: "completed" },
+    });
+
+    sseStatusStore.forceReconnect(connKey);
+
+    expect(FakeEventSource.instances).toHaveLength(2);
+    const es1 = FakeEventSource.instances[1]!;
+    expect(es1.url).toBe("http://engine-sse/workflows/wf-force/events?since=3&token=tok");
+
+    conn.close();
+  });
+
+  it("does not append since= on first connect when no events received", async () => {
+    const { connectWorkflowSse } = await import("../sse.js");
+    const conn = connectWorkflowSse(CONN, "wf-fresh", {});
+
+    const es0 = FakeEventSource.instances[0]!;
+    expect(es0.url).toBe("http://engine-sse/workflows/wf-fresh/events?token=tok");
+
+    conn.close();
+  });
 });

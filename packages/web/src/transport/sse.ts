@@ -48,6 +48,7 @@ export function connectWorkflowSse(
   let attempt = 0;
   let closed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastCursor = 0;
   const cleanups: Array<() => void> = [];
 
   const connKey = `${conn.id}:${workflowId}`;
@@ -66,10 +67,9 @@ export function connectWorkflowSse(
   function open(): void {
     if (closed) return;
     setStatus(attempt === 0 ? "connecting" : "reconnecting");
-    const url = appendToken(
-      `${conn.baseUrl.replace(/\/$/, "")}/workflows/${encodeURIComponent(workflowId)}/events`,
-      conn.token,
-    );
+    const base = `${conn.baseUrl.replace(/\/$/, "")}/workflows/${encodeURIComponent(workflowId)}/events`;
+    const withSince = lastCursor > 0 ? `${base}?since=${lastCursor}` : base;
+    const url = appendToken(withSince, conn.token);
     es = new EventSource(url);
 
     for (const kind of WORKFLOW_EVENT_KINDS) {
@@ -80,7 +80,11 @@ export function connectWorkflowSse(
         } catch {
           return;
         }
-        handlers.onEvent?.(data as WorkflowEvent);
+        const event = data as WorkflowEvent;
+        if (typeof event.cursor === "number" && event.cursor > lastCursor) {
+          lastCursor = event.cursor;
+        }
+        handlers.onEvent?.(event);
       });
     }
 
