@@ -618,6 +618,7 @@ describe("unknown transition kind", () => {
   });
 
   it("DomainError code is invalid_transition for an unrecognized kind", () => {
+    expect.assertions(2);
     const workflow = createSingleTaskWorkflow("task-1", { title: "Task", prompt: "Do it" }, () => now);
     const command = { kind: "bogus-kind", taskId: "task-1:task", now } as unknown as TransitionCommand;
 
