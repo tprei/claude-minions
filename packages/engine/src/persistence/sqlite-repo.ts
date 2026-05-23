@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { Statement } from "better-sqlite3";
+import type { Statement, Transaction } from "better-sqlite3";
 import { DomainError } from "../domain/errors.js";
 import type { WorkflowEvent } from "../domain/events.js";
 import type { Workflow } from "../domain/types.js";
@@ -78,12 +78,8 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
   private readonly stmtListActiveOrdered: Statement<[], WorkflowRow>;
   private readonly stmtListAllOrdered: Statement<[], WorkflowRow>;
   private readonly txDelete: (workflowId: string) => void;
-  private readonly txSave: (
-    workflow: Workflow,
-    events: WorkflowEvent[],
-    idempotency: IdempotencyRecord[],
-  ) => WorkflowEvent[];
-  private readonly stmtInsertTranscript: Statement<[string, string, string, string, string, string]>;
+  private readonly txSave: Transaction<(workflow: Workflow, events: WorkflowEvent[], idempotency: IdempotencyRecord[]) => WorkflowEvent[]>;
+  private readonly stmtInsertTranscript: Statement<[string, string, string, string, string, string, string]>;
   private readonly stmtListTranscript: Statement<[string, string], TranscriptRow>;
 
   constructor(dbPath: string) {
@@ -103,7 +99,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     this.stmtLookupIdempotency =
       this.db.prepare<[string, string], IdempotencyRow>(SQL_LOOKUP_IDEMPOTENCY);
     this.stmtInsertTranscript =
-      this.db.prepare<[string, string, string, string, string, string]>(SQL_INSERT_TRANSCRIPT);
+      this.db.prepare<[string, string, string, string, string, string, string]>(SQL_INSERT_TRANSCRIPT);
     this.stmtListTranscript =
       this.db.prepare<[string, string], TranscriptRow>(SQL_LIST_TRANSCRIPT);
     this.stmtListNonCompleted = this.db.prepare<[], WorkflowRow>(SQL_LIST_NON_COMPLETED);
@@ -196,7 +192,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     events: WorkflowEvent[],
     idempotency?: IdempotencyRecord[],
   ): Promise<void> {
-    const stamped = this.txSave(workflow, events, idempotency ?? []);
+    const stamped = this.txSave.immediate(workflow, events, idempotency ?? []);
     this.hub.notify(workflow.id, stamped);
   }
 
@@ -250,7 +246,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
   }
 
   async appendTranscript(workflowId: string, runId: string, occurredAt: string, providerEvent: ProviderEvent): Promise<void> {
-    this.stmtInsertTranscript.run(workflowId, runId, occurredAt, providerEvent.kind, JSON.stringify(providerEvent), runId);
+    this.stmtInsertTranscript.run(workflowId, runId, occurredAt, providerEvent.kind, JSON.stringify(providerEvent), workflowId, runId);
   }
 
   async listTranscript(workflowId: string, runId: string): Promise<TranscriptEntry[]> {

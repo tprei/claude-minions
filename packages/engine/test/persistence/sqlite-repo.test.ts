@@ -359,5 +359,22 @@ describe("SQLiteWorkflowRepository", () => {
       const entries = await repo.listTranscript("wf-1", "run-A");
       expect(entries[0]?.providerEvent).toEqual(event);
     });
+
+    it("seq is workflow-scoped: two workflows sharing the same runId have independent 1-based sequences", async () => {
+      const sharedRunId = "run-task-1";
+
+      await repo.appendTranscript("wf-A", sharedRunId, now, { kind: "assistant_text", text: "A1" });
+      await repo.appendTranscript("wf-A", sharedRunId, now, { kind: "assistant_text", text: "A2" });
+      await repo.appendTranscript("wf-A", sharedRunId, now, { kind: "assistant_text", text: "A3" });
+
+      await repo.appendTranscript("wf-B", sharedRunId, now, { kind: "thinking", text: "B1" });
+      await repo.appendTranscript("wf-B", sharedRunId, now, { kind: "thinking", text: "B2" });
+
+      const entriesA = await repo.listTranscript("wf-A", sharedRunId);
+      const entriesB = await repo.listTranscript("wf-B", sharedRunId);
+
+      expect(entriesA.map((e) => e.seq)).toEqual([1, 2, 3]);
+      expect(entriesB.map((e) => e.seq)).toEqual([1, 2]);
+    });
   });
 });
