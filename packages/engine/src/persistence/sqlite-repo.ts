@@ -79,7 +79,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
   private readonly stmtListAllOrdered: Statement<[], WorkflowRow>;
   private readonly txDelete: (workflowId: string) => void;
   private readonly txSave: Transaction<(workflow: Workflow, events: WorkflowEvent[], idempotency: IdempotencyRecord[]) => WorkflowEvent[]>;
-  private readonly stmtInsertTranscript: Statement<[string, string, string, string, string, string, string]>;
+  private readonly stmtInsertTranscript: Statement<[string, string, string, string, string, string]>;
   private readonly stmtListTranscript: Statement<[string, string], TranscriptRow>;
 
   constructor(dbPath: string) {
@@ -99,7 +99,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     this.stmtLookupIdempotency =
       this.db.prepare<[string, string], IdempotencyRow>(SQL_LOOKUP_IDEMPOTENCY);
     this.stmtInsertTranscript =
-      this.db.prepare<[string, string, string, string, string, string, string]>(SQL_INSERT_TRANSCRIPT);
+      this.db.prepare<[string, string, string, string, string, string]>(SQL_INSERT_TRANSCRIPT);
     this.stmtListTranscript =
       this.db.prepare<[string, string], TranscriptRow>(SQL_LIST_TRANSCRIPT);
     this.stmtListNonCompleted = this.db.prepare<[], WorkflowRow>(SQL_LIST_NON_COMPLETED);
@@ -246,7 +246,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
   }
 
   async appendTranscript(workflowId: string, runId: string, occurredAt: string, providerEvent: ProviderEvent): Promise<void> {
-    this.stmtInsertTranscript.run(workflowId, runId, occurredAt, providerEvent.kind, JSON.stringify(providerEvent), workflowId, runId);
+    this.stmtInsertTranscript.run(workflowId, runId, occurredAt, providerEvent.kind, JSON.stringify(providerEvent), runId);
   }
 
   async listTranscript(workflowId: string, runId: string): Promise<TranscriptEntry[]> {

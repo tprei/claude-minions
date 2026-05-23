@@ -94,7 +94,7 @@ CREATE INDEX IF NOT EXISTS idx_transcripts_workflow ON transcripts(workflow_id);
 
 export const SQL_INSERT_TRANSCRIPT =
   "INSERT INTO transcripts (workflow_id, run_id, seq, occurred_at, kind, payload) " +
-  "SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM transcripts WHERE workflow_id = ? AND run_id = ?";
+  "SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM transcripts WHERE run_id = ?";
 
 export const SQL_LIST_TRANSCRIPT =
   "SELECT seq, occurred_at, kind, payload FROM transcripts WHERE workflow_id = ? AND run_id = ? ORDER BY seq";
