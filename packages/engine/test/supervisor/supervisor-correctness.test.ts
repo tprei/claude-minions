@@ -8,12 +8,11 @@ import { ScanLoop } from "../../src/supervisor/scan-loop.js";
 import { orchestratorSilentRule } from "../../src/supervisor/rules/orchestrator-silent.js";
 import { ciExhaustedRule } from "../../src/supervisor/rules/ci-exhausted.js";
 import { SupervisorState } from "../../src/supervisor/state.js";
-import { AlertRepo, AlertSubscriptionRepo } from "../../src/supervisor/alert-repo.js";
-import { AlertNotifier } from "../../src/supervisor/alert-notifier.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
 import { createWorkflow } from "../../src/domain/workflow.js";
-import type { AnomalyRuleContext } from "../../src/supervisor/rules/index.js";
+import type { AnomalyRule, AnomalyRuleContext } from "../../src/supervisor/rules/index.js";
 import type { LogRecord } from "../../src/observability/types.js";
+import type { PushSender, PushSendResult } from "../../src/plugins/push-sender.js";
 
 function makeTempDb(): Database.Database {
   const dir = mkdtempSync(join(tmpdir(), "supervisor-correctness-test-"));
@@ -107,47 +106,51 @@ describe("supervisor.fireAlert: persist-before-dedup consistency", () => {
   });
 
   it("when subRepo.list throws, exactly one alert row is persisted and dedup holds within cooldown", async () => {
-    const alertRepo = new AlertRepo(db);
-    const subRepo = new AlertSubscriptionRepo(db);
-    vi.spyOn(subRepo, "list").mockImplementation(() => {
+    const sender: PushSender = {
+      async send(): Promise<PushSendResult> {
+        return { ok: true };
+      },
+    };
+
+    const triggerRule: AnomalyRule = {
+      id: "orchestrator-silent",
+      onLogRecord(_record, ctx): void {
+        ctx.fireAlert({
+          kind: "orchestrator-silent",
+          severity: "warn",
+          message: "trigger",
+          workflowId: "wf-1",
+        });
+      },
+    };
+
+    const nowMs = 1_000_000;
+    const sup = createSupervisor({
+      db,
+      sender,
+      rules: [triggerRule],
+      dedupeCooldownMs: 5 * 60 * 1000,
+      now: () => nowMs,
+    });
+    sup.attachRepo(new InMemoryWorkflowRepository());
+
+    // notify() reaches subRepo.list() only when a sender is configured.
+    // Make the real internal subRepo.list throw to simulate a post-persist failure.
+    vi.spyOn(sup.subRepo, "list").mockImplementation(() => {
       throw new Error("subRepo.list failed");
     });
 
-    const notifier = new AlertNotifier(alertRepo, subRepo, undefined);
-    const state = new SupervisorState();
+    const trigger: LogRecord = { t: new Date().toISOString(), lvl: "info", msg: "trigger", kind: "trigger" };
 
-    const nowMs = 1_000_000;
-    const dedupeCooldownMs = 5 * 60 * 1000;
-
-    const fireAlert = (partial: Omit<import("../../src/supervisor/alert.js").Alert, "id" | "timestamp">): void => {
-      const dedupeKey = `${partial.kind}\0${partial.workflowId ?? ""}\0${partial.taskId ?? ""}`;
-      const lastFired = state.recentAlerts.get(dedupeKey);
-      if (lastFired !== undefined && nowMs - lastFired < dedupeCooldownMs) return;
-      const alert = {
-        id: crypto.randomUUID(),
-        timestamp: new Date(nowMs).toISOString(),
-        ...partial,
-      };
-      try {
-        notifier.persist(alert);
-      } catch {
-        return;
-      }
-      state.recentAlerts.set(dedupeKey, nowMs);
-      notifier.notify(alert).catch(() => {});
-    };
-
-    fireAlert({ kind: "orchestrator-silent", severity: "warn", message: "test", workflowId: "wf-1" });
-
+    sup.sink.write(trigger);
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
-    expect(alertRepo.list()).toHaveLength(1);
+    expect(sup.alertRepo.list()).toHaveLength(1);
 
-    fireAlert({ kind: "orchestrator-silent", severity: "warn", message: "test", workflowId: "wf-1" });
-
+    sup.sink.write(trigger);
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
-    expect(alertRepo.list()).toHaveLength(1);
+    expect(sup.alertRepo.list()).toHaveLength(1);
   });
 });
 
