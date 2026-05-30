@@ -54,6 +54,7 @@ import { buildRepoRegistry, type RepoBindingInput, type RepoRegistry } from "./a
 export interface EngineConfig {
   dbPath: string;
   authToken?: string;
+  siteTokenAuth?: boolean;
   dataDir?: string;
   runtime?: RuntimeBackend;
   executor?: RestackExecutor;
@@ -362,6 +363,9 @@ export async function createEngine(config: EngineConfig): Promise<Engine> {
 
   if (config.authToken !== undefined) {
     serverDeps.authToken = config.authToken;
+  }
+  if (config.siteTokenAuth ?? process.env["MWF_SITE_TOKEN_AUTH"] === "1") {
+    serverDeps.siteTokenAuth = true;
   }
 
   if (vapid && pushService && subscriptions) {

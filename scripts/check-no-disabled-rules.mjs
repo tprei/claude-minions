@@ -2,7 +2,20 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const ROOT = process.cwd();
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "coverage", ".vite", "dev-dist"]);
+const SKIP_DIRS = new Set([
+  ".git",
+  ".claude",
+  "node_modules",
+  "dist",
+  "coverage",
+  ".vite",
+  "dev-dist",
+  ".dev-workspace",
+  ".workspace",
+  ".local-workspace",
+  "data",
+  "secrets",
+]);
 const EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]);
 const FORBIDDEN = [
   "eslint" + "-disable",

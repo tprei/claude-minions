@@ -75,6 +75,7 @@ async function main(): Promise<void> {
   const port = Number(process.env["MWF_PORT"] ?? "3000");
   const dbPath = required("MWF_DB_PATH");
   const authToken = required("MWF_TOKEN");
+  const siteTokenAuth = process.env["MWF_SITE_TOKEN_AUTH"] === "1";
   const workspaceRoot = optional("MWF_WORKSPACE_ROOT");
   const dataDir = optional("MWF_DATA_DIR");
   const pwaDir = optional("MWF_PWA_DIR");
@@ -112,6 +113,7 @@ async function main(): Promise<void> {
     providerFactory,
     providerName,
     authToken,
+    siteTokenAuth,
     qualityPlugin: qualityDisabled ? new StubQualityPlugin() : new ExecQualityPlugin(runner),
     logLevel: parseLevel(process.env["MWF_LOG_LEVEL"]),
   };

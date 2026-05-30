@@ -28,8 +28,9 @@ RUN pnpm --filter @minions/shared run build \
 
 # ----- runtime ----------------------------------------------------------------
 # MWF_TOKEN must be injected at runtime (compose env_file or `docker run -e`).
-# Never bake into the image. The /health endpoint is public; all other routes
-# require the token via Authorization: Bearer or ?token= query for SSE.
+# Never bake into the image. The /health endpoint is public; protected API
+# routes require the token via Authorization: Bearer or ?token= query for SSE.
+# When MWF_SITE_TOKEN_AUTH=1, the built PWA is gated behind the same token.
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
@@ -48,6 +49,9 @@ RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 
 # claude CLI for the claude-code provider
 RUN npm i -g @anthropic-ai/claude-code
+
+# native Codex CLI for the codex provider
+RUN npm i -g @openai/codex@0.135.0
 
 # pi CLI for the pi provider (ChatGPT Codex subscription auth). Pinned for
 # reproducible builds; bump deliberately when upgrading. The package was renamed

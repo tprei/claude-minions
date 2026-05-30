@@ -9,7 +9,8 @@
 #   cd ~/claude-minions
 #   cp .env.local.example .env.deploy
 #   # edit .env.deploy: set MWF_TOKEN, MWF_GITHUB_TOKEN, MWF_GITHUB_REPO_OWNER,
-#   # MWF_GITHUB_REPO_NAME. Optional: set CLOUDFLARE_TUNNEL_TOKEN.
+#   # MWF_GITHUB_REPO_NAME. Optional: set MWF_PROVIDER, MWF_SITE_TOKEN_AUTH,
+#   # and CLOUDFLARE_TUNNEL_TOKEN.
 #   ln -sf .env.deploy .env   # compose reads ${VAR} from .env at parse time
 #   mkdir -p ./secrets ./data/engine ./data/workspace
 #   docker run --rm -v ./data:/data -v ./secrets:/secrets alpine chown -R 10001:10001 /data /secrets
@@ -32,6 +33,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        MINION_UID: ${MINION_UID:-10001}
+        MINION_GID: ${MINION_GID:-10001}
     image: minions/engine:local
     container_name: minions
     restart: unless-stopped
@@ -44,8 +48,9 @@ services:
       MWF_DATA_DIR: /data/engine
       MWF_WORKSPACE_ROOT: /data/workspace
       MWF_PWA_DIR: /app/packages/web/dist
+      MWF_SITE_TOKEN_AUTH: ${MWF_SITE_TOKEN_AUTH:-1}
       HOME: /data/home
-      # Pi provider opt-in. Leave unset to keep the default claude-code provider.
+      # Provider opt-in. Leave unset to keep the default claude-code provider.
       # Defaults for the Pi-specific knobs live in packages/engine/src/main.ts.
       MWF_PROVIDER: ${MWF_PROVIDER:-}
       MWF_PI_MODEL: ${MWF_PI_MODEL:-}
@@ -58,6 +63,9 @@ services:
     volumes:
       - ./data:/data
       - ./secrets:/secrets:ro
+      # Native Codex CLI auth from the host. Writable on purpose: the CLI keeps
+      # its session state under ~/.codex/auth.json and refresh can update it.
+      - ${HOME}/.codex:/data/home/.codex
       # Pi CLI auth from the host. Writable on purpose: pi rotates the
       # ChatGPT Codex tokens inside auth.json, and a read-only mount would
       # silently break refresh and bounce the worker to logged-out after the

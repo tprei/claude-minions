@@ -12,11 +12,20 @@ interface AddDialogProps {
   onAdded: (id: string) => void;
 }
 
+function defaultBaseUrl(): string {
+  if (typeof window === "undefined") return "http://localhost:3000";
+  const { hostname, origin, port } = window.location;
+  if ((hostname === "localhost" || hostname === "127.0.0.1") && port === "5173") {
+    return "http://localhost:3000";
+  }
+  return origin;
+}
+
 export function AddDialog({ onClose, onAdded }: AddDialogProps): ReactElement {
   const add = useConnectionStore(s => s.add);
 
   const [label, setLabel] = useState("");
-  const [baseUrl, setBaseUrl] = useState("http://localhost:3000");
+  const [baseUrl, setBaseUrl] = useState(defaultBaseUrl);
   const [token, setToken] = useState("");
   const [color, setColor] = useState(PRESET_COLORS[0] ?? "#7c5cff");
   const [error, setError] = useState<string | null>(null);
@@ -83,11 +92,11 @@ export function AddDialog({ onClose, onAdded }: AddDialogProps): ReactElement {
           <input
             className="input"
             type="password"
-            required
             placeholder="secret"
             value={token}
             onChange={e => setToken(e.target.value)}
           />
+          <p className="text-[11px] text-fg-subtle">Optional for same-origin connections after the site token gate is unlocked.</p>
         </div>
 
         <div className="flex flex-col gap-1">

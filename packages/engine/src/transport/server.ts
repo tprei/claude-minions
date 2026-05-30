@@ -1,4 +1,5 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
 import { streamSSE } from "hono/streaming";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { applyCommand } from "../application/commands.js";
@@ -61,6 +62,7 @@ export interface ServerDeps {
   recoveryService: RecoveryService;
   executor: RestackExecutor;
   authToken?: string;
+  siteTokenAuth?: boolean;
   continueTaskService?: ContinueTaskService;
   retryTaskService?: RetryTaskService;
   mergeService?: MergeService;
@@ -107,14 +109,86 @@ const PROTECTED_API_PREFIXES = [
   "/workflows",
 ] as const;
 
+const ACCESS_COOKIE_NAME = "mwf_access";
+
 function isProtectedApiPath(pathname: string): boolean {
   return PROTECTED_API_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function isHealthPath(pathname: string): boolean {
+  return pathname === "/health" || pathname === "/health/deep";
 }
 
 function bearerToken(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const match = /^Bearer\s+(.+)$/i.exec(value.trim());
   return match?.[1];
+}
+
+function isSecureRequest(c: Context): boolean {
+  const proto = new URL(c.req.url).protocol;
+  if (proto === "https:") return true;
+  const forwarded = c.req.header("x-forwarded-proto");
+  return forwarded?.split(",")[0]?.trim() === "https";
+}
+
+function normalizeReturnTo(value: string | undefined): string {
+  if (value === undefined || value === "") return "/";
+  if (!value.startsWith("/") || value.startsWith("//")) return "/";
+  return value;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderAccessPage(c: Context, returnTo: string, error?: string, status: 200 | 401 = 401): Response {
+  const next = escapeHtml(returnTo);
+  const message = error === undefined ? "" : `<p style="color:#fecaca;margin:0 0 1rem;">${escapeHtml(error)}</p>`;
+  return c.html(
+    `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Minions access</title>
+  </head>
+  <body style="margin:0;background:#0f172a;color:#e2e8f0;font-family:ui-sans-serif,system-ui,sans-serif;">
+    <main style="min-height:100vh;display:grid;place-items:center;padding:1.5rem;">
+      <section style="width:min(100%,24rem);background:#111827;border:1px solid #334155;border-radius:1rem;padding:1.5rem;box-shadow:0 20px 50px rgba(15,23,42,.45);">
+        <h1 style="margin:0 0 .5rem;font-size:1.25rem;">Shared token required</h1>
+        <p style="margin:0 0 1rem;color:#94a3b8;">Enter the deployment token to unlock this Minions instance.</p>
+        ${message}
+        <form method="post" action="/access" style="display:grid;gap:.75rem;">
+          <input type="hidden" name="next" value="${next}">
+          <label style="display:grid;gap:.35rem;">
+            <span style="font-size:.9rem;color:#cbd5e1;">Bearer token</span>
+            <input
+              name="token"
+              type="password"
+              autocomplete="current-password"
+              style="border:1px solid #475569;border-radius:.75rem;background:#0f172a;color:#f8fafc;padding:.75rem 1rem;font:inherit;"
+              required
+            >
+          </label>
+          <button
+            type="submit"
+            style="border:0;border-radius:.75rem;background:#38bdf8;color:#082f49;padding:.8rem 1rem;font:inherit;font-weight:600;cursor:pointer;"
+          >
+            Unlock
+          </button>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>`,
+    status,
+  );
 }
 
 export function createServer(deps: ServerDeps): Hono {
@@ -153,18 +227,58 @@ export function createServer(deps: ServerDeps): Hono {
   if (deps.authToken !== undefined) {
     app.use("*", async (c, next) => {
       const pathname = new URL(c.req.url).pathname;
-      if (!isProtectedApiPath(pathname)) {
+      if (isHealthPath(pathname) || pathname === "/access") {
         await next();
         return;
       }
 
       const headerToken = bearerToken(c.req.header("authorization"));
+      const cookieToken = getCookie(c, ACCESS_COOKIE_NAME);
       const queryToken = /^\/workflows\/[^/]+\/events$/.test(pathname) ? c.req.query("token") : undefined;
-      if (headerToken !== deps.authToken && queryToken !== deps.authToken) {
-        return c.json({ code: "unauthorized", message: "missing or invalid bearer token", details: {} }, 401);
+      const apiAuthorized = headerToken === deps.authToken
+        || cookieToken === deps.authToken
+        || queryToken === deps.authToken;
+
+      if (isProtectedApiPath(pathname)) {
+        if (!apiAuthorized) {
+          return c.json({ code: "unauthorized", message: "missing or invalid bearer token", details: {} }, 401);
+        }
+        await next();
+        return;
+      }
+
+      if (deps.siteTokenAuth && deps.pwaRoot !== undefined) {
+        const siteAuthorized = headerToken === deps.authToken || cookieToken === deps.authToken;
+        if (!siteAuthorized) {
+          const url = new URL(c.req.url);
+          return renderAccessPage(c, `${url.pathname}${url.search}`);
+        }
       }
 
       await next();
+    });
+  }
+
+  if (deps.siteTokenAuth && deps.authToken !== undefined) {
+    app.get("/access", (c) => {
+      const returnTo = normalizeReturnTo(c.req.query("next"));
+      return renderAccessPage(c, returnTo, undefined, 200);
+    });
+
+    app.post("/access", async (c) => {
+      const body = await c.req.parseBody();
+      const token = typeof body["token"] === "string" ? body["token"].trim() : "";
+      const returnTo = normalizeReturnTo(typeof body["next"] === "string" ? body["next"] : undefined);
+      if (token !== deps.authToken) {
+        return renderAccessPage(c, returnTo, "Invalid token.");
+      }
+      setCookie(c, ACCESS_COOKIE_NAME, deps.authToken, {
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+        secure: isSecureRequest(c),
+      });
+      return c.redirect(returnTo, 303);
     });
   }
 

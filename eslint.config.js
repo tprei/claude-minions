@@ -12,12 +12,15 @@ export default [
   },
   {
     ignores: [
+      ".claude/**",
       "**/dist/**",
       "**/node_modules/**",
       ".dev-workspace/**",
       ".workspace/**",
       ".local-workspace/**",
       "coverage/**",
+      "data/**",
+      "secrets/**",
       "**/dev-dist/**",
       "**/.vite/**",
       "packages/web/dev-dist/**",
