@@ -20,7 +20,14 @@ cd "$REPO"
 
 # Source MWF_TOKEN from .env.deploy if not already in env.
 if [ -z "${MWF_TOKEN:-}" ] && [ -f "$REPO/.env.deploy" ]; then
-  MWF_TOKEN="$(grep -E '^MWF_TOKEN=' "$REPO/.env.deploy" | head -1 | cut -d= -f2- || true)"
+  while IFS= read -r line; do
+    case "$line" in
+      MWF_TOKEN=*)
+        MWF_TOKEN="${line#MWF_TOKEN=}"
+        break
+        ;;
+    esac
+  done < "$REPO/.env.deploy"
 fi
 
 git fetch --quiet origin main
@@ -36,13 +43,13 @@ fi
 # (first install, or already crashed) or if jq is missing — neither is a
 # reason to block forever.
 if [ -n "${MWF_TOKEN:-}" ] && command -v jq >/dev/null 2>&1; then
-  RUNNING_COUNT=$(
-    curl -fsS -m 5 -H "Authorization: Bearer $MWF_TOKEN" \
-      "$ENGINE_URL/workflows" 2>/dev/null \
-      | jq -r '.[] | select(.status == "running") | .id' 2>/dev/null \
-      | wc -l \
-      || echo 0
-  )
+  RUNNING_COUNT=0
+  if WORKFLOWS_JSON="$(curl -fsS -m 5 -H "Authorization: Bearer $MWF_TOKEN" "$ENGINE_URL/workflows" 2>/dev/null)"; then
+    while IFS= read -r workflow_id; do
+      [ -n "$workflow_id" ] || continue
+      RUNNING_COUNT=$((RUNNING_COUNT + 1))
+    done < <(printf '%s\n' "$WORKFLOWS_JSON" | jq -r '.[] | select(.status == "running") | .id' 2>/dev/null)
+  fi
   if [ "$RUNNING_COUNT" -gt 0 ]; then
     echo "[$(ts)] deferring redeploy: $RUNNING_COUNT workflow(s) running" >>"$LOG"
     exit 0
@@ -54,12 +61,16 @@ echo "[$(ts)] new commits ${LOCAL:0:7} -> ${REMOTE:0:7}; redeploying" >>"$LOG"
 # Defensive stash in case docker-compose.yml or other tracked files have
 # uncommitted local edits.
 STASH_BEFORE=$(git stash list | wc -l)
-git stash push -u -m "redeploy-$(date +%s)" >/dev/null 2>&1 || true
+git stash push -u -m "redeploy-$(date +%s)" >/dev/null 2>&1
 STASH_AFTER=$(git stash list | wc -l)
 
 if ! git pull --ff-only origin main >>"$LOG" 2>&1; then
   echo "[$(ts)] git pull failed (non-ff); manual intervention required" >>"$LOG"
-  [ "$STASH_AFTER" -gt "$STASH_BEFORE" ] && git stash pop >/dev/null 2>&1 || true
+  if [ "$STASH_AFTER" -gt "$STASH_BEFORE" ]; then
+    if ! git stash pop >/dev/null 2>&1; then
+      echo "[$(ts)] stash restore after failed pull also failed; manual intervention required" >>"$LOG"
+    fi
+  fi
   exit 1
 fi
 
