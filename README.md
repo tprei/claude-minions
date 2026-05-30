@@ -14,7 +14,7 @@ claude-minions/
   eslint.config.js                flat config, packages/*/src linted
   bin/engine.sh                   thin launcher (engine reads .env.local itself)
   Dockerfile                      multi-stage; bundles engine + built PWA + claude CLI
-  docker-compose.yml              one service, exposes :8787, mounts .claude + secrets
+  docker-compose.yml              one service, exposes :8787, mounts data + provider auth + secrets
   .github/workflows/ci.yml        typecheck + engine tests + web build + e2e
   .githooks/pre-commit            staged eslint (inert under codex sandbox)
   docs/
@@ -36,7 +36,7 @@ A single Node process (`packages/engine`) that:
    - `.repos/<id>.git` — bare clone cache
    - `<session-slug>/` — per-session git worktree
    - `home/<provider>/` — agent CLI auth dir (mountable)
-2. Exposes REST + SSE on `MWF_PORT` (default 3000; set to 8787 in production) with bearer auth.
+2. Exposes REST + SSE on `MWF_PORT` (default 3000; set to 8787 in production) with bearer auth, plus an optional same-token site gate for the built PWA.
 3. Spawns coding-agent subprocesses (`claude` CLI by default; `mock` for dev/CI), parses their NDJSON streaming output into typed transcript events, persists them, and broadcasts via SSE.
 4. Wraps each session's worktree with: bare clone cache, hardlinked deps cache, asset injection (instructions / AGENTS.md / CLAUDE.md / `.cursor/rules/`).
 5. Schedules DAG nodes, ship-pipeline stages, loops, and N-way variant + judge runs.
@@ -187,7 +187,8 @@ MWF_GITHUB_BASE_BRANCH=main   # optional, defaults to main
 
 | Env var | What | Default |
 |---|---|---|
-| `MWF_TOKEN` | Bearer for REST + SSE | required |
+| `MWF_TOKEN` | Shared bearer for REST + SSE; also unlocks the optional site gate | required |
+| `MWF_SITE_TOKEN_AUTH` | When `1`, require the shared token before serving the built PWA and accept the resulting cookie on API routes | `0` |
 | `MWF_HOST` | Bind address | `0.0.0.0` |
 | `MWF_PORT` | Listen port | `3000` |
 | `MWF_DB_PATH` | SQLite database path | required |
@@ -233,7 +234,7 @@ Live overrides via `PATCH /api/config/runtime` (schema returned by `GET /api/con
 git clone https://github.com/tprei/claude-minions.git ~/minions
 cd ~/minions
 cp .env.local.example .env.deploy
-$EDITOR .env.deploy   # set token, GH App vars (MINIONS_GH_APP_PRIVATE_KEY=/secrets/gh-app.pem)
+$EDITOR .env.deploy   # set token, optional site gate, GH App vars (MINIONS_GH_APP_PRIVATE_KEY=/secrets/gh-app.pem)
 mkdir -p data secrets
 cp /path/to/your-gh-app.pem secrets/gh-app.pem && chmod 600 secrets/gh-app.pem
 mkdir -p data/workspace
@@ -243,7 +244,7 @@ JSON
 docker compose up -d --build
 ```
 
-Visit `http://<host>:8787/`, add a connection back to the same URL with your token.
+Visit `http://<host>:8787/`. If `MWF_SITE_TOKEN_AUTH=1`, enter the shared token once to unlock the browser session, then add a connection back to the same URL.
 
 ## Testing
 
