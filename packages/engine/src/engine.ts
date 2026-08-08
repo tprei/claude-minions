@@ -709,6 +709,7 @@ function parseSemver(text: string): [number, number, number] | undefined {
 export async function defaultPiVersionProbe(): Promise<PiProbeResult> {
   return await new Promise<PiProbeResult>((resolvePromise) => {
     let stdout = "";
+    let stderr = "";
     let settled = false;
     const child = spawn("pi", ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
     const timer = setTimeout(() => {
@@ -719,6 +720,7 @@ export async function defaultPiVersionProbe(): Promise<PiProbeResult> {
     }, PI_VERSION_TIMEOUT_MS);
     timer.unref?.();
     child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
     child.on("error", (err: NodeJS.ErrnoException) => {
       if (settled) return;
       settled = true;
@@ -734,9 +736,10 @@ export async function defaultPiVersionProbe(): Promise<PiProbeResult> {
         resolvePromise({ status: "error", detail: `pi --version exited with code ${code ?? "unknown"}` });
         return;
       }
-      const version = parseSemver(stdout);
+      const output = `${stdout}\n${stderr}`;
+      const version = parseSemver(output);
       if (version === undefined) {
-        resolvePromise({ status: "error", detail: `could not parse semver from "${stdout.trim()}"` });
+        resolvePromise({ status: "error", detail: `could not parse semver from "${output.trim()}"` });
         return;
       }
       const detail = version.join(".");

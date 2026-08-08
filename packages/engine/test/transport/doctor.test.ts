@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fsp from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { buildDoctorReport, defaultPiAuthProbe, defaultPiVersionProbe } from "../../src/engine.js";
 import { InMemoryWorkflowRepository } from "../../src/application/repository.js";
 import { StubRuntimeBackend } from "../../src/plugins/stub-runtime.js";
@@ -175,5 +177,18 @@ describe("defaultPiVersionProbe", () => {
     const result = await defaultPiVersionProbe();
     expect(result.status).toBe("error");
     expect(result.detail).toMatch(/pi not on PATH|ENOENT/);
+  });
+
+  it("accepts pi version output on stderr", async () => {
+    const dir = await fsp.mkdtemp(join(tmpdir(), "doctor-pi-version-"));
+    const pi = join(dir, "pi");
+    await fsp.writeFile(pi, "#!/bin/sh\nprintf '0.74.0\\n' >&2\n");
+    await fsp.chmod(pi, 0o755);
+    process.env["PATH"] = dir;
+
+    const result = await defaultPiVersionProbe();
+
+    expect(result).toEqual({ status: "ok", detail: "0.74.0" });
+    await fsp.rm(dir, { recursive: true, force: true });
   });
 });
